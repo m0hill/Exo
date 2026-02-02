@@ -5,6 +5,8 @@ const protocol = @import("protocol.zig");
 const render = @import("render.zig");
 const terminal = @import("terminal.zig");
 
+const query_id = "query";
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -55,6 +57,11 @@ pub fn main() !void {
     defer current_arena.deinit();
     var current_root: ?protocol.Node = null;
 
+    var focused_id: ?[]const u8 = null;
+    var input_value: std.ArrayList(u8) = .empty;
+    defer input_value.deinit(allocator);
+    var input_cursor: usize = 0;
+
     const backend_out_fd = child_out_file.handle;
     const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
 
@@ -96,15 +103,49 @@ pub fn main() !void {
 
                 switch (msg) {
                     .patch => |p| {
-                        current_arena.deinit();
-                        current_arena = next_arena;
-                        current_root = p.root;
-                        accepted = true;
-                        std.debug.print("PATCH_OK\n", .{});
+                        switch (p) {
+                            .full => |f| {
+                                current_arena.deinit();
+                                current_arena = next_arena;
+                                current_root = f.root;
+                                accepted = true;
+                                std.debug.print("PATCH_OK kind=full\n", .{});
 
-                        const size = term.getSize() catch terminal.Size{ .rows = 0, .cols = 0 };
-                        try render.render(&term, current_root.?);
-                        std.debug.print("RENDER_OK rows={d} cols={d}\n", .{ size.rows, size.cols });
+                                if (focused_id == null and treeContainsId(current_root.?, query_id)) {
+                                    focused_id = query_id;
+                                    std.debug.print("EVENT_TX name=focus id={s}\n", .{query_id});
+                                    try protocol.writeFocusEventJsonl(child_in, query_id);
+                                    try child_in.flush();
+                                }
+
+                                try render.render(&term, current_root.?, .{
+                                    .focused_id = focused_id,
+                                    .input_id = query_id,
+                                    .input_value = input_value.items,
+                                    .input_cursor = input_cursor,
+                                });
+                            },
+                            .target => |t| {
+                                if (current_root == null) {
+                                    std.debug.print("PATCH_WARN kind=target id={s} found=false reason=no_root\n", .{t.target});
+                                    continue;
+                                }
+
+                                const cloned = try cloneNodeLeaky(current_arena.allocator(), t.node);
+                                const found = applyPatchById(&current_root.?, t.target, cloned);
+                                std.debug.print(
+                                    "PATCH_{s} kind=target id={s} found={s}\n",
+                                    .{ if (found) "OK" else "WARN", t.target, if (found) "true" else "false" },
+                                );
+
+                                try render.render(&term, current_root.?, .{
+                                    .focused_id = focused_id,
+                                    .input_id = query_id,
+                                    .input_value = input_value.items,
+                                    .input_cursor = input_cursor,
+                                });
+                            },
+                        }
                     },
                     else => {},
                 }
@@ -113,14 +154,67 @@ pub fn main() !void {
 
         if ((fds[1].revents & std.posix.POLL.IN) != 0) {
             const b = try term.readByte();
-            const key = mapKey(b) orelse continue;
+            if (b == '\t' or (b == 0x1b and try readShiftTab(&term))) {
+                focused_id = if (focused_id == null) query_id else null;
+                std.debug.print("EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
+                try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
+                try child_in.flush();
 
-            std.debug.print("EVENT_TX key={s}\n", .{key});
-            try protocol.writeEventJsonl(child_in, key);
-            try child_in.flush();
+                if (current_root != null) {
+                    try render.render(&term, current_root.?, .{
+                        .focused_id = focused_id,
+                        .input_id = query_id,
+                        .input_value = input_value.items,
+                        .input_cursor = input_cursor,
+                    });
+                }
+                continue;
+            }
 
-            if (std.mem.eql(u8, key, "x") or std.mem.eql(u8, key, "ctrl-c")) {
+            // Always allow exit keys.
+            if (b == 3) {
+                std.debug.print("EVENT_TX name=key key=ctrl-c\n", .{});
+                try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
+                try child_in.flush();
                 break;
+            }
+            if (b == 'x') {
+                std.debug.print("EVENT_TX name=key key=x\n", .{});
+                try protocol.writeKeyEventJsonl(child_in, "x");
+                try child_in.flush();
+                break;
+            }
+
+            if (b == 'q') {
+                std.debug.print("EVENT_TX name=key key=q\n", .{});
+                try protocol.writeKeyEventJsonl(child_in, "q");
+                try child_in.flush();
+                continue;
+            }
+
+            if (focused_id != null and std.mem.eql(u8, focused_id.?, query_id)) {
+                const changed = handleInputByte(allocator, &input_value, &input_cursor, b) catch |e| blk: {
+                    std.debug.print("INPUT_ERR reason={s}\n", .{@errorName(e)});
+                    break :blk false;
+                };
+                if (!changed) continue;
+
+                std.debug.print(
+                    "EVENT_TX name=input id={s} len={d} cursor={d}\n",
+                    .{ query_id, input_value.items.len, input_cursor },
+                );
+                try protocol.writeInputEventJsonl(child_in, query_id, input_value.items, input_cursor);
+                try child_in.flush();
+
+                if (current_root != null) {
+                    try render.render(&term, current_root.?, .{
+                        .focused_id = focused_id,
+                        .input_id = query_id,
+                        .input_value = input_value.items,
+                        .input_cursor = input_cursor,
+                    });
+                }
+                continue;
             }
         }
     }
@@ -176,5 +270,113 @@ fn mapKey(b: u8) ?[]const u8 {
         'x' => "x",
         3 => "ctrl-c",
         else => null,
+    };
+}
+
+fn handleInputByte(
+    allocator: std.mem.Allocator,
+    buf: *std.ArrayList(u8),
+    cursor: *usize,
+    b: u8,
+) !bool {
+    switch (b) {
+        8, 127 => {
+            if (cursor.* == 0) return false;
+            cursor.* -= 1;
+            _ = buf.orderedRemove(cursor.*);
+            return true;
+        },
+        else => {},
+    }
+
+    if (b < 0x20 or b == 0x7f) return false;
+    // Only ASCII for tracer #2.
+    if (b >= 0x80) return false;
+
+    if (cursor.* > buf.items.len) cursor.* = buf.items.len;
+    if (cursor.* == buf.items.len) {
+        try buf.append(allocator, b);
+        cursor.* += 1;
+        return true;
+    }
+
+    try buf.insert(allocator, cursor.*, b);
+    cursor.* += 1;
+    return true;
+}
+
+fn readShiftTab(term: *terminal.Terminal) !bool {
+    // Common sequence: ESC [ Z
+    const b2 = try readByteIfReady(term) orelse return false;
+    if (b2 != '[') return false;
+    const b3 = try readByteIfReady(term) orelse return false;
+    return b3 == 'Z';
+}
+
+fn readByteIfReady(term: *terminal.Terminal) !?u8 {
+    var fds = [_]std.posix.pollfd{
+        .{ .fd = std.posix.STDIN_FILENO, .events = std.posix.POLL.IN, .revents = 0 },
+    };
+    const rc = try std.posix.poll(fds[0..], 0);
+    if (rc == 0) return null;
+    if ((fds[0].revents & std.posix.POLL.IN) == 0) return null;
+    return try term.readByte();
+}
+
+fn treeContainsId(node: protocol.Node, id: []const u8) bool {
+    if (std.mem.eql(u8, nodeId(node), id)) return true;
+    return switch (node) {
+        .vbox => |v| {
+            for (v.children) |child| {
+                if (treeContainsId(child, id)) return true;
+            }
+            return false;
+        },
+        else => false,
+    };
+}
+
+fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.Node {
+    return switch (node) {
+        .text => |t| .{ .text = .{
+            .id = try allocator.dupe(u8, t.id),
+            .text = try allocator.dupe(u8, t.text),
+        } },
+        .input => |i| .{ .input = .{
+            .id = try allocator.dupe(u8, i.id),
+            .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
+        } },
+        .vbox => |v| blk: {
+            var children = try allocator.alloc(protocol.Node, v.children.len);
+            for (v.children, 0..) |child, idx| {
+                children[idx] = try cloneNodeLeaky(allocator, child);
+            }
+            break :blk .{ .vbox = .{ .id = try allocator.dupe(u8, v.id), .children = children } };
+        },
+    };
+}
+
+fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: protocol.Node) bool {
+    if (std.mem.eql(u8, nodeId(root.*), target)) {
+        root.* = replacement;
+        return true;
+    }
+
+    return switch (root.*) {
+        .vbox => |*v| {
+            for (v.children) |*child| {
+                if (applyPatchById(child, target, replacement)) return true;
+            }
+            return false;
+        },
+        else => false,
+    };
+}
+
+fn nodeId(node: protocol.Node) []const u8 {
+    return switch (node) {
+        .vbox => |v| v.id,
+        .text => |t| t.id,
+        .input => |i| i.id,
     };
 }

@@ -1,0 +1,39 @@
+[
+  {
+    "slice": 1,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Basic JSONL wire protocol with raw terminal and patch/render loop",
+    "deliverables": [
+      "jsonl.zig: LineReader with safe buffer management",
+      "terminal.zig: Raw mode setup with escape hatch",
+      "backend_demo.zig: Emits patch messages over stdout",
+      "tui_runtime.zig: Polls backend, renders tree, forwards keys",
+      "render.zig: Clear screen + draw vbox/text nodes"
+    ],
+    "boundaries_hit": [
+      "TTY input/output",
+      "Child process spawn/pipe",
+      "stdin polled alongside backend stdout"
+    ],
+    "timestamp": "2026-02-02"
+  },
+  {
+    "slice": 2,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Patch-by-id plus local focus/input cursor preservation while backend keeps patching",
+    "deliverables": [
+      "protocol.zig: PatchMsg v0.2 (full | target), input node, focus/input events, JSON string escaping",
+      "backend_demo.zig: Periodic clock patch-by-id + status patch on input/key events",
+      "tui_runtime.zig: Apply patch-by-id into retained tree; local input value/cursor; focus + input event emission",
+      "render.zig: Render input line and place cursor when focused"
+    ],
+    "boundaries_hit": [
+      "Targeted patch application by node id",
+      "Local interactive state preserved across patches",
+      "Backend poll timeout tick loop"
+    ],
+    "timestamp": "2026-02-02"
+  }
+]
