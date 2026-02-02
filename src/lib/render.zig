@@ -1,6 +1,9 @@
 const std = @import("std");
+const frame_mod = @import("frame.zig");
 const protocol = @import("protocol.zig");
-const Size = @import("term_size.zig").Size;
+
+const Frame = frame_mod.Frame;
+const CursorPos = frame_mod.CursorPos;
 
 pub const RenderState = struct {
     focused_id: ?[]const u8 = null,
@@ -20,48 +23,33 @@ pub const ListState = struct {
     scroll: usize,
 };
 
-const CursorPos = struct {
-    row: usize,
-    col: usize,
-};
-
 const RenderCtx = struct {
-    cols: u16,
+    cols: usize,
     rows_left: usize,
-    row: usize = 1,
+    row: usize = 0, // 0-based
     cursor: ?CursorPos = null,
 };
 
-pub fn render(term: anytype, root: protocol.Node, state: RenderState) !void {
-    try term.writeAll("\x1b[2J\x1b[H");
-    const size = term.getSize() catch Size{ .rows = 0, .cols = 0 };
+pub fn renderToFrame(root: protocol.Node, state: RenderState, frame: *Frame) void {
     var ctx: RenderCtx = .{
-        .cols = size.cols,
-        .rows_left = if (size.rows == 0) std.math.maxInt(usize) else size.rows,
+        .cols = @as(usize, frame.cols),
+        .rows_left = @as(usize, frame.rows),
     };
-    try renderNode(term, root, &ctx, state);
-
-    if (ctx.cursor) |c| {
-        try term.writeAll("\x1b[?25h");
-        var esc_buf: [64]u8 = undefined;
-        const esc = try std.fmt.bufPrint(&esc_buf, "\x1b[{d};{d}H", .{ c.row, c.col });
-        try term.writeAll(esc);
-    } else {
-        try term.writeAll("\x1b[?25l");
-    }
+    renderNode(frame, root, &ctx, state);
+    frame.cursor = ctx.cursor;
 }
 
-fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: RenderState) !void {
+fn renderNode(frame: *Frame, node: protocol.Node, ctx: *RenderCtx, state: RenderState) void {
     if (ctx.rows_left == 0) return;
     switch (node) {
         .text => |t| {
-            try renderLine(term, ctx, t.text);
+            renderLine(frame, ctx, t.text);
         },
         .vbox => |v| {
             _ = v.id;
             for (v.children) |child| {
                 if (ctx.rows_left == 0) break;
-                try renderNode(term, child, ctx, state);
+                renderNode(frame, child, ctx, state);
             }
         },
         .input => |i| {
@@ -72,34 +60,34 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
             if (focused and ctx.cursor == null and input_state != null) {
                 const st = input_state.?;
                 const effective_cursor = @min(st.cursor, st.value.len);
-                var col: usize = prefix.len + effective_cursor + 1;
+                var col: usize = prefix.len + effective_cursor + 1; // 1-based
                 if (ctx.cols != 0) {
-                    const max_col: usize = @as(usize, ctx.cols);
+                    const max_col: usize = ctx.cols;
                     if (col > max_col) col = max_col;
                     if (col == 0) col = 1;
                 }
-                ctx.cursor = .{ .row = ctx.row, .col = col };
+                ctx.cursor = .{ .row = ctx.row + 1, .col = col };
             }
 
             if (input_state) |st| {
                 if (st.value.len > 0) {
-                    try renderLinePieces(term, ctx, &.{ prefix, st.value });
+                    renderLinePieces(frame, ctx, &.{ prefix, st.value });
                     return;
                 }
             }
 
             if (input_state == null) {
                 // Unknown input id: render empty line with prefix only.
-                try renderLine(term, ctx, prefix);
+                renderLine(frame, ctx, prefix);
                 return;
             } else if (i.placeholder != null) {
                 if (focused) {
-                    try renderLinePieces(term, ctx, &.{ prefix, i.placeholder.? });
+                    renderLinePieces(frame, ctx, &.{ prefix, i.placeholder.? });
                 } else {
-                    try renderLinePieces(term, ctx, &.{ prefix, "[", i.placeholder.?, "]" });
+                    renderLinePieces(frame, ctx, &.{ prefix, "[", i.placeholder.?, "]" });
                 }
             } else {
-                try renderLine(term, ctx, prefix);
+                renderLine(frame, ctx, prefix);
             }
         },
         .list => |l| {
@@ -116,7 +104,7 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
             while (row_idx < height) : (row_idx += 1) {
                 const item_idx = start + row_idx;
                 if (item_idx >= l.children.len) {
-                    try renderLine(term, ctx, "");
+                    renderBlankLine(ctx);
                     continue;
                 }
 
@@ -134,49 +122,69 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
                     .text => |t| t.text,
                     else => "",
                 };
-                try renderLinePieces(term, ctx, &.{ prefix, label });
+                renderLinePieces(frame, ctx, &.{ prefix, label });
             }
         },
     }
 }
 
 fn findInputState(inputs: []const InputState, id: []const u8) ?InputState {
-    for (inputs) |st| {
-        if (std.mem.eql(u8, st.id, id)) return st;
+    var lo: usize = 0;
+    var hi: usize = inputs.len;
+    while (lo < hi) {
+        const mid: usize = lo + (hi - lo) / 2;
+        const st = inputs[mid];
+        switch (std.mem.order(u8, st.id, id)) {
+            .lt => lo = mid + 1,
+            .gt => hi = mid,
+            .eq => return st,
+        }
     }
     return null;
 }
 
 fn findListState(lists: []const ListState, id: []const u8) ?ListState {
-    for (lists) |st| {
-        if (std.mem.eql(u8, st.id, id)) return st;
+    var lo: usize = 0;
+    var hi: usize = lists.len;
+    while (lo < hi) {
+        const mid: usize = lo + (hi - lo) / 2;
+        const st = lists[mid];
+        switch (std.mem.order(u8, st.id, id)) {
+            .lt => lo = mid + 1,
+            .gt => hi = mid,
+            .eq => return st,
+        }
     }
     return null;
 }
 
-fn renderLine(term: anytype, ctx: *RenderCtx, text: []const u8) !void {
+fn renderLine(frame: *Frame, ctx: *RenderCtx, text: []const u8) void {
     if (ctx.rows_left == 0) return;
-    const cols: usize = @as(usize, ctx.cols);
-    const line = if (ctx.cols == 0 or text.len <= cols) text else text[0..cols];
-    try term.writeAll(line);
-    // Raw mode disables output processing; newline is LF-only unless we include CR.
-    try term.writeAll("\x1b[K\r\n");
+    const cols: usize = ctx.cols;
+    const line = if (cols == 0 or text.len <= cols) text else text[0..cols];
+    frame.putText(ctx.row, 0, line);
     ctx.rows_left -= 1;
     ctx.row += 1;
 }
 
-fn renderLinePieces(term: anytype, ctx: *RenderCtx, pieces: []const []const u8) !void {
+fn renderLinePieces(frame: *Frame, ctx: *RenderCtx, pieces: []const []const u8) void {
     if (ctx.rows_left == 0) return;
 
-    var remaining: usize = if (ctx.cols == 0) std.math.maxInt(usize) else @as(usize, ctx.cols);
+    var remaining: usize = if (ctx.cols == 0) std.math.maxInt(usize) else ctx.cols;
+    var col: usize = 0;
     for (pieces) |p| {
         if (remaining == 0) break;
         const chunk = if (p.len <= remaining) p else p[0..remaining];
-        try term.writeAll(chunk);
+        frame.putText(ctx.row, col, chunk);
         remaining -= chunk.len;
+        col += chunk.len;
     }
-    // Raw mode disables output processing; newline is LF-only unless we include CR.
-    try term.writeAll("\x1b[K\r\n");
+    ctx.rows_left -= 1;
+    ctx.row += 1;
+}
+
+fn renderBlankLine(ctx: *RenderCtx) void {
+    if (ctx.rows_left == 0) return;
     ctx.rows_left -= 1;
     ctx.row += 1;
 }

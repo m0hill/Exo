@@ -2,7 +2,7 @@ const std = @import("std");
 
 const tui = @import("tui");
 const protocol = tui.protocol;
-const render = tui.render;
+const renderer_mod = tui.renderer;
 const testing_terminal = @import("testing_terminal.zig");
 const input = tui.input;
 const tree = tui.tree;
@@ -10,6 +10,9 @@ const tree = tui.tree;
 test "render: focused input shows cursor + placeholder" {
     var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
     defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
 
     var children = [_]protocol.Node{
         .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
@@ -20,7 +23,7 @@ test "render: focused input shows cursor + placeholder" {
     };
     const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
 
-    try render.render(&term, root, .{
+    try renderer.draw(&term, root, .{
         .focused_id = "query",
         .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
     });
@@ -36,13 +39,16 @@ test "render: unfocused input hides cursor and brackets placeholder" {
     var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
     defer term.deinit();
 
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
     var children = [_]protocol.Node{
         .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
         .{ .input = .{ .id = "query", .placeholder = "Type here" } },
     };
     const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
 
-    try render.render(&term, root, .{
+    try renderer.draw(&term, root, .{
         .focused_id = null,
         .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
     });
@@ -56,6 +62,9 @@ test "render: cursor column tracks input_cursor" {
     var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
     defer term.deinit();
 
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
     var children = [_]protocol.Node{
         .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
         .{ .text = .{ .id = "clock", .text = "Tick: 0" } },
@@ -63,7 +72,7 @@ test "render: cursor column tracks input_cursor" {
     };
     const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
 
-    try render.render(&term, root, .{
+    try renderer.draw(&term, root, .{
         .focused_id = "query",
         .inputs = &.{.{ .id = "query", .value = "hi", .cursor = 2 }},
     });
@@ -71,6 +80,53 @@ test "render: cursor column tracks input_cursor" {
     const out = term.out.items;
     // Lines: title(1), clock(2), input(3). prefix is "> " => cursor col = 2 + 2 + 1 = 5.
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[3;5H") != null);
+}
+
+test "renderer: second draw is incremental" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    var children1 = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
+        .{ .text = .{ .id = "hint", .text = "Tab to focus input" } },
+        .{ .text = .{ .id = "clock", .text = "Tick: 0" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type here" } },
+        .{ .text = .{ .id = "status", .text = "State: OFF" } },
+    };
+    const root1 = protocol.Node{ .vbox = .{ .id = "root", .children = children1[0..] } };
+
+    var children2 = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
+        .{ .text = .{ .id = "hint", .text = "Tab to focus input" } },
+        .{ .text = .{ .id = "clock", .text = "Tick: 1" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type here" } },
+        .{ .text = .{ .id = "status", .text = "State: OFF" } },
+    };
+    const root2 = protocol.Node{ .vbox = .{ .id = "root", .children = children2[0..] } };
+
+    try renderer.draw(&term, root1, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
+    });
+    const out1_len: usize = term.out.items.len;
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2J") != null);
+
+    term.reset();
+
+    try renderer.draw(&term, root2, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
+    });
+
+    const out2 = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[2J") == null);
+    try std.testing.expect(out2.len * 5 < out1_len);
+    try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[3;7H") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out2, "1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out2, "Tracer Demo") == null);
 }
 
 test "input: insert and backspace edit buffer" {
@@ -146,6 +202,9 @@ test "render: focused list shows selection marker and hides cursor" {
     var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
     defer term.deinit();
 
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
     var list_children = [_]protocol.Node{
         .{ .text = .{ .id = "item-1", .text = "Alpha" } },
         .{ .text = .{ .id = "item-2", .text = "Beta" } },
@@ -156,7 +215,7 @@ test "render: focused list shows selection marker and hides cursor" {
     };
     const root = protocol.Node{ .vbox = .{ .id = "root", .children = root_children[0..] } };
 
-    try render.render(&term, root, .{
+    try renderer.draw(&term, root, .{
         .focused_id = "results",
         .lists = &.{.{ .id = "results", .selected_id = "item-2", .scroll = 0 }},
     });

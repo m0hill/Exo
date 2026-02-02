@@ -4,9 +4,80 @@ const tui = @import("tui");
 const jsonl = tui.jsonl;
 const protocol = tui.protocol;
 const render = tui.render;
+const renderer_mod = tui.renderer;
 const terminal = tui.terminal;
 const input = tui.input;
 const tree = tui.tree;
+
+const LogSink = struct {
+    file: ?std.fs.File = null,
+
+    pub fn deinit(self: *LogSink) void {
+        if (self.file) |f| f.close();
+        self.file = null;
+    }
+};
+
+fn envString(allocator: std.mem.Allocator, name: []const u8) ?[]u8 {
+    return std.process.getEnvVarOwned(allocator, name) catch |e| switch (e) {
+        error.EnvironmentVariableNotFound => null,
+        else => null,
+    };
+}
+
+fn envFlag(allocator: std.mem.Allocator, name: []const u8) bool {
+    const v = envString(allocator, name) orelse return false;
+    defer allocator.free(v);
+    return v.len > 0 and (std.mem.eql(u8, v, "1") or std.mem.eql(u8, v, "true"));
+}
+
+fn initLogSink(allocator: std.mem.Allocator) !LogSink {
+    if (envFlag(allocator, "TUI_LOG_STDERR")) return .{};
+
+    if (!std.posix.isatty(std.posix.STDERR_FILENO)) return .{};
+
+    const path_owned = envString(allocator, "TUI_LOG_PATH");
+    defer if (path_owned) |p| allocator.free(p);
+    const path = if (path_owned) |p| p else "/tmp/tui_trace.log";
+    const f = try std.fs.createFileAbsolute(path, .{ .truncate = true });
+    return .{ .file = f };
+}
+
+fn logPrint(sink: *LogSink, comptime fmt: []const u8, args: anytype) void {
+    if (sink.file) |f| {
+        var buf: [4096]u8 = undefined;
+        var w = f.writerStreaming(&buf);
+        w.interface.print(fmt, args) catch {};
+        w.interface.flush() catch {};
+        return;
+    }
+    var buf: [4096]u8 = undefined;
+    var w = std.fs.File.stderr().writerStreaming(&buf);
+    w.interface.print(fmt, args) catch {};
+    w.interface.flush() catch {};
+}
+
+fn logWriteAll(sink: *LogSink, bytes: []const u8) void {
+    if (sink.file) |f| {
+        var buf: [4096]u8 = undefined;
+        var w = f.writerStreaming(&buf);
+        w.interface.writeAll(bytes) catch {};
+        w.interface.flush() catch {};
+        return;
+    }
+    var buf: [4096]u8 = undefined;
+    var w = std.fs.File.stderr().writerStreaming(&buf);
+    w.interface.writeAll(bytes) catch {};
+    w.interface.flush() catch {};
+}
+
+fn logRender(sink: *LogSink, m: renderer_mod.DrawMetrics) void {
+    logPrint(
+        sink,
+        "RENDER full={s} bytes={d} changed_cells={d} cursor_moves={d}\n",
+        .{ if (m.full) "true" else "false", m.bytes, m.changed_cells, m.cursor_moves },
+    );
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -27,6 +98,12 @@ pub fn main() !void {
     };
     defer term.deinit();
 
+    var log_sink = try initLogSink(allocator);
+    defer log_sink.deinit();
+
+    var renderer = renderer_mod.Renderer.init(allocator);
+    defer renderer.deinit();
+
     const resolved = try resolveCmdArgv(allocator, cmd_argv);
     defer {
         if (resolved.owned_cmd0) allocator.free(resolved.argv[0]);
@@ -36,7 +113,7 @@ pub fn main() !void {
     var child = std.process.Child.init(resolved.argv, allocator);
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Inherit;
+    child.stderr_behavior = .Pipe;
     try child.spawn();
     defer {
         _ = child.wait() catch {};
@@ -44,6 +121,7 @@ pub fn main() !void {
 
     const child_in_file = child.stdin orelse return error.Unexpected;
     const child_out_file = child.stdout orelse return error.Unexpected;
+    const child_err_file = child.stderr orelse return error.Unexpected;
 
     var child_in_buf: [4096]u8 = undefined;
     var child_in_w = child_in_file.writerStreaming(&child_in_buf);
@@ -58,6 +136,8 @@ pub fn main() !void {
     defer current_arena.deinit();
     var current_root: ?protocol.Node = null;
 
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(allocator);
     var focused_id: ?[]const u8 = null;
     var auto_focus_done: bool = false;
     var widgets: std.ArrayList(WidgetEntry) = .empty;
@@ -68,11 +148,13 @@ pub fn main() !void {
     defer render_lists.deinit(allocator);
 
     const backend_out_fd = child_out_file.handle;
+    const backend_err_fd = child_err_file.handle;
     const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
 
     while (true) {
         var fds = [_]std.posix.pollfd{
             .{ .fd = backend_out_fd, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = backend_err_fd, .events = std.posix.POLL.IN, .revents = 0 },
             .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
         };
 
@@ -82,16 +164,22 @@ pub fn main() !void {
             break;
         }
 
+        if ((fds[1].revents & std.posix.POLL.IN) != 0) {
+            var buf: [4096]u8 = undefined;
+            const n = std.posix.read(backend_err_fd, &buf) catch 0;
+            if (n > 0) logWriteAll(&log_sink, buf[0..n]);
+        }
+
         if ((fds[0].revents & std.posix.POLL.IN) != 0) {
             const n = patch_lr.readMore() catch |e| {
                 if (e == error.LineTooLong) {
-                    std.debug.print("PATCH_ERR reason=line_too_long\n", .{});
+                    logPrint(&log_sink, "PATCH_ERR reason=line_too_long\n", .{});
                     continue;
                 }
                 return e;
             };
             if (n == 0) break;
-            std.debug.print("PATCH_RX bytes={d}\n", .{n});
+            logPrint(&log_sink, "PATCH_RX bytes={d}\n", .{n});
 
             while (patch_lr.nextLine()) |line| {
                 var next_arena = std.heap.ArenaAllocator.init(allocator);
@@ -103,9 +191,9 @@ pub fn main() !void {
 
                 const msg = protocol.parseMsgLeaky(next_arena.allocator(), line_owned) catch |e| {
                     if (e == error.UnknownPatchMode) {
-                        std.debug.print("PATCH_ERR reason=unknown_mode\n", .{});
+                        logPrint(&log_sink, "PATCH_ERR reason=unknown_mode\n", .{});
                     } else {
-                        std.debug.print("PATCH_ERR reason={s}\n", .{@errorName(e)});
+                        logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
                     }
                     continue;
                 };
@@ -118,17 +206,31 @@ pub fn main() !void {
                                 current_arena = next_arena;
                                 current_root = f.root;
                                 accepted = true;
-                                std.debug.print("PATCH_OK kind=full\n", .{});
+                                logPrint(&log_sink, "PATCH_OK kind=full\n", .{});
 
-                                try syncUiAfterPatch(allocator, child_in, &widgets, &focused_id, &auto_focus_done, current_root.?);
+                                try syncUiAfterPatch(
+                                    allocator,
+                                    &log_sink,
+                                    child_in,
+                                    &widgets,
+                                    &focused_id_buf,
+                                    &focused_id,
+                                    &auto_focus_done,
+                                    current_root.?,
+                                );
                                 try child_in.flush();
 
                                 const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                                try render.render(&term, current_root.?, rs);
+                                try renderer.draw(&term, current_root.?, rs);
+                                logRender(&log_sink, renderer.last_metrics);
                             },
                             .target => |t| {
                                 if (current_root == null) {
-                                    std.debug.print("PATCH_WARN kind=target id={s} found=false reason=no_root\n", .{t.target});
+                                    logPrint(
+                                        &log_sink,
+                                        "PATCH_WARN kind=target id={s} found=false reason=no_root\n",
+                                        .{t.target},
+                                    );
                                     continue;
                                 }
 
@@ -137,7 +239,8 @@ pub fn main() !void {
                                 switch (t.mode) {
                                     .replace => {
                                         found = tree.applyPatchById(&current_root.?, t.target, cloned);
-                                        std.debug.print(
+                                        logPrint(
+                                            &log_sink,
                                             "PATCH_{s} kind=target mode=replace id={s} found={s}\n",
                                             .{ if (found) "OK" else "WARN", t.target, if (found) "true" else "false" },
                                         );
@@ -151,11 +254,12 @@ pub fn main() !void {
                                             cloned,
                                             &stats,
                                         ) catch |e| {
-                                            std.debug.print("PATCH_ERR reason={s}\n", .{@errorName(e)});
+                                            logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
                                             continue;
                                         };
 
-                                        std.debug.print(
+                                        logPrint(
+                                            &log_sink,
                                             "PATCH_{s} kind=target mode=morph id={s} found={s} reused={d} inserted={d} removed={d}\n",
                                             .{
                                                 if (found) "OK" else "WARN",
@@ -167,7 +271,8 @@ pub fn main() !void {
                                             },
                                         );
                                         if (stats.type_mismatch > 0) {
-                                            std.debug.print(
+                                            logPrint(
+                                                &log_sink,
                                                 "MORPH_WARN type_mismatch replaced=true count={d}\n",
                                                 .{stats.type_mismatch},
                                             );
@@ -177,11 +282,21 @@ pub fn main() !void {
 
                                 if (!found) continue;
 
-                                try syncUiAfterPatch(allocator, child_in, &widgets, &focused_id, &auto_focus_done, current_root.?);
+                                try syncUiAfterPatch(
+                                    allocator,
+                                    &log_sink,
+                                    child_in,
+                                    &widgets,
+                                    &focused_id_buf,
+                                    &focused_id,
+                                    &auto_focus_done,
+                                    current_root.?,
+                                );
                                 try child_in.flush();
 
                                 const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                                try render.render(&term, current_root.?, rs);
+                                try renderer.draw(&term, current_root.?, rs);
+                                logRender(&log_sink, renderer.last_metrics);
                             },
                         }
                     },
@@ -190,21 +305,32 @@ pub fn main() !void {
             }
         }
 
-        if ((fds[1].revents & std.posix.POLL.IN) != 0) {
+        if ((fds[2].revents & std.posix.POLL.IN) != 0) {
             const b = try term.readByte();
             if (b == '\t' or (b == 0x1b and try readShiftTab(&term))) {
                 if (current_root != null) {
-                    focused_id = try cycleFocusInTree(allocator, current_root.?, focused_id);
+                    const next_focus = try cycleFocusInTree(allocator, current_root.?, focused_id);
+                    try setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
                 } else {
-                    focused_id = null;
+                    try setFocusId(allocator, &focused_id_buf, &focused_id, null);
                 }
-                std.debug.print("EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
+                logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
                 try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
 
                 if (current_root != null) {
-                    try syncUiAfterPatch(allocator, child_in, &widgets, &focused_id, &auto_focus_done, current_root.?);
+                    try syncUiAfterPatch(
+                        allocator,
+                        &log_sink,
+                        child_in,
+                        &widgets,
+                        &focused_id_buf,
+                        &focused_id,
+                        &auto_focus_done,
+                        current_root.?,
+                    );
                     const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                    try render.render(&term, current_root.?, rs);
+                    try renderer.draw(&term, current_root.?, rs);
+                    logRender(&log_sink, renderer.last_metrics);
                 }
                 try child_in.flush();
                 continue;
@@ -212,20 +338,20 @@ pub fn main() !void {
 
             // Always allow exit keys.
             if (b == 3) {
-                std.debug.print("EVENT_TX name=key key=ctrl-c\n", .{});
+                logPrint(&log_sink, "EVENT_TX name=key key=ctrl-c\n", .{});
                 try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
                 try child_in.flush();
                 break;
             }
             if (b == 'x') {
-                std.debug.print("EVENT_TX name=key key=x\n", .{});
+                logPrint(&log_sink, "EVENT_TX name=key key=x\n", .{});
                 try protocol.writeKeyEventJsonl(child_in, "x");
                 try child_in.flush();
                 break;
             }
 
             if (b == 'q') {
-                std.debug.print("EVENT_TX name=key key=q\n", .{});
+                logPrint(&log_sink, "EVENT_TX name=key key=q\n", .{});
                 try protocol.writeKeyEventJsonl(child_in, "q");
                 try child_in.flush();
                 continue;
@@ -241,6 +367,7 @@ pub fn main() !void {
                         const delta: isize = if (b == 'j') 1 else -1;
                         const changed = try moveListSelectionForId(
                             allocator,
+                            &log_sink,
                             child_in,
                             &widgets,
                             current_root.?,
@@ -250,28 +377,30 @@ pub fn main() !void {
                         if (changed) {
                             try child_in.flush();
                             const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                            try render.render(&term, current_root.?, rs);
+                            try renderer.draw(&term, current_root.?, rs);
+                            logRender(&log_sink, renderer.last_metrics);
                         }
                         continue;
                     }
 
                     if (b == '\r' or b == '\n') {
-                        try activateListForId(child_in, widgets.items, focused_id.?);
+                        try activateListForId(&log_sink, child_in, widgets.items, focused_id.?);
                         try child_in.flush();
                         continue;
                     }
                 },
                 .input => {
                     const changed = handleFocusedInputByte(allocator, &widgets, focused_id.?, b) catch |e| blk: {
-                        std.debug.print("INPUT_ERR reason={s}\n", .{@errorName(e)});
+                        logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
                         break :blk false;
                     };
                     if (!changed) continue;
-                    try emitInputEventForId(child_in, widgets.items, focused_id.?);
+                    try emitInputEventForId(&log_sink, child_in, widgets.items, focused_id.?);
                     try child_in.flush();
 
                     const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                    try render.render(&term, current_root.?, rs);
+                    try renderer.draw(&term, current_root.?, rs);
+                    logRender(&log_sink, renderer.last_metrics);
                     continue;
                 },
             }
@@ -460,6 +589,17 @@ fn buildRenderState(
         }
     }
 
+    std.sort.pdq(render.InputState, render_inputs.items, {}, struct {
+        fn lessThan(_: void, a: render.InputState, b: render.InputState) bool {
+            return std.mem.order(u8, a.id, b.id) == .lt;
+        }
+    }.lessThan);
+    std.sort.pdq(render.ListState, render_lists.items, {}, struct {
+        fn lessThan(_: void, a: render.ListState, b: render.ListState) bool {
+            return std.mem.order(u8, a.id, b.id) == .lt;
+        }
+    }.lessThan);
+
     return .{
         .focused_id = focused_id,
         .inputs = render_inputs.items,
@@ -481,7 +621,6 @@ fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focus
         },
         .list => |l| {
             try out.append(allocator, .{ .id = l.id, .kind = .list });
-            for (l.children) |child| try collectFocusablesInto(allocator, out, child);
         },
         .vbox => |v| {
             for (v.children) |child| try collectFocusablesInto(allocator, out, child);
@@ -520,10 +659,28 @@ fn focusedKindInTree(allocator: std.mem.Allocator, root: protocol.Node, id: []co
     return null;
 }
 
+fn setFocusId(
+    allocator: std.mem.Allocator,
+    buf: *std.ArrayList(u8),
+    focused_id: *?[]const u8,
+    next: ?[]const u8,
+) !void {
+    if (next == null) {
+        buf.clearRetainingCapacity();
+        focused_id.* = null;
+        return;
+    }
+    buf.clearRetainingCapacity();
+    try buf.appendSlice(allocator, next.?);
+    focused_id.* = buf.items;
+}
+
 fn syncUiAfterPatch(
     allocator: std.mem.Allocator,
+    log_sink: *LogSink,
     backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
+    focused_id_buf: *std.ArrayList(u8),
     focused_id: *?[]const u8,
     auto_focus_done: *bool,
     root: protocol.Node,
@@ -536,22 +693,23 @@ fn syncUiAfterPatch(
 
     if (focused_id.* == null) {
         if (!auto_focus_done.* and focusables.items.len > 0) {
-            focused_id.* = focusables.items[0].id;
+            try setFocusId(allocator, focused_id_buf, focused_id, focusables.items[0].id);
             auto_focus_done.* = true;
-            std.debug.print("EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
+            logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
             try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
         }
     } else {
         if (!focusablesContainsId(focusables.items, focused_id.*.?)) {
-            focused_id.* = if (focusables.items.len > 0) focusables.items[0].id else null;
-            std.debug.print("EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
+            const next = if (focusables.items.len > 0) focusables.items[0].id else null;
+            try setFocusId(allocator, focused_id_buf, focused_id, next);
+            logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
             try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
         }
     }
 
     for (focusables.items) |f| {
         if (f.kind != .list) continue;
-        try syncListForId(allocator, backend_in, widgets, root, f.id);
+        try syncListForId(allocator, log_sink, backend_in, widgets, root, f.id);
     }
 }
 
@@ -673,6 +831,7 @@ fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
 
 fn syncListForId(
     allocator: std.mem.Allocator,
+    log_sink: *LogSink,
     backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
     root: protocol.Node,
@@ -719,18 +878,20 @@ fn syncListForId(
     if (sel_idx < st.scroll) st.scroll = sel_idx;
     if (sel_idx >= st.scroll + effective_height) st.scroll = sel_idx - effective_height + 1;
 
-    std.debug.print(
+    logPrint(
+        log_sink,
         "LIST_SELECT id={s} item={s} index={d} scroll={d}\n",
         .{ list_id, st.selected_id.items, sel_idx, st.scroll },
     );
     if (selection_changed) {
-        std.debug.print("EVENT_TX name=select id={s} item={s}\n", .{ list_id, st.selected_id.items });
+        logPrint(log_sink, "EVENT_TX name=select id={s} item={s}\n", .{ list_id, st.selected_id.items });
         try protocol.writeSelectEventJsonl(backend_in, list_id, st.selected_id.items);
     }
 }
 
 fn moveListSelectionForId(
     allocator: std.mem.Allocator,
+    log_sink: *LogSink,
     backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
     root: protocol.Node,
@@ -769,20 +930,21 @@ fn moveListSelectionForId(
     if (next_idx < st.scroll) st.scroll = next_idx;
     if (next_idx >= st.scroll + effective_height) st.scroll = next_idx - effective_height + 1;
 
-    std.debug.print(
+    logPrint(
+        log_sink,
         "LIST_SELECT id={s} item={s} index={d} scroll={d}\n",
         .{ list_id, next_id, next_idx, st.scroll },
     );
-    std.debug.print("EVENT_TX name=select id={s} item={s}\n", .{ list_id, next_id });
+    logPrint(log_sink, "EVENT_TX name=select id={s} item={s}\n", .{ list_id, next_id });
     try protocol.writeSelectEventJsonl(backend_in, list_id, next_id);
     return true;
 }
 
-fn activateListForId(backend_in: anytype, widgets: []const WidgetEntry, list_id: []const u8) !void {
+fn activateListForId(log_sink: *LogSink, backend_in: anytype, widgets: []const WidgetEntry, list_id: []const u8) !void {
     const idx = findWidgetIndex(widgets, list_id) orelse return;
     const st = widgets[idx].state.list;
     if (st.selected_id.items.len == 0) return;
-    std.debug.print("EVENT_TX name=activate id={s} item={s}\n", .{ list_id, st.selected_id.items });
+    logPrint(log_sink, "EVENT_TX name=activate id={s} item={s}\n", .{ list_id, st.selected_id.items });
     try protocol.writeActivateEventJsonl(backend_in, list_id, st.selected_id.items);
 }
 
@@ -797,10 +959,11 @@ fn handleFocusedInputByte(
     return try input.handleInputByte(allocator, &st.value, &st.cursor, b);
 }
 
-fn emitInputEventForId(backend_in: anytype, widgets: []const WidgetEntry, input_id: []const u8) !void {
+fn emitInputEventForId(log_sink: *LogSink, backend_in: anytype, widgets: []const WidgetEntry, input_id: []const u8) !void {
     const idx = findWidgetIndex(widgets, input_id) orelse return;
     const st = widgets[idx].state.input;
-    std.debug.print(
+    logPrint(
+        log_sink,
         "EVENT_TX name=input id={s} len={d} cursor={d}\n",
         .{ input_id, st.value.items.len, st.cursor },
     );

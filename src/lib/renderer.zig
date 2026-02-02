@@ -1,0 +1,156 @@
+const std = @import("std");
+
+const frame_mod = @import("frame.zig");
+const protocol = @import("protocol.zig");
+const render = @import("render.zig");
+const Size = @import("term_size.zig").Size;
+
+const Frame = frame_mod.Frame;
+const CursorPos = frame_mod.CursorPos;
+
+pub const DrawMetrics = struct {
+    full: bool = false,
+    bytes: usize = 0,
+    changed_cells: usize = 0,
+    cursor_moves: usize = 0,
+};
+
+pub const Renderer = struct {
+    allocator: std.mem.Allocator,
+    prev: Frame = .{},
+    next: Frame = .{},
+    has_prev: bool = false,
+    last_metrics: DrawMetrics = .{},
+
+    pub fn init(allocator: std.mem.Allocator) Renderer {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Renderer) void {
+        self.prev.deinit(self.allocator);
+        self.next.deinit(self.allocator);
+        self.has_prev = false;
+        self.last_metrics = .{};
+    }
+
+    pub fn draw(self: *Renderer, term: anytype, root: protocol.Node, state: render.RenderState) !void {
+        const size = term.getSize() catch Size{ .rows = 0, .cols = 0 };
+        const eff = effectiveSize(size);
+
+        if (self.prev.rows != eff.rows or self.prev.cols != eff.cols) {
+            try self.prev.resize(self.allocator, eff.rows, eff.cols);
+            try self.next.resize(self.allocator, eff.rows, eff.cols);
+            self.has_prev = false;
+        }
+
+        self.next.clear(' ');
+        render.renderToFrame(root, state, &self.next);
+        self.next.recomputeRowMax();
+
+        var metrics: DrawMetrics = .{};
+        if (!self.has_prev) {
+            metrics.full = true;
+            try fullPaint(term, &metrics, &self.next);
+            self.has_prev = true;
+        } else {
+            metrics.full = false;
+            try diffAndFlush(term, &metrics, &self.prev, &self.next);
+        }
+
+        try applyCursor(term, &metrics, self.next.cursor);
+        self.last_metrics = metrics;
+
+        std.mem.swap(Frame, &self.prev, &self.next);
+    }
+};
+
+fn effectiveSize(size: Size) Size {
+    var rows = size.rows;
+    var cols = size.cols;
+    if (rows == 0) rows = 24;
+    if (cols == 0) cols = 80;
+    return .{ .rows = rows, .cols = cols };
+}
+
+fn termWriteAll(term: anytype, metrics: *DrawMetrics, bytes: []const u8) !void {
+    try term.writeAll(bytes);
+    metrics.bytes += bytes.len;
+}
+
+fn emitCursorMove(term: anytype, metrics: *DrawMetrics, row: usize, col: usize) !void {
+    var esc_buf: [64]u8 = undefined;
+    const esc = try std.fmt.bufPrint(&esc_buf, "\x1b[{d};{d}H", .{ row, col });
+    try termWriteAll(term, metrics, esc);
+    metrics.cursor_moves += 1;
+}
+
+fn fullPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
+    try termWriteAll(term, metrics, "\x1b[2J\x1b[H");
+
+    const rows: usize = @as(usize, next.rows);
+    const cols: usize = @as(usize, next.cols);
+    _ = cols;
+
+    var r: usize = 0;
+    while (r < rows) : (r += 1) {
+        const max: usize = @as(usize, next.row_max[r]);
+        if (max > 0) {
+            const row = next.rowSlice(r);
+            try termWriteAll(term, metrics, row[0..max]);
+        }
+        try termWriteAll(term, metrics, "\x1b[K");
+        if (r + 1 < rows) {
+            try termWriteAll(term, metrics, "\r\n");
+        }
+    }
+}
+
+fn diffAndFlush(term: anytype, metrics: *DrawMetrics, prev: *const Frame, next: *const Frame) !void {
+    const rows: usize = @as(usize, next.rows);
+    const cols: usize = @as(usize, next.cols);
+    _ = cols;
+
+    var r: usize = 0;
+    while (r < rows) : (r += 1) {
+        const prev_max: usize = @as(usize, prev.row_max[r]);
+        const next_max: usize = @as(usize, next.row_max[r]);
+
+        const compare_end: usize = if (next_max < prev_max) next_max else @max(prev_max, next_max);
+        if (compare_end > 0) {
+            const prev_row = prev.rowSlice(r);
+            const next_row = next.rowSlice(r);
+
+            var c: usize = 0;
+            while (c < compare_end) {
+                if (prev_row[c] == next_row[c]) {
+                    c += 1;
+                    continue;
+                }
+
+                const start = c;
+                c += 1;
+                while (c < compare_end and prev_row[c] != next_row[c]) : (c += 1) {}
+
+                try emitCursorMove(term, metrics, r + 1, start + 1);
+                try termWriteAll(term, metrics, next_row[start..c]);
+                metrics.changed_cells += c - start;
+            }
+        }
+
+        if (next_max < prev_max) {
+            const erase_col = next_max + 1;
+            try emitCursorMove(term, metrics, r + 1, erase_col);
+            try termWriteAll(term, metrics, "\x1b[K");
+            metrics.changed_cells += prev_max - next_max;
+        }
+    }
+}
+
+fn applyCursor(term: anytype, metrics: *DrawMetrics, cursor: ?CursorPos) !void {
+    if (cursor) |c| {
+        try termWriteAll(term, metrics, "\x1b[?25h");
+        try emitCursorMove(term, metrics, c.row, c.col);
+    } else {
+        try termWriteAll(term, metrics, "\x1b[?25l");
+    }
+}

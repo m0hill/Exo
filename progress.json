@@ -89,5 +89,24 @@
       "Backend-driven structural morphs without hardcoded widget ids"
     ],
     "timestamp": "2026-02-02"
+  },
+  {
+    "slice": 6,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Incremental renderer: render-to-frame + frame diff to emit minimal terminal updates (no full clears after first draw)",
+    "deliverables": [
+      "src/lib/frame.zig: Frame buffer (rows/cols, cells, row_max, cursor target)",
+      "src/lib/renderer.zig: Renderer with prev/next frames + row diff + ESC[K for shrinking lines",
+      "src/lib/render.zig: refactor to renderToFrame (pure frame build, no terminal I/O)",
+      "src/bin/tui_runtime.zig: use Renderer.draw() instead of full-screen render per update",
+      "src/test/tests.zig: incremental render test (second draw has no \\x1b[2J and much smaller output)"
+    ],
+    "boundaries_hit": [
+      "Stateful rendering across frames (prev/next swap)",
+      "O(rows*cols) diff with contiguous runs and erase-to-EOL for shrink",
+      "Cursor visibility/placement preserved under partial updates"
+    ],
+    "timestamp": "2026-02-02"
   }
 ]
