@@ -1,9 +1,6 @@
 const std = @import("std");
 
-pub const Size = struct {
-    rows: u16,
-    cols: u16,
-};
+pub const Size = @import("term_size.zig").Size;
 
 pub const Terminal = struct {
     stdin_fd: std.posix.fd_t,

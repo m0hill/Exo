@@ -4,6 +4,8 @@ const jsonl = @import("jsonl.zig");
 const protocol = @import("protocol.zig");
 const render = @import("render.zig");
 const terminal = @import("terminal.zig");
+const input = @import("input.zig");
+const tree = @import("tree.zig");
 
 const query_id = "query";
 
@@ -111,7 +113,7 @@ pub fn main() !void {
                                 accepted = true;
                                 std.debug.print("PATCH_OK kind=full\n", .{});
 
-                                if (focused_id == null and treeContainsId(current_root.?, query_id)) {
+                                if (focused_id == null and tree.treeContainsId(current_root.?, query_id)) {
                                     focused_id = query_id;
                                     std.debug.print("EVENT_TX name=focus id={s}\n", .{query_id});
                                     try protocol.writeFocusEventJsonl(child_in, query_id);
@@ -132,7 +134,7 @@ pub fn main() !void {
                                 }
 
                                 const cloned = try cloneNodeLeaky(current_arena.allocator(), t.node);
-                                const found = applyPatchById(&current_root.?, t.target, cloned);
+                                const found = tree.applyPatchById(&current_root.?, t.target, cloned);
                                 std.debug.print(
                                     "PATCH_{s} kind=target id={s} found={s}\n",
                                     .{ if (found) "OK" else "WARN", t.target, if (found) "true" else "false" },
@@ -193,7 +195,7 @@ pub fn main() !void {
             }
 
             if (focused_id != null and std.mem.eql(u8, focused_id.?, query_id)) {
-                const changed = handleInputByte(allocator, &input_value, &input_cursor, b) catch |e| blk: {
+                const changed = input.handleInputByte(allocator, &input_value, &input_cursor, b) catch |e| blk: {
                     std.debug.print("INPUT_ERR reason={s}\n", .{@errorName(e)});
                     break :blk false;
                 };
@@ -273,38 +275,6 @@ fn mapKey(b: u8) ?[]const u8 {
     };
 }
 
-fn handleInputByte(
-    allocator: std.mem.Allocator,
-    buf: *std.ArrayList(u8),
-    cursor: *usize,
-    b: u8,
-) !bool {
-    switch (b) {
-        8, 127 => {
-            if (cursor.* == 0) return false;
-            cursor.* -= 1;
-            _ = buf.orderedRemove(cursor.*);
-            return true;
-        },
-        else => {},
-    }
-
-    if (b < 0x20 or b == 0x7f) return false;
-    // Only ASCII for tracer #2.
-    if (b >= 0x80) return false;
-
-    if (cursor.* > buf.items.len) cursor.* = buf.items.len;
-    if (cursor.* == buf.items.len) {
-        try buf.append(allocator, b);
-        cursor.* += 1;
-        return true;
-    }
-
-    try buf.insert(allocator, cursor.*, b);
-    cursor.* += 1;
-    return true;
-}
-
 fn readShiftTab(term: *terminal.Terminal) !bool {
     // Common sequence: ESC [ Z
     const b2 = try readByteIfReady(term) orelse return false;
@@ -321,19 +291,6 @@ fn readByteIfReady(term: *terminal.Terminal) !?u8 {
     if (rc == 0) return null;
     if ((fds[0].revents & std.posix.POLL.IN) == 0) return null;
     return try term.readByte();
-}
-
-fn treeContainsId(node: protocol.Node, id: []const u8) bool {
-    if (std.mem.eql(u8, nodeId(node), id)) return true;
-    return switch (node) {
-        .vbox => |v| {
-            for (v.children) |child| {
-                if (treeContainsId(child, id)) return true;
-            }
-            return false;
-        },
-        else => false,
-    };
 }
 
 fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.Node {
@@ -353,23 +310,6 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             }
             break :blk .{ .vbox = .{ .id = try allocator.dupe(u8, v.id), .children = children } };
         },
-    };
-}
-
-fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: protocol.Node) bool {
-    if (std.mem.eql(u8, nodeId(root.*), target)) {
-        root.* = replacement;
-        return true;
-    }
-
-    return switch (root.*) {
-        .vbox => |*v| {
-            for (v.children) |*child| {
-                if (applyPatchById(child, target, replacement)) return true;
-            }
-            return false;
-        },
-        else => false,
     };
 }
 

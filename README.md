@@ -19,11 +19,26 @@ If terminal is broken, run `reset`.
 
 1. `zig build demo`
 2. Confirm `Tick: 0` increments every ~250ms
-3. Press `Tab` → cursor appears on the input line
+3. Confirm input is focused (cursor visible on the input line); press `Tab` to toggle focus
 4. Type `hello` (don’t press Enter)
 5. Confirm tick keeps updating and the input stays intact (value + cursor) during patches
-6. Confirm status updates to include your last input
-7. Press `x` to exit
+6. Confirm status updates to include your last input and focus id
+7. Press `x` (or `Ctrl-C`) to exit
+
+Tip: logs are written to stderr; run `zig build demo 2>trace.log` if you want a clean UI.
+
+## Automated tests
+
+Run:
+
+- `zig build test`
+
+What’s covered (no real TTY required):
+
+- Rendering output + cursor placement via a mock terminal (`src/testing_terminal.zig`)
+- Input editing rules (`src/input.zig`)
+- Patch-by-id tree updates (`src/tree.zig`)
+All tests live in `src/tests.zig`.
 
 ## Protocol (v0.2)
 

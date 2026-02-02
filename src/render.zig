@@ -1,6 +1,6 @@
 const std = @import("std");
 const protocol = @import("protocol.zig");
-const terminal = @import("terminal.zig");
+const Size = @import("term_size.zig").Size;
 
 pub const RenderState = struct {
     focused_id: ?[]const u8 = null,
@@ -21,9 +21,9 @@ const RenderCtx = struct {
     cursor: ?CursorPos = null,
 };
 
-pub fn render(term: *terminal.Terminal, root: protocol.Node, state: RenderState) !void {
+pub fn render(term: anytype, root: protocol.Node, state: RenderState) !void {
     try term.writeAll("\x1b[2J\x1b[H");
-    const size = term.getSize() catch terminal.Size{ .rows = 0, .cols = 0 };
+    const size = term.getSize() catch Size{ .rows = 0, .cols = 0 };
     var ctx: RenderCtx = .{
         .cols = size.cols,
         .rows_left = if (size.rows == 0) std.math.maxInt(usize) else size.rows,
@@ -40,7 +40,7 @@ pub fn render(term: *terminal.Terminal, root: protocol.Node, state: RenderState)
     }
 }
 
-fn renderNode(term: *terminal.Terminal, node: protocol.Node, ctx: *RenderCtx, state: RenderState) !void {
+fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: RenderState) !void {
     if (ctx.rows_left == 0) return;
     switch (node) {
         .text => |t| {
@@ -89,7 +89,7 @@ fn renderNode(term: *terminal.Terminal, node: protocol.Node, ctx: *RenderCtx, st
     }
 }
 
-fn renderLine(term: *terminal.Terminal, ctx: *RenderCtx, text: []const u8) !void {
+fn renderLine(term: anytype, ctx: *RenderCtx, text: []const u8) !void {
     if (ctx.rows_left == 0) return;
     const cols: usize = @as(usize, ctx.cols);
     const line = if (ctx.cols == 0 or text.len <= cols) text else text[0..cols];
@@ -100,7 +100,7 @@ fn renderLine(term: *terminal.Terminal, ctx: *RenderCtx, text: []const u8) !void
     ctx.row += 1;
 }
 
-fn renderLinePieces(term: *terminal.Terminal, ctx: *RenderCtx, pieces: []const []const u8) !void {
+fn renderLinePieces(term: anytype, ctx: *RenderCtx, pieces: []const []const u8) !void {
     if (ctx.rows_left == 0) return;
 
     var remaining: usize = if (ctx.cols == 0) std.math.maxInt(usize) else @as(usize, ctx.cols);
