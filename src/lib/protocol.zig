@@ -19,12 +19,15 @@ pub const EventMsg = union(enum) {
     key: struct { key: []const u8 },
     focus: struct { id: []const u8 },
     input: struct { id: []const u8, value: []const u8, cursor: usize },
+    select: struct { id: []const u8, item: []const u8 },
+    activate: struct { id: []const u8, item: []const u8 },
 };
 
 pub const Node = union(enum) {
     vbox: VBoxNode,
     text: TextNode,
     input: InputNode,
+    list: ListNode,
 };
 
 pub const VBoxNode = struct {
@@ -40,6 +43,12 @@ pub const TextNode = struct {
 pub const InputNode = struct {
     id: []const u8,
     placeholder: ?[]const u8 = null,
+};
+
+pub const ListNode = struct {
+    id: []const u8,
+    height: ?usize = null,
+    children: []Node,
 };
 
 pub const ParseMsgError = error{
@@ -95,6 +104,14 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 else => return error.WrongType,
             };
             return .{ .event = .{ .input = .{ .id = id, .value = value, .cursor = cursor } } };
+        } else if (std.mem.eql(u8, name, "select")) {
+            const id = try getRequiredString(obj, "id");
+            const item = try getRequiredString(obj, "item");
+            return .{ .event = .{ .select = .{ .id = id, .item = item } } };
+        } else if (std.mem.eql(u8, name, "activate")) {
+            const id = try getRequiredString(obj, "id");
+            const item = try getRequiredString(obj, "item");
+            return .{ .event = .{ .activate = .{ .id = id, .item = item } } };
         } else {
             return error.UnknownEventName;
         }
@@ -134,6 +151,16 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const id = try getRequiredString(obj, "id");
         const placeholder = try getOptionalString(obj, "placeholder");
         return .{ .input = .{ .id = id, .placeholder = placeholder } };
+    } else if (std.mem.eql(u8, type_str, "list")) {
+        const id = try getRequiredString(obj, "id");
+        const height = try getOptionalUsize(obj, "height");
+        const children_val = try getRequired(obj, "children");
+        const children_arr = try asArray(children_val);
+        var out = try allocator.alloc(Node, children_arr.items.len);
+        for (children_arr.items, 0..) |child_val, i| {
+            out[i] = try parseNodeLeaky(allocator, child_val);
+        }
+        return .{ .list = .{ .id = id, .height = height, .children = out } };
     } else {
         return error.UnknownNodeType;
     }
@@ -169,6 +196,14 @@ fn getOptionalString(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?
     const v = obj.get(field) orelse return null;
     return switch (v) {
         .string => |s| s,
+        else => error.WrongType,
+    };
+}
+
+fn getOptionalUsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?usize {
+    const v = obj.get(field) orelse return null;
+    return switch (v) {
+        .integer => |n| if (n < 0) return error.WrongType else @as(usize, @intCast(n)),
         else => error.WrongType,
     };
 }
@@ -216,4 +251,20 @@ pub fn writeInputEventJsonl(writer: anytype, id: []const u8, value: []const u8, 
     try writer.writeAll(",\"value\":");
     try writeJsonString(writer, value);
     try writer.print(",\"cursor\":{d}}}\n", .{cursor});
+}
+
+pub fn writeSelectEventJsonl(writer: anytype, id: []const u8, item: []const u8) !void {
+    try writer.writeAll("{\"type\":\"event\",\"name\":\"select\",\"id\":");
+    try writeJsonString(writer, id);
+    try writer.writeAll(",\"item\":");
+    try writeJsonString(writer, item);
+    try writer.writeAll("}\n");
+}
+
+pub fn writeActivateEventJsonl(writer: anytype, id: []const u8, item: []const u8) !void {
+    try writer.writeAll("{\"type\":\"event\",\"name\":\"activate\",\"id\":");
+    try writeJsonString(writer, id);
+    try writer.writeAll(",\"item\":");
+    try writeJsonString(writer, item);
+    try writer.writeAll("}\n");
 }

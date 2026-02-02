@@ -147,3 +147,29 @@ test "tree: morph-by-id reorders and inserts children" {
     try std.testing.expectEqualStrings("clock", v.children[4].text.id);
     try std.testing.expectEqualStrings("Tick: 1", v.children[4].text.text);
 }
+
+test "render: focused list shows selection marker and hides cursor" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
+    defer term.deinit();
+
+    var list_children = [_]protocol.Node{
+        .{ .text = .{ .id = "item-1", .text = "Alpha" } },
+        .{ .text = .{ .id = "item-2", .text = "Beta" } },
+        .{ .text = .{ .id = "item-3", .text = "Gamma" } },
+    };
+    var root_children = [_]protocol.Node{
+        .{ .list = .{ .id = "results", .height = 3, .children = list_children[0..] } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = root_children[0..] } };
+
+    try render.render(&term, root, .{
+        .focused_id = "results",
+        .list_id = "results",
+        .list_selected_id = "item-2",
+        .list_scroll = 0,
+    });
+
+    const out = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out, "> Beta") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[?25l") != null);
+}

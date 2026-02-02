@@ -53,5 +53,24 @@
       "Patch-mode compatibility (default replace)"
     ],
     "timestamp": "2026-02-02"
+  },
+  {
+    "slice": 4,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Scrollable selectable list widget with local selection/scroll preserved across morph patches",
+    "deliverables": [
+      "src/lib/protocol.zig: list node type and select/activate events",
+      "src/lib/tree.zig: morph support for list containers",
+      "src/lib/render.zig: list rendering (height + scroll + selection marker)",
+      "src/bin/tui_runtime.zig: focus cycling + j/k selection + enter activation; selection/scroll preservation",
+      "src/bin/backend_demo.zig: continuously morph results list while updating clock/status"
+    ],
+    "boundaries_hit": [
+      "Second stateful widget (list) with local state",
+      "Keyed morphing with reorder/insert/remove under live interaction",
+      "Selection + scroll stability under backend-driven structural updates"
+    ],
+    "timestamp": "2026-02-02"
   }
 ]

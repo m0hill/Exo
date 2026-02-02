@@ -6,6 +6,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
         .vbox => |v| v.id,
         .text => |t| t.id,
         .input => |i| i.id,
+        .list => |l| l.id,
     };
 }
 
@@ -14,6 +15,12 @@ pub fn treeContainsId(node: protocol.Node, id: []const u8) bool {
     return switch (node) {
         .vbox => |v| {
             for (v.children) |child| {
+                if (treeContainsId(child, id)) return true;
+            }
+            return false;
+        },
+        .list => |l| {
+            for (l.children) |child| {
                 if (treeContainsId(child, id)) return true;
             }
             return false;
@@ -31,6 +38,12 @@ pub fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: pro
     return switch (root.*) {
         .vbox => |*v| {
             for (v.children) |*child| {
+                if (applyPatchById(child, target, replacement)) return true;
+            }
+            return false;
+        },
+        .list => |*l| {
+            for (l.children) |*child| {
                 if (applyPatchById(child, target, replacement)) return true;
             }
             return false;
@@ -62,6 +75,12 @@ pub fn morphPatchByIdLeaky(
     return switch (root.*) {
         .vbox => |*v| {
             for (v.children) |*child| {
+                if (try morphPatchByIdLeaky(allocator, child, target, incoming, stats)) return true;
+            }
+            return false;
+        },
+        .list => |*l| {
+            for (l.children) |*child| {
                 if (try morphPatchByIdLeaky(allocator, child, target, incoming, stats)) return true;
             }
             return false;
@@ -137,6 +156,54 @@ fn morphNodeLeaky(
 
             stats.removed += existing_children.len - matched;
             v.children = next_children;
+        },
+        .list => |*l| {
+            const inc = incoming.list;
+            const existing_children = l.children;
+
+            l.height = inc.height;
+
+            var used = try allocator.alloc(bool, existing_children.len);
+            @memset(used, false);
+
+            var next_children = try allocator.alloc(protocol.Node, inc.children.len);
+            var matched: usize = 0;
+
+            for (inc.children, 0..) |inc_child, out_idx| {
+                const inc_id = nodeId(inc_child);
+                var found_idx: ?usize = null;
+
+                for (existing_children, 0..) |ex_child, ex_idx| {
+                    if (used[ex_idx]) continue;
+                    if (std.mem.eql(u8, nodeId(ex_child), inc_id)) {
+                        found_idx = ex_idx;
+                        break;
+                    }
+                }
+
+                if (found_idx) |ex_idx| {
+                    used[ex_idx] = true;
+                    matched += 1;
+
+                    const ex_child = existing_children[ex_idx];
+                    if (std.meta.activeTag(ex_child) == std.meta.activeTag(inc_child)) {
+                        stats.reused += 1;
+                        var next_child = ex_child;
+                        try morphNodeLeaky(allocator, &next_child, inc_child, stats);
+                        next_children[out_idx] = next_child;
+                    } else {
+                        stats.type_mismatch += 1;
+                        stats.replaced += 1;
+                        next_children[out_idx] = inc_child;
+                    }
+                } else {
+                    stats.inserted += 1;
+                    next_children[out_idx] = inc_child;
+                }
+            }
+
+            stats.removed += existing_children.len - matched;
+            l.children = next_children;
         },
     }
 }

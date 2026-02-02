@@ -9,6 +9,7 @@ const input = tui.input;
 const tree = tui.tree;
 
 const query_id = "query";
+const results_id = "results";
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -64,6 +65,10 @@ pub fn main() !void {
     var input_value: std.ArrayList(u8) = .empty;
     defer input_value.deinit(allocator);
     var input_cursor: usize = 0;
+
+    var list_selected: std.ArrayList(u8) = .empty;
+    defer list_selected.deinit(allocator);
+    var list_scroll: usize = 0;
 
     const backend_out_fd = child_out_file.handle;
     const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
@@ -133,11 +138,24 @@ pub fn main() !void {
                                     }
                                 }
 
+                                try syncListStateAfterPatch(
+                                    allocator,
+                                    child_in,
+                                    &list_selected,
+                                    &list_scroll,
+                                    focused_id,
+                                    current_root.?,
+                                );
+                                try child_in.flush();
+
                                 try render.render(&term, current_root.?, .{
                                     .focused_id = focused_id,
                                     .input_id = query_id,
                                     .input_value = input_value.items,
                                     .input_cursor = input_cursor,
+                                    .list_id = results_id,
+                                    .list_selected_id = list_selected.items,
+                                    .list_scroll = list_scroll,
                                 });
                             },
                             .target => |t| {
@@ -200,11 +218,24 @@ pub fn main() !void {
                                     }
                                 }
 
+                                try syncListStateAfterPatch(
+                                    allocator,
+                                    child_in,
+                                    &list_selected,
+                                    &list_scroll,
+                                    focused_id,
+                                    current_root.?,
+                                );
+                                try child_in.flush();
+
                                 try render.render(&term, current_root.?, .{
                                     .focused_id = focused_id,
                                     .input_id = query_id,
                                     .input_value = input_value.items,
                                     .input_cursor = input_cursor,
+                                    .list_id = results_id,
+                                    .list_selected_id = list_selected.items,
+                                    .list_scroll = list_scroll,
                                 });
                             },
                         }
@@ -217,9 +248,20 @@ pub fn main() !void {
         if ((fds[1].revents & std.posix.POLL.IN) != 0) {
             const b = try term.readByte();
             if (b == '\t' or (b == 0x1b and try readShiftTab(&term))) {
-                focused_id = if (focused_id == null) query_id else null;
+                focused_id = cycleFocus(focused_id);
                 std.debug.print("EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
                 try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
+
+                if (current_root != null) {
+                    try syncListStateAfterPatch(
+                        allocator,
+                        child_in,
+                        &list_selected,
+                        &list_scroll,
+                        focused_id,
+                        current_root.?,
+                    );
+                }
                 try child_in.flush();
 
                 if (current_root != null) {
@@ -228,6 +270,9 @@ pub fn main() !void {
                         .input_id = query_id,
                         .input_value = input_value.items,
                         .input_cursor = input_cursor,
+                        .list_id = results_id,
+                        .list_selected_id = list_selected.items,
+                        .list_scroll = list_scroll,
                     });
                 }
                 continue;
@@ -254,6 +299,46 @@ pub fn main() !void {
                 continue;
             }
 
+            if (focused_id != null and std.mem.eql(u8, focused_id.?, results_id)) {
+                if (b == 'j' or b == 'k') {
+                    if (current_root != null) {
+                        const delta: isize = if (b == 'j') 1 else -1;
+                        const changed = try moveListSelection(
+                            allocator,
+                            child_in,
+                            &list_selected,
+                            &list_scroll,
+                            current_root.?,
+                            delta,
+                        );
+                        if (changed) try child_in.flush();
+
+                        try render.render(&term, current_root.?, .{
+                            .focused_id = focused_id,
+                            .input_id = query_id,
+                            .input_value = input_value.items,
+                            .input_cursor = input_cursor,
+                            .list_id = results_id,
+                            .list_selected_id = list_selected.items,
+                            .list_scroll = list_scroll,
+                        });
+                    }
+                    continue;
+                }
+
+                if (b == '\r' or b == '\n') {
+                    if (list_selected.items.len > 0) {
+                        std.debug.print(
+                            "EVENT_TX name=activate id={s} item={s}\n",
+                            .{ results_id, list_selected.items },
+                        );
+                        try protocol.writeActivateEventJsonl(child_in, results_id, list_selected.items);
+                        try child_in.flush();
+                    }
+                    continue;
+                }
+            }
+
             if (focused_id != null and std.mem.eql(u8, focused_id.?, query_id)) {
                 const changed = input.handleInputByte(allocator, &input_value, &input_cursor, b) catch |e| blk: {
                     std.debug.print("INPUT_ERR reason={s}\n", .{@errorName(e)});
@@ -274,6 +359,9 @@ pub fn main() !void {
                         .input_id = query_id,
                         .input_value = input_value.items,
                         .input_cursor = input_cursor,
+                        .list_id = results_id,
+                        .list_selected_id = list_selected.items,
+                        .list_scroll = list_scroll,
                     });
                 }
                 continue;
@@ -370,6 +458,17 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             }
             break :blk .{ .vbox = .{ .id = try allocator.dupe(u8, v.id), .children = children } };
         },
+        .list => |l| blk: {
+            var children = try allocator.alloc(protocol.Node, l.children.len);
+            for (l.children, 0..) |child, idx| {
+                children[idx] = try cloneNodeLeaky(allocator, child);
+            }
+            break :blk .{ .list = .{
+                .id = try allocator.dupe(u8, l.id),
+                .height = l.height,
+                .children = children,
+            } };
+        },
     };
 }
 
@@ -378,5 +477,141 @@ fn nodeId(node: protocol.Node) []const u8 {
         .vbox => |v| v.id,
         .text => |t| t.id,
         .input => |i| i.id,
+        .list => |l| l.id,
     };
+}
+
+fn cycleFocus(current: ?[]const u8) ?[]const u8 {
+    if (current == null) return query_id;
+    if (std.mem.eql(u8, current.?, query_id)) return results_id;
+    if (std.mem.eql(u8, current.?, results_id)) return null;
+    return query_id;
+}
+
+const ListInfo = struct {
+    height: usize,
+    children: []const protocol.Node,
+};
+
+fn findList(root: protocol.Node, id: []const u8) ?ListInfo {
+    if (std.mem.eql(u8, nodeId(root), id)) {
+        return switch (root) {
+            .list => |l| .{
+                .height = l.height orelse 0,
+                .children = l.children,
+            },
+            else => null,
+        };
+    }
+
+    return switch (root) {
+        .vbox => |v| blk: {
+            for (v.children) |child| {
+                if (findList(child, id)) |info| break :blk info;
+            }
+            break :blk null;
+        },
+        .list => |l| blk: {
+            for (l.children) |child| {
+                if (findList(child, id)) |info| break :blk info;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+fn syncListStateAfterPatch(
+    allocator: std.mem.Allocator,
+    backend_in: anytype,
+    list_selected: *std.ArrayList(u8),
+    list_scroll: *usize,
+    focused_id: ?[]const u8,
+    root: protocol.Node,
+) !void {
+    const info = findList(root, results_id) orelse return;
+    if (info.children.len == 0) {
+        list_selected.clearRetainingCapacity();
+        list_scroll.* = 0;
+        return;
+    }
+
+    var selected_index: ?usize = null;
+    if (list_selected.items.len > 0) {
+        for (info.children, 0..) |child, idx| {
+            if (std.mem.eql(u8, nodeId(child), list_selected.items)) {
+                selected_index = idx;
+                break;
+            }
+        }
+    }
+
+    var selection_changed = false;
+    if (selected_index == null) {
+        const new_id = nodeId(info.children[0]);
+        list_selected.clearRetainingCapacity();
+        try list_selected.appendSlice(allocator, new_id);
+        selected_index = 0;
+        selection_changed = true;
+    }
+
+    const height = if (info.height == 0) info.children.len else info.height;
+    const idx = selected_index.?;
+    if (idx < list_scroll.*) list_scroll.* = idx;
+    if (idx >= list_scroll.* + height) list_scroll.* = idx - height + 1;
+
+    const is_focused = focused_id != null and std.mem.eql(u8, focused_id.?, results_id);
+    if (selection_changed or is_focused) {
+        std.debug.print(
+            "LIST_SELECT item={s} index={d} scroll={d}\n",
+            .{ list_selected.items, idx, list_scroll.* },
+        );
+    }
+    if (selection_changed) {
+        std.debug.print(
+            "EVENT_TX name=select id={s} item={s}\n",
+            .{ results_id, list_selected.items },
+        );
+        try protocol.writeSelectEventJsonl(backend_in, results_id, list_selected.items);
+    }
+}
+
+fn moveListSelection(
+    allocator: std.mem.Allocator,
+    backend_in: anytype,
+    list_selected: *std.ArrayList(u8),
+    list_scroll: *usize,
+    root: protocol.Node,
+    delta: isize,
+) !bool {
+    const info = findList(root, results_id) orelse return false;
+    if (info.children.len == 0) return false;
+
+    var current_idx: usize = 0;
+    if (list_selected.items.len > 0) {
+        for (info.children, 0..) |child, idx| {
+            if (std.mem.eql(u8, nodeId(child), list_selected.items)) {
+                current_idx = idx;
+                break;
+            }
+        }
+    }
+
+    const len: isize = @as(isize, @intCast(info.children.len));
+    const next_idx_signed = @min(@max(@as(isize, @intCast(current_idx)) + delta, 0), len - 1);
+    const next_idx: usize = @as(usize, @intCast(next_idx_signed));
+    const next_id = nodeId(info.children[next_idx]);
+    if (list_selected.items.len > 0 and std.mem.eql(u8, list_selected.items, next_id)) return false;
+
+    list_selected.clearRetainingCapacity();
+    try list_selected.appendSlice(allocator, next_id);
+
+    const height = if (info.height == 0) info.children.len else info.height;
+    if (next_idx < list_scroll.*) list_scroll.* = next_idx;
+    if (next_idx >= list_scroll.* + height) list_scroll.* = next_idx - height + 1;
+
+    std.debug.print("LIST_SELECT item={s} index={d} scroll={d}\n", .{ next_id, next_idx, list_scroll.* });
+    std.debug.print("EVENT_TX name=select id={s} item={s}\n", .{ results_id, next_id });
+    try protocol.writeSelectEventJsonl(backend_in, results_id, next_id);
+    return true;
 }

@@ -18,6 +18,11 @@ pub fn main() !void {
     var focus_id: std.ArrayList(u8) = .empty;
     defer focus_id.deinit(allocator);
 
+    var selected_item: std.ArrayList(u8) = .empty;
+    defer selected_item.deinit(allocator);
+    var activated_item: std.ArrayList(u8) = .empty;
+    defer activated_item.deinit(allocator);
+
     var state_on = false;
     var tick: u64 = 0;
     try emitInitialFull(out, tick, state_on);
@@ -34,6 +39,11 @@ pub fn main() !void {
     var status_buf: std.ArrayList(u8) = .empty;
     defer status_buf.deinit(allocator);
 
+    var items: std.ArrayList(u64) = .empty;
+    defer items.deinit(allocator);
+    try initItems(allocator, &items);
+    var next_item_id: u64 = 21;
+
     const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
 
     while (true) {
@@ -44,19 +54,29 @@ pub fn main() !void {
         const rc = try std.posix.poll(fds[0..], 250);
         if (rc == 0) {
             tick += 1;
-            const show_banner = (tick % 6) < 2;
             const status_text = try buildStatusText(
                 allocator,
                 &status_buf,
                 state_on,
                 last_input.items,
                 focus_id.items,
+                selected_item.items,
+                activated_item.items,
             );
-            std.debug.print(
-                "PATCH_TX target=root mode=morph tick={d} banner={s}\n",
-                .{ tick, if (show_banner) "true" else "false" },
-            );
-            try emitRootMorphPatch(out, tick, show_banner, status_text);
+
+            std.debug.print("PATCH_TX target=clock tick={d}\n", .{tick});
+            var tick_buf: [64]u8 = undefined;
+            const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+            try emitTextPatchById(out, "clock", tick_text);
+
+            updateItems(allocator, &items, &next_item_id, tick);
+            std.debug.print("PATCH_TX target=results mode=morph items={d} tick={d}\n", .{ items.items.len, tick });
+            try emitResultsMorphPatch(out, items.items, 8);
+
+            // Keep status fresh so selection/activation changes show up even while idle.
+            std.debug.print("PATCH_TX target=status\n", .{});
+            try emitTextPatchById(out, "status", status_text);
+
             try out.flush();
             continue;
         }
@@ -92,6 +112,8 @@ pub fn main() !void {
                                 state_on,
                                 last_input.items,
                                 focus_id.items,
+                                selected_item.items,
+                                activated_item.items,
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try emitTextPatchById(out, "status", status_text);
@@ -110,6 +132,8 @@ pub fn main() !void {
                             state_on,
                             last_input.items,
                             focus_id.items,
+                            selected_item.items,
+                            activated_item.items,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -129,6 +153,42 @@ pub fn main() !void {
                             state_on,
                             last_input.items,
                             focus_id.items,
+                            selected_item.items,
+                            activated_item.items,
+                        );
+                        std.debug.print("PATCH_TX target=status\n", .{});
+                        try emitTextPatchById(out, "status", status_text);
+                        try out.flush();
+                    },
+                    .select => |s| {
+                        std.debug.print("EVENT_RX name=select id={s} item={s}\n", .{ s.id, s.item });
+                        selected_item.clearRetainingCapacity();
+                        if (s.item.len > 0) try selected_item.appendSlice(allocator, s.item);
+                        const status_text = try buildStatusText(
+                            allocator,
+                            &status_buf,
+                            state_on,
+                            last_input.items,
+                            focus_id.items,
+                            selected_item.items,
+                            activated_item.items,
+                        );
+                        std.debug.print("PATCH_TX target=status\n", .{});
+                        try emitTextPatchById(out, "status", status_text);
+                        try out.flush();
+                    },
+                    .activate => |a| {
+                        std.debug.print("EVENT_RX name=activate id={s} item={s}\n", .{ a.id, a.item });
+                        activated_item.clearRetainingCapacity();
+                        if (a.item.len > 0) try activated_item.appendSlice(allocator, a.item);
+                        const status_text = try buildStatusText(
+                            allocator,
+                            &status_buf,
+                            state_on,
+                            last_input.items,
+                            focus_id.items,
+                            selected_item.items,
+                            activated_item.items,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -146,44 +206,25 @@ fn emitInitialFull(writer: anytype, tick: u64, state_on: bool) !void {
     try writer.print(
         "{{\"type\":\"patch\",\"root\":{{\"type\":\"vbox\",\"id\":\"root\",\"children\":[" ++
             "{{\"type\":\"text\",\"id\":\"title\",\"text\":\"Tracer Demo\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"hint\",\"text\":\"Tab cycles focus (query/results). j/k moves list. Enter activates. q toggles. x exits.\"}}," ++
             "{{\"type\":\"text\",\"id\":\"clock\",\"text\":\"Tick: {d}\"}}," ++
             "{{\"type\":\"input\",\"id\":\"query\",\"placeholder\":\"Type here\"}}," ++
+            "{{\"type\":\"list\",\"id\":\"results\",\"height\":8,\"children\":[" ++
+            "{{\"type\":\"text\",\"id\":\"item-1\",\"text\":\"Item 1\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-2\",\"text\":\"Item 2\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-3\",\"text\":\"Item 3\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-4\",\"text\":\"Item 4\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-5\",\"text\":\"Item 5\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-6\",\"text\":\"Item 6\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-7\",\"text\":\"Item 7\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-8\",\"text\":\"Item 8\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-9\",\"text\":\"Item 9\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"item-10\",\"text\":\"Item 10\"}}" ++
+            "]}}," ++
             "{{\"type\":\"text\",\"id\":\"status\",\"text\":\"State: {s}\"}}" ++
             "]}}}}\n",
         .{ tick, state_str },
     );
-}
-
-fn emitRootMorphPatch(writer: anytype, tick: u64, show_banner: bool, status_text: []const u8) !void {
-    var tick_buf: [64]u8 = undefined;
-    const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
-
-    try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
-
-    const even = (tick % 2) == 0;
-    if (even) {
-        try writeTextNode(writer, "title", "Tracer Demo");
-        try writer.writeByte(',');
-        try writeTextNode(writer, "clock", tick_text);
-        try writer.writeByte(',');
-        try writeInputNode(writer, "query", "Type here");
-        try writer.writeByte(',');
-        try writeTextNode(writer, "status", status_text);
-    } else {
-        try writeTextNode(writer, "title", "Tracer Demo");
-        try writer.writeByte(',');
-        try writeTextNode(writer, "status", status_text);
-        if (show_banner) {
-            try writer.writeByte(',');
-            try writeTextNode(writer, "banner", "Banner: morphing root subtree");
-        }
-        try writer.writeByte(',');
-        try writeInputNode(writer, "query", "Type here");
-        try writer.writeByte(',');
-        try writeTextNode(writer, "clock", tick_text);
-    }
-
-    try writer.writeAll("]}}\n");
 }
 
 fn writeTextNode(writer: anytype, id: []const u8, text: []const u8) !void {
@@ -202,6 +243,23 @@ fn writeInputNode(writer: anytype, id: []const u8, placeholder: []const u8) !voi
     try writer.writeByte('}');
 }
 
+fn emitResultsMorphPatch(writer: anytype, items: []const u64, height: usize) !void {
+    try writer.writeAll("{\"type\":\"patch\",\"target\":\"results\",\"mode\":\"morph\",\"node\":{\"type\":\"list\",\"id\":\"results\",\"height\":");
+    try writer.print("{d}", .{height});
+    try writer.writeAll(",\"children\":[");
+
+    for (items, 0..) |n, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        var id_buf: [64]u8 = undefined;
+        const item_id = try std.fmt.bufPrint(&id_buf, "item-{d}", .{n});
+        var text_buf: [64]u8 = undefined;
+        const text = try std.fmt.bufPrint(&text_buf, "Item {d}", .{n});
+        try writeTextNode(writer, item_id, text);
+    }
+
+    try writer.writeAll("]}}\n");
+}
+
 fn emitTextPatchById(writer: anytype, target: []const u8, text: []const u8) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":");
     try protocol.writeJsonString(writer, target);
@@ -218,6 +276,8 @@ fn buildStatusText(
     state_on: bool,
     last_input: []const u8,
     focus: []const u8,
+    selected_item: []const u8,
+    activated_item: []const u8,
 ) ![]const u8 {
     buf.clearRetainingCapacity();
     const w = buf.writer(allocator);
@@ -229,5 +289,45 @@ fn buildStatusText(
     if (focus.len > 0) {
         try w.print(" | Focus: {s}", .{focus});
     }
+    if (selected_item.len > 0) {
+        try w.print(" | Selected: {s}", .{selected_item});
+    }
+    if (activated_item.len > 0) {
+        try w.print(" | Activated: {s}", .{activated_item});
+    }
     return buf.items;
+}
+
+fn initItems(allocator: std.mem.Allocator, items: *std.ArrayList(u64)) !void {
+    var n: u64 = 1;
+    while (n <= 20) : (n += 1) {
+        try items.append(allocator, n);
+    }
+}
+
+fn updateItems(allocator: std.mem.Allocator, items: *std.ArrayList(u64), next_item_id: *u64, tick: u64) void {
+    if ((tick % 3) == 0) {
+        const id = next_item_id.*;
+        next_item_id.* += 1;
+        _ = items.insert(allocator, 0, id) catch {};
+    }
+
+    if (items.items.len > 40) {
+        _ = items.pop();
+    }
+
+    if (items.items.len >= 2 and (tick % 5) == 1) {
+        const tmp = items.items[0];
+        items.items[0] = items.items[1];
+        items.items[1] = tmp;
+    }
+
+    if (items.items.len >= 2 and (tick % 7) == 2) {
+        const first = items.items[0];
+        var i: usize = 0;
+        while (i + 1 < items.items.len) : (i += 1) {
+            items.items[i] = items.items[i + 1];
+        }
+        items.items[items.items.len - 1] = first;
+    }
 }

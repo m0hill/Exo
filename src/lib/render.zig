@@ -7,6 +7,9 @@ pub const RenderState = struct {
     input_id: []const u8 = "",
     input_value: []const u8 = "",
     input_cursor: usize = 0,
+    list_id: []const u8 = "",
+    list_selected_id: []const u8 = "",
+    list_scroll: usize = 0,
 };
 
 const CursorPos = struct {
@@ -84,6 +87,40 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
                 }
             } else {
                 try renderLine(term, ctx, prefix);
+            }
+        },
+        .list => |l| {
+            const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, l.id);
+            const selected_id = if (std.mem.eql(u8, state.list_id, l.id)) state.list_selected_id else "";
+            const scroll = if (std.mem.eql(u8, state.list_id, l.id)) state.list_scroll else 0;
+
+            const desired_height: usize = l.height orelse ctx.rows_left;
+            const height: usize = @min(desired_height, ctx.rows_left);
+            const start: usize = @min(scroll, l.children.len);
+
+            var row_idx: usize = 0;
+            while (row_idx < height) : (row_idx += 1) {
+                const item_idx = start + row_idx;
+                if (item_idx >= l.children.len) {
+                    try renderLine(term, ctx, "");
+                    continue;
+                }
+
+                const item = l.children[item_idx];
+                const item_id = switch (item) {
+                    .text => |t| t.id,
+                    .input => |i| i.id,
+                    .vbox => |v| v.id,
+                    .list => |ll| ll.id,
+                };
+                const is_selected = selected_id.len > 0 and std.mem.eql(u8, selected_id, item_id);
+
+                const prefix = if (is_selected) (if (focused) "> " else "* ") else "  ";
+                const label = switch (item) {
+                    .text => |t| t.text,
+                    else => "",
+                };
+                try renderLinePieces(term, ctx, &.{ prefix, label });
             }
         },
     }
