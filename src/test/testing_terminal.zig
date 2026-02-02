@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const Size = @import("term_size.zig").Size;
+pub const Size = @import("tui").Size;
 
 pub const Terminal = struct {
     allocator: std.mem.Allocator,

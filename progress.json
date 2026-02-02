@@ -5,11 +5,11 @@
     "status": "completed",
     "description": "Basic JSONL wire protocol with raw terminal and patch/render loop",
     "deliverables": [
-      "jsonl.zig: LineReader with safe buffer management",
-      "terminal.zig: Raw mode setup with escape hatch",
-      "backend_demo.zig: Emits patch messages over stdout",
-      "tui_runtime.zig: Polls backend, renders tree, forwards keys",
-      "render.zig: Clear screen + draw vbox/text nodes"
+      "src/lib/jsonl.zig: LineReader with safe buffer management",
+      "src/lib/terminal.zig: Raw mode setup with escape hatch",
+      "src/bin/backend_demo.zig: Emits patch messages over stdout",
+      "src/bin/tui_runtime.zig: Polls backend, renders tree, forwards keys",
+      "src/lib/render.zig: Clear screen + draw vbox/text nodes"
     ],
     "boundaries_hit": [
       "TTY input/output",
@@ -24,10 +24,10 @@
     "status": "completed",
     "description": "Patch-by-id plus local focus/input cursor preservation while backend keeps patching",
     "deliverables": [
-      "protocol.zig: PatchMsg v0.2 (full | target), input node, focus/input events, JSON string escaping",
-      "backend_demo.zig: Periodic clock patch-by-id + status patch on input/key events",
-      "tui_runtime.zig: Apply patch-by-id into retained tree; local input value/cursor; focus + input event emission",
-      "render.zig: Render input line and place cursor when focused"
+      "src/lib/protocol.zig: PatchMsg v0.2 (full | target), input node, focus/input events, JSON string escaping",
+      "src/bin/backend_demo.zig: Periodic clock patch-by-id + status patch on input/key events",
+      "src/bin/tui_runtime.zig: Apply patch-by-id into retained tree; local input value/cursor; focus + input event emission",
+      "src/lib/render.zig: Render input line and place cursor when focused"
     ],
     "boundaries_hit": [
       "Targeted patch application by node id",

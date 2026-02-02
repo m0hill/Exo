@@ -1,10 +1,11 @@
 const std = @import("std");
 
-const protocol = @import("protocol.zig");
-const render = @import("render.zig");
+const tui = @import("tui");
+const protocol = tui.protocol;
+const render = tui.render;
 const testing_terminal = @import("testing_terminal.zig");
-const input = @import("input.zig");
-const tree = @import("tree.zig");
+const input = tui.input;
+const tree = tui.tree;
 
 test "render: focused input shows cursor + placeholder" {
     var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });

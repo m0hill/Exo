@@ -1,6 +1,7 @@
 const std = @import("std");
-const jsonl = @import("jsonl.zig");
-const protocol = @import("protocol.zig");
+const tui = @import("tui");
+const jsonl = tui.jsonl;
+const protocol = tui.protocol;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};

@@ -1,11 +1,12 @@
 const std = @import("std");
 
-const jsonl = @import("jsonl.zig");
-const protocol = @import("protocol.zig");
-const render = @import("render.zig");
-const terminal = @import("terminal.zig");
-const input = @import("input.zig");
-const tree = @import("tree.zig");
+const tui = @import("tui");
+const jsonl = tui.jsonl;
+const protocol = tui.protocol;
+const render = tui.render;
+const terminal = tui.terminal;
+const input = tui.input;
+const tree = tui.tree;
 
 const query_id = "query";
 

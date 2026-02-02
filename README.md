@@ -5,6 +5,12 @@ This repository contains a minimal two-process tracer demo:
 - `tui_runtime`: spawns a backend, reads JSONL patches, renders, sends JSONL key events
 - `backend_demo`: emits patches and reacts to key events
 
+## Layout
+
+- `src/bin`: executables (`tui_runtime`, `backend_demo`)
+- `src/lib`: shared runtime/protocol/render code
+- `src/test`: unit tests + test-only helpers
+
 ## Manual repro (slice 1)
 
 1. `zig build demo`
@@ -35,10 +41,10 @@ Run:
 
 What’s covered (no real TTY required):
 
-- Rendering output + cursor placement via a mock terminal (`src/testing_terminal.zig`)
-- Input editing rules (`src/input.zig`)
-- Patch-by-id tree updates (`src/tree.zig`)
-All tests live in `src/tests.zig`.
+- Rendering output + cursor placement via a mock terminal (`src/test/testing_terminal.zig`)
+- Input editing rules (`src/lib/input.zig`)
+- Patch-by-id tree updates (`src/lib/tree.zig`)
+All tests live in `src/test/tests.zig`.
 
 ## Protocol (v0.2)
 
