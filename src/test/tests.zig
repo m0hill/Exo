@@ -22,9 +22,7 @@ test "render: focused input shows cursor + placeholder" {
 
     try render.render(&term, root, .{
         .focused_id = "query",
-        .input_id = "query",
-        .input_value = "",
-        .input_cursor = 0,
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
     });
 
     const out = term.out.items;
@@ -46,9 +44,7 @@ test "render: unfocused input hides cursor and brackets placeholder" {
 
     try render.render(&term, root, .{
         .focused_id = null,
-        .input_id = "query",
-        .input_value = "",
-        .input_cursor = 0,
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
     });
 
     const out = term.out.items;
@@ -69,9 +65,7 @@ test "render: cursor column tracks input_cursor" {
 
     try render.render(&term, root, .{
         .focused_id = "query",
-        .input_id = "query",
-        .input_value = "hi",
-        .input_cursor = 2,
+        .inputs = &.{.{ .id = "query", .value = "hi", .cursor = 2 }},
     });
 
     const out = term.out.items;
@@ -164,9 +158,7 @@ test "render: focused list shows selection marker and hides cursor" {
 
     try render.render(&term, root, .{
         .focused_id = "results",
-        .list_id = "results",
-        .list_selected_id = "item-2",
-        .list_scroll = 0,
+        .lists = &.{.{ .id = "results", .selected_id = "item-2", .scroll = 0 }},
     });
 
     const out = term.out.items;

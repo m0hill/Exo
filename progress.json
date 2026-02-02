@@ -72,5 +72,22 @@
       "Selection + scroll stability under backend-driven structural updates"
     ],
     "timestamp": "2026-02-02"
+  },
+  {
+    "slice": 5,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Generic widget state registry + tree-order focus traversal for multiple inputs and lists under continuous morph patches",
+    "deliverables": [
+      "src/lib/render.zig: render state accepts many input/list states by id",
+      "src/bin/tui_runtime.zig: widget state registry keyed by id; tab focus by tree order; per-id input/select/activate events",
+      "src/bin/backend_demo.zig: multiple inputs and lists; root morph reorders panels; per-list morph patches"
+    ],
+    "boundaries_hit": [
+      "Multiple stateful widgets with local state preserved",
+      "Focus traversal derived from current tree order",
+      "Backend-driven structural morphs without hardcoded widget ids"
+    ],
+    "timestamp": "2026-02-02"
   }
 ]

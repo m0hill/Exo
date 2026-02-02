@@ -4,12 +4,20 @@ const Size = @import("term_size.zig").Size;
 
 pub const RenderState = struct {
     focused_id: ?[]const u8 = null,
-    input_id: []const u8 = "",
-    input_value: []const u8 = "",
-    input_cursor: usize = 0,
-    list_id: []const u8 = "",
-    list_selected_id: []const u8 = "",
-    list_scroll: usize = 0,
+    inputs: []const InputState = &.{},
+    lists: []const ListState = &.{},
+};
+
+pub const InputState = struct {
+    id: []const u8,
+    value: []const u8,
+    cursor: usize,
+};
+
+pub const ListState = struct {
+    id: []const u8,
+    selected_id: []const u8,
+    scroll: usize,
 };
 
 const CursorPos = struct {
@@ -60,8 +68,10 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
             const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, i.id);
             const prefix = "> ";
 
-            if (focused and ctx.cursor == null) {
-                const effective_cursor = @min(state.input_cursor, state.input_value.len);
+            const input_state = findInputState(state.inputs, i.id);
+            if (focused and ctx.cursor == null and input_state != null) {
+                const st = input_state.?;
+                const effective_cursor = @min(st.cursor, st.value.len);
                 var col: usize = prefix.len + effective_cursor + 1;
                 if (ctx.cols != 0) {
                     const max_col: usize = @as(usize, ctx.cols);
@@ -71,14 +81,17 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
                 ctx.cursor = .{ .row = ctx.row, .col = col };
             }
 
-            if (!std.mem.eql(u8, i.id, state.input_id)) {
-                // Unknown input id: render placeholder only.
-                try renderLine(term, ctx, prefix);
-                return;
+            if (input_state) |st| {
+                if (st.value.len > 0) {
+                    try renderLinePieces(term, ctx, &.{ prefix, st.value });
+                    return;
+                }
             }
 
-            if (state.input_value.len > 0) {
-                try renderLinePieces(term, ctx, &.{ prefix, state.input_value });
+            if (input_state == null) {
+                // Unknown input id: render empty line with prefix only.
+                try renderLine(term, ctx, prefix);
+                return;
             } else if (i.placeholder != null) {
                 if (focused) {
                     try renderLinePieces(term, ctx, &.{ prefix, i.placeholder.? });
@@ -91,8 +104,9 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
         },
         .list => |l| {
             const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, l.id);
-            const selected_id = if (std.mem.eql(u8, state.list_id, l.id)) state.list_selected_id else "";
-            const scroll = if (std.mem.eql(u8, state.list_id, l.id)) state.list_scroll else 0;
+            const list_state = findListState(state.lists, l.id);
+            const selected_id = if (list_state) |st| st.selected_id else "";
+            const scroll = if (list_state) |st| st.scroll else 0;
 
             const desired_height: usize = l.height orelse ctx.rows_left;
             const height: usize = @min(desired_height, ctx.rows_left);
@@ -124,6 +138,20 @@ fn renderNode(term: anytype, node: protocol.Node, ctx: *RenderCtx, state: Render
             }
         },
     }
+}
+
+fn findInputState(inputs: []const InputState, id: []const u8) ?InputState {
+    for (inputs) |st| {
+        if (std.mem.eql(u8, st.id, id)) return st;
+    }
+    return null;
+}
+
+fn findListState(lists: []const ListState, id: []const u8) ?ListState {
+    for (lists) |st| {
+        if (std.mem.eql(u8, st.id, id)) return st;
+    }
+    return null;
 }
 
 fn renderLine(term: anytype, ctx: *RenderCtx, text: []const u8) !void {

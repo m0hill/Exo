@@ -12,20 +12,43 @@ pub fn main() !void {
     var stdout_w = std.fs.File.stdout().writerStreaming(&stdout_buf);
     const out = &stdout_w.interface;
 
-    var last_input: std.ArrayList(u8) = .empty;
-    defer last_input.deinit(allocator);
-
     var focus_id: std.ArrayList(u8) = .empty;
     defer focus_id.deinit(allocator);
 
-    var selected_item: std.ArrayList(u8) = .empty;
-    defer selected_item.deinit(allocator);
-    var activated_item: std.ArrayList(u8) = .empty;
-    defer activated_item.deinit(allocator);
+    var inputs = [_]InputSlot{
+        .{ .id = "query-a" },
+        .{ .id = "query-b" },
+    };
+    defer {
+        for (&inputs) |*s| s.last.deinit(allocator);
+    }
+
+    var lists = [_]ListSlot{
+        .{ .id = "results-a", .next_item_id = 21 },
+        .{ .id = "results-b", .next_item_id = 1021 },
+    };
+    defer {
+        for (&lists) |*s| {
+            s.selected.deinit(allocator);
+            s.activated.deinit(allocator);
+            s.items.deinit(allocator);
+        }
+    }
+
+    var status_buf: std.ArrayList(u8) = .empty;
+    defer status_buf.deinit(allocator);
+
+    try initItems(allocator, &lists[0].items, 1, 20);
+    try initItems(allocator, &lists[1].items, 1001, 1020);
 
     var state_on = false;
     var tick: u64 = 0;
-    try emitInitialFull(out, tick, state_on);
+    {
+        var tick_buf: [64]u8 = undefined;
+        const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+        const status_text = try buildStatusText(allocator, &status_buf, state_on, inputs[0..], lists[0..], focus_id.items);
+        try emitInitialFull(out, tick_text, status_text, inputs[0..], lists[0..]);
+    }
     try out.flush();
 
     var stdin_buf: [4096]u8 = undefined;
@@ -35,14 +58,6 @@ pub fn main() !void {
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-
-    var status_buf: std.ArrayList(u8) = .empty;
-    defer status_buf.deinit(allocator);
-
-    var items: std.ArrayList(u64) = .empty;
-    defer items.deinit(allocator);
-    try initItems(allocator, &items);
-    var next_item_id: u64 = 21;
 
     const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
 
@@ -54,24 +69,33 @@ pub fn main() !void {
         const rc = try std.posix.poll(fds[0..], 250);
         if (rc == 0) {
             tick += 1;
-            const status_text = try buildStatusText(
-                allocator,
-                &status_buf,
-                state_on,
-                last_input.items,
-                focus_id.items,
-                selected_item.items,
-                activated_item.items,
-            );
-
             std.debug.print("PATCH_TX target=clock tick={d}\n", .{tick});
             var tick_buf: [64]u8 = undefined;
             const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
             try emitTextPatchById(out, "clock", tick_text);
 
-            updateItems(allocator, &items, &next_item_id, tick);
-            std.debug.print("PATCH_TX target=results mode=morph items={d} tick={d}\n", .{ items.items.len, tick });
-            try emitResultsMorphPatch(out, items.items, 8);
+            updateItems(allocator, &lists[0], tick);
+            updateItems(allocator, &lists[1], tick + 2);
+
+            std.debug.print(
+                "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
+                .{ lists[0].id, lists[0].items.items.len, tick },
+            );
+            try emitListMorphPatch(out, lists[0].id, lists[0].items.items, 8);
+
+            std.debug.print(
+                "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
+                .{ lists[1].id, lists[1].items.items.len, tick },
+            );
+            try emitListMorphPatch(out, lists[1].id, lists[1].items.items, 8);
+
+            const status_text = try buildStatusText(allocator, &status_buf, state_on, inputs[0..], lists[0..], focus_id.items);
+
+            if ((tick % 4) == 0) {
+                std.debug.print("PATCH_TX target=root mode=morph tick={d}\n", .{tick});
+                const layout_alt = (tick % 2) == 1;
+                try emitRootMorphPatch(out, tick_text, status_text, inputs[0..], lists[0..], layout_alt);
+            }
 
             // Keep status fresh so selection/activation changes show up even while idle.
             std.debug.print("PATCH_TX target=status\n", .{});
@@ -110,10 +134,9 @@ pub fn main() !void {
                                 allocator,
                                 &status_buf,
                                 state_on,
-                                last_input.items,
+                                inputs[0..],
+                                lists[0..],
                                 focus_id.items,
-                                selected_item.items,
-                                activated_item.items,
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try emitTextPatchById(out, "status", status_text);
@@ -130,10 +153,9 @@ pub fn main() !void {
                             allocator,
                             &status_buf,
                             state_on,
-                            last_input.items,
+                            inputs[0..],
+                            lists[0..],
                             focus_id.items,
-                            selected_item.items,
-                            activated_item.items,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -144,17 +166,18 @@ pub fn main() !void {
                             "EVENT_RX name=input id={s} len={d} cursor={d}\n",
                             .{ inp.id, inp.value.len, inp.cursor },
                         );
-                        last_input.clearRetainingCapacity();
-                        try last_input.appendSlice(allocator, inp.value);
+                        if (findInputSlot(inputs[0..], inp.id)) |slot| {
+                            slot.last.clearRetainingCapacity();
+                            try slot.last.appendSlice(allocator, inp.value);
+                        }
 
                         const status_text = try buildStatusText(
                             allocator,
                             &status_buf,
                             state_on,
-                            last_input.items,
+                            inputs[0..],
+                            lists[0..],
                             focus_id.items,
-                            selected_item.items,
-                            activated_item.items,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -162,16 +185,17 @@ pub fn main() !void {
                     },
                     .select => |s| {
                         std.debug.print("EVENT_RX name=select id={s} item={s}\n", .{ s.id, s.item });
-                        selected_item.clearRetainingCapacity();
-                        if (s.item.len > 0) try selected_item.appendSlice(allocator, s.item);
+                        if (findListSlot(lists[0..], s.id)) |slot| {
+                            slot.selected.clearRetainingCapacity();
+                            if (s.item.len > 0) try slot.selected.appendSlice(allocator, s.item);
+                        }
                         const status_text = try buildStatusText(
                             allocator,
                             &status_buf,
                             state_on,
-                            last_input.items,
+                            inputs[0..],
+                            lists[0..],
                             focus_id.items,
-                            selected_item.items,
-                            activated_item.items,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -179,16 +203,17 @@ pub fn main() !void {
                     },
                     .activate => |a| {
                         std.debug.print("EVENT_RX name=activate id={s} item={s}\n", .{ a.id, a.item });
-                        activated_item.clearRetainingCapacity();
-                        if (a.item.len > 0) try activated_item.appendSlice(allocator, a.item);
+                        if (findListSlot(lists[0..], a.id)) |slot| {
+                            slot.activated.clearRetainingCapacity();
+                            if (a.item.len > 0) try slot.activated.appendSlice(allocator, a.item);
+                        }
                         const status_text = try buildStatusText(
                             allocator,
                             &status_buf,
                             state_on,
-                            last_input.items,
+                            inputs[0..],
+                            lists[0..],
                             focus_id.items,
-                            selected_item.items,
-                            activated_item.items,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -201,30 +226,42 @@ pub fn main() !void {
     }
 }
 
-fn emitInitialFull(writer: anytype, tick: u64, state_on: bool) !void {
-    const state_str = if (state_on) "ON" else "OFF";
-    try writer.print(
-        "{{\"type\":\"patch\",\"root\":{{\"type\":\"vbox\",\"id\":\"root\",\"children\":[" ++
-            "{{\"type\":\"text\",\"id\":\"title\",\"text\":\"Tracer Demo\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"hint\",\"text\":\"Tab cycles focus (query/results). j/k moves list. Enter activates. q toggles. x exits.\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"clock\",\"text\":\"Tick: {d}\"}}," ++
-            "{{\"type\":\"input\",\"id\":\"query\",\"placeholder\":\"Type here\"}}," ++
-            "{{\"type\":\"list\",\"id\":\"results\",\"height\":8,\"children\":[" ++
-            "{{\"type\":\"text\",\"id\":\"item-1\",\"text\":\"Item 1\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-2\",\"text\":\"Item 2\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-3\",\"text\":\"Item 3\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-4\",\"text\":\"Item 4\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-5\",\"text\":\"Item 5\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-6\",\"text\":\"Item 6\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-7\",\"text\":\"Item 7\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-8\",\"text\":\"Item 8\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-9\",\"text\":\"Item 9\"}}," ++
-            "{{\"type\":\"text\",\"id\":\"item-10\",\"text\":\"Item 10\"}}" ++
-            "]}}," ++
-            "{{\"type\":\"text\",\"id\":\"status\",\"text\":\"State: {s}\"}}" ++
-            "]}}}}\n",
-        .{ tick, state_str },
-    );
+const InputSlot = struct {
+    id: []const u8,
+    last: std.ArrayList(u8) = .empty,
+};
+
+const ListSlot = struct {
+    id: []const u8,
+    selected: std.ArrayList(u8) = .empty,
+    activated: std.ArrayList(u8) = .empty,
+    items: std.ArrayList(u64) = .empty,
+    next_item_id: u64,
+};
+
+fn emitInitialFull(
+    writer: anytype,
+    tick_text: []const u8,
+    status_text: []const u8,
+    inputs: []const InputSlot,
+    lists: []const ListSlot,
+) !void {
+    try writer.writeAll("{\"type\":\"patch\",\"root\":");
+    try writeRootNode(writer, tick_text, status_text, inputs, lists, false);
+    try writer.writeAll("}\n");
+}
+
+fn emitRootMorphPatch(
+    writer: anytype,
+    tick_text: []const u8,
+    status_text: []const u8,
+    inputs: []const InputSlot,
+    lists: []const ListSlot,
+    layout_alt: bool,
+) !void {
+    try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
+    try writeRootNode(writer, tick_text, status_text, inputs, lists, layout_alt);
+    try writer.writeAll("}\n");
 }
 
 fn writeTextNode(writer: anytype, id: []const u8, text: []const u8) !void {
@@ -243,21 +280,12 @@ fn writeInputNode(writer: anytype, id: []const u8, placeholder: []const u8) !voi
     try writer.writeByte('}');
 }
 
-fn emitResultsMorphPatch(writer: anytype, items: []const u64, height: usize) !void {
-    try writer.writeAll("{\"type\":\"patch\",\"target\":\"results\",\"mode\":\"morph\",\"node\":{\"type\":\"list\",\"id\":\"results\",\"height\":");
-    try writer.print("{d}", .{height});
-    try writer.writeAll(",\"children\":[");
-
-    for (items, 0..) |n, idx| {
-        if (idx != 0) try writer.writeByte(',');
-        var id_buf: [64]u8 = undefined;
-        const item_id = try std.fmt.bufPrint(&id_buf, "item-{d}", .{n});
-        var text_buf: [64]u8 = undefined;
-        const text = try std.fmt.bufPrint(&text_buf, "Item {d}", .{n});
-        try writeTextNode(writer, item_id, text);
-    }
-
-    try writer.writeAll("]}}\n");
+fn emitListMorphPatch(writer: anytype, list_id: []const u8, items: []const u64, height: usize) !void {
+    try writer.writeAll("{\"type\":\"patch\",\"target\":");
+    try protocol.writeJsonString(writer, list_id);
+    try writer.writeAll(",\"mode\":\"morph\",\"node\":");
+    try writeListNode(writer, list_id, height, items);
+    try writer.writeAll("}\n");
 }
 
 fn emitTextPatchById(writer: anytype, target: []const u8, text: []const u8) !void {
@@ -274,60 +302,151 @@ fn buildStatusText(
     allocator: std.mem.Allocator,
     buf: *std.ArrayList(u8),
     state_on: bool,
-    last_input: []const u8,
+    inputs: []const InputSlot,
+    lists: []const ListSlot,
     focus: []const u8,
-    selected_item: []const u8,
-    activated_item: []const u8,
 ) ![]const u8 {
     buf.clearRetainingCapacity();
     const w = buf.writer(allocator);
     const state_str = if (state_on) "ON" else "OFF";
     try w.print("State: {s}", .{state_str});
-    if (last_input.len > 0) {
-        try w.print(" | Last: {s}", .{last_input});
-    }
     if (focus.len > 0) {
         try w.print(" | Focus: {s}", .{focus});
     }
-    if (selected_item.len > 0) {
-        try w.print(" | Selected: {s}", .{selected_item});
+    for (inputs) |in| {
+        if (in.last.items.len > 0) {
+            try w.print(" | {s}: {s}", .{ in.id, in.last.items });
+        }
     }
-    if (activated_item.len > 0) {
-        try w.print(" | Activated: {s}", .{activated_item});
+    for (lists) |ls| {
+        if (ls.selected.items.len > 0) {
+            try w.print(" | {s} sel={s}", .{ ls.id, ls.selected.items });
+        }
+        if (ls.activated.items.len > 0) {
+            try w.print(" act={s}", .{ls.activated.items});
+        }
     }
     return buf.items;
 }
 
-fn initItems(allocator: std.mem.Allocator, items: *std.ArrayList(u64)) !void {
-    var n: u64 = 1;
-    while (n <= 20) : (n += 1) {
+fn initItems(allocator: std.mem.Allocator, items: *std.ArrayList(u64), start: u64, end_inclusive: u64) !void {
+    var n: u64 = start;
+    while (n <= end_inclusive) : (n += 1) {
         try items.append(allocator, n);
     }
 }
 
-fn updateItems(allocator: std.mem.Allocator, items: *std.ArrayList(u64), next_item_id: *u64, tick: u64) void {
+fn updateItems(allocator: std.mem.Allocator, slot: *ListSlot, tick: u64) void {
     if ((tick % 3) == 0) {
-        const id = next_item_id.*;
-        next_item_id.* += 1;
-        _ = items.insert(allocator, 0, id) catch {};
+        const id = slot.next_item_id;
+        slot.next_item_id += 1;
+        _ = slot.items.insert(allocator, 0, id) catch {};
     }
 
-    if (items.items.len > 40) {
-        _ = items.pop();
+    if (slot.items.items.len > 40) {
+        _ = slot.items.pop();
     }
 
-    if (items.items.len >= 2 and (tick % 5) == 1) {
-        const tmp = items.items[0];
-        items.items[0] = items.items[1];
-        items.items[1] = tmp;
+    if (slot.items.items.len >= 2 and (tick % 5) == 1) {
+        const tmp = slot.items.items[0];
+        slot.items.items[0] = slot.items.items[1];
+        slot.items.items[1] = tmp;
     }
 
-    if (items.items.len >= 2 and (tick % 7) == 2) {
-        const first = items.items[0];
+    if (slot.items.items.len >= 2 and (tick % 7) == 2) {
+        const first = slot.items.items[0];
         var i: usize = 0;
-        while (i + 1 < items.items.len) : (i += 1) {
-            items.items[i] = items.items[i + 1];
+        while (i + 1 < slot.items.items.len) : (i += 1) {
+            slot.items.items[i] = slot.items.items[i + 1];
         }
-        items.items[items.items.len - 1] = first;
+        slot.items.items[slot.items.items.len - 1] = first;
     }
+}
+
+fn findInputSlot(inputs: []InputSlot, id: []const u8) ?*InputSlot {
+    for (inputs) |*s| {
+        if (std.mem.eql(u8, s.id, id)) return s;
+    }
+    return null;
+}
+
+fn findListSlot(lists: []ListSlot, id: []const u8) ?*ListSlot {
+    for (lists) |*s| {
+        if (std.mem.eql(u8, s.id, id)) return s;
+    }
+    return null;
+}
+
+fn writeRootNode(
+    writer: anytype,
+    tick_text: []const u8,
+    status_text: []const u8,
+    inputs: []const InputSlot,
+    lists: []const ListSlot,
+    layout_alt: bool,
+) !void {
+    try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
+    try writeTextNode(writer, "title", "Tracer Demo");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "hint", "Tab cycles focus by tree order. j/k moves list. Enter activates. q toggles. x exits.");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "clock", tick_text);
+    try writer.writeByte(',');
+
+    if (!layout_alt) {
+        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, 8);
+        try writer.writeByte(',');
+        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, 8);
+    } else {
+        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, 8);
+        try writer.writeByte(',');
+        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, 8);
+    }
+
+    try writer.writeByte(',');
+    try writeTextNode(writer, "status", status_text);
+    try writer.writeAll("]}");
+}
+
+fn writePanelNode(
+    writer: anytype,
+    panel_id: []const u8,
+    title: []const u8,
+    input_id: []const u8,
+    list_id: []const u8,
+    list_items: []const u64,
+    list_height: usize,
+) !void {
+    try writer.writeAll("{\"type\":\"vbox\",\"id\":");
+    try protocol.writeJsonString(writer, panel_id);
+    try writer.writeAll(",\"children\":[");
+
+    var title_id_buf: [64]u8 = undefined;
+    const title_id = try std.fmt.bufPrint(&title_id_buf, "{s}-title", .{panel_id});
+    try writeTextNode(writer, title_id, title);
+    try writer.writeByte(',');
+    try writeInputNode(writer, input_id, "Type here");
+    try writer.writeByte(',');
+    try writeListNode(writer, list_id, list_height, list_items);
+
+    try writer.writeAll("]}");
+}
+
+fn writeListNode(writer: anytype, list_id: []const u8, height: usize, items: []const u64) !void {
+    try writer.writeAll("{\"type\":\"list\",\"id\":");
+    try protocol.writeJsonString(writer, list_id);
+    try writer.writeAll(",\"height\":");
+    try writer.print("{d}", .{height});
+    try writer.writeAll(",\"children\":[");
+
+    for (items, 0..) |n, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        var id_buf: [96]u8 = undefined;
+        const item_id = try std.fmt.bufPrint(&id_buf, "{s}-item-{d}", .{ list_id, n });
+        var text_buf: [96]u8 = undefined;
+        const text = try std.fmt.bufPrint(&text_buf, "Item {d}", .{n});
+        try writeTextNode(writer, item_id, text);
+    }
+
+    try writer.writeAll("]}");
 }
