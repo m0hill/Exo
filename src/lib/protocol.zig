@@ -7,7 +7,12 @@ pub const Msg = union(enum) {
 
 pub const PatchMsg = union(enum) {
     full: struct { root: Node },
-    target: struct { target: []const u8, node: Node },
+    target: struct { target: []const u8, node: Node, mode: PatchMode = .replace },
+};
+
+pub const PatchMode = enum {
+    replace,
+    morph,
 };
 
 pub const EventMsg = union(enum) {
@@ -44,6 +49,7 @@ pub const ParseMsgError = error{
     UnknownMsgType,
     UnknownNodeType,
     InvalidPatchShape,
+    UnknownPatchMode,
     UnknownEventName,
 } || std.mem.Allocator.Error;
 
@@ -68,9 +74,10 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         if (obj.get("target") == null or obj.get("node") == null) return error.InvalidPatchShape;
 
         const target = try getRequiredString(obj, "target");
+        const mode = try parsePatchMode(obj);
         const node_val = try getRequired(obj, "node");
         const node = try parseNodeLeaky(allocator, node_val);
-        return .{ .patch = .{ .target = .{ .target = target, .node = node } } };
+        return .{ .patch = .{ .target = .{ .target = target, .node = node, .mode = mode } } };
     } else if (std.mem.eql(u8, type_str, "event")) {
         const name = try getRequiredString(obj, "name");
         if (std.mem.eql(u8, name, "key")) {
@@ -94,6 +101,17 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
     } else {
         return error.UnknownMsgType;
     }
+}
+
+fn parsePatchMode(obj: std.json.ObjectMap) ParseMsgError!PatchMode {
+    const mode_val = obj.get("mode") orelse return .replace;
+    const mode_str = switch (mode_val) {
+        .string => |s| s,
+        else => return error.WrongType,
+    };
+    if (std.mem.eql(u8, mode_str, "replace")) return .replace;
+    if (std.mem.eql(u8, mode_str, "morph")) return .morph;
+    return error.UnknownPatchMode;
 }
 
 fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Node {

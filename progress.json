@@ -35,5 +35,23 @@
       "Backend poll timeout tick loop"
     ],
     "timestamp": "2026-02-02"
+  },
+  {
+    "slice": 3,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Morph container subtree patches (reorder/insert/remove) while preserving local focus/input state for keyed nodes",
+    "deliverables": [
+      "src/lib/protocol.zig: PatchMsg v0.3 adds target patch mode (replace|morph)",
+      "src/lib/tree.zig: morphPatchByIdLeaky for keyed vbox morphing + MorphStats",
+      "src/bin/backend_demo.zig: Periodic mode=morph patches targeting root that reorder and sometimes insert banner",
+      "src/bin/tui_runtime.zig: Apply morph patches with keyed reuse stats; drop invalid focus ids"
+    ],
+    "boundaries_hit": [
+      "Keyed morphing of container children by id",
+      "Structural updates (reorder/insert/remove) from backend while typing",
+      "Patch-mode compatibility (default replace)"
+    ],
+    "timestamp": "2026-02-02"
   }
 ]

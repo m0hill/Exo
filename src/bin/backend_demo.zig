@@ -44,10 +44,19 @@ pub fn main() !void {
         const rc = try std.posix.poll(fds[0..], 250);
         if (rc == 0) {
             tick += 1;
-            std.debug.print("PATCH_TX target=clock tick={d}\n", .{tick});
-            var tick_buf: [64]u8 = undefined;
-            const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
-            try emitTextPatchById(out, "clock", tick_text);
+            const show_banner = (tick % 6) < 2;
+            const status_text = try buildStatusText(
+                allocator,
+                &status_buf,
+                state_on,
+                last_input.items,
+                focus_id.items,
+            );
+            std.debug.print(
+                "PATCH_TX target=root mode=morph tick={d} banner={s}\n",
+                .{ tick, if (show_banner) "true" else "false" },
+            );
+            try emitRootMorphPatch(out, tick, show_banner, status_text);
             try out.flush();
             continue;
         }
@@ -135,9 +144,62 @@ pub fn main() !void {
 fn emitInitialFull(writer: anytype, tick: u64, state_on: bool) !void {
     const state_str = if (state_on) "ON" else "OFF";
     try writer.print(
-        "{{\"type\":\"patch\",\"root\":{{\"type\":\"vbox\",\"id\":\"root\",\"children\":[" ++ "{{\"type\":\"text\",\"id\":\"title\",\"text\":\"Tracer Demo\"}}," ++ "{{\"type\":\"text\",\"id\":\"hint\",\"text\":\"Tab to focus input, type, q toggles, x exits\"}}," ++ "{{\"type\":\"text\",\"id\":\"clock\",\"text\":\"Tick: {d}\"}}," ++ "{{\"type\":\"input\",\"id\":\"query\",\"placeholder\":\"Type here\"}}," ++ "{{\"type\":\"text\",\"id\":\"status\",\"text\":\"State: {s}\"}}" ++ "]}}}}\n",
+        "{{\"type\":\"patch\",\"root\":{{\"type\":\"vbox\",\"id\":\"root\",\"children\":[" ++
+            "{{\"type\":\"text\",\"id\":\"title\",\"text\":\"Tracer Demo\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"clock\",\"text\":\"Tick: {d}\"}}," ++
+            "{{\"type\":\"input\",\"id\":\"query\",\"placeholder\":\"Type here\"}}," ++
+            "{{\"type\":\"text\",\"id\":\"status\",\"text\":\"State: {s}\"}}" ++
+            "]}}}}\n",
         .{ tick, state_str },
     );
+}
+
+fn emitRootMorphPatch(writer: anytype, tick: u64, show_banner: bool, status_text: []const u8) !void {
+    var tick_buf: [64]u8 = undefined;
+    const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+
+    try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
+
+    const even = (tick % 2) == 0;
+    if (even) {
+        try writeTextNode(writer, "title", "Tracer Demo");
+        try writer.writeByte(',');
+        try writeTextNode(writer, "clock", tick_text);
+        try writer.writeByte(',');
+        try writeInputNode(writer, "query", "Type here");
+        try writer.writeByte(',');
+        try writeTextNode(writer, "status", status_text);
+    } else {
+        try writeTextNode(writer, "title", "Tracer Demo");
+        try writer.writeByte(',');
+        try writeTextNode(writer, "status", status_text);
+        if (show_banner) {
+            try writer.writeByte(',');
+            try writeTextNode(writer, "banner", "Banner: morphing root subtree");
+        }
+        try writer.writeByte(',');
+        try writeInputNode(writer, "query", "Type here");
+        try writer.writeByte(',');
+        try writeTextNode(writer, "clock", tick_text);
+    }
+
+    try writer.writeAll("]}}\n");
+}
+
+fn writeTextNode(writer: anytype, id: []const u8, text: []const u8) !void {
+    try writer.writeAll("{\"type\":\"text\",\"id\":");
+    try protocol.writeJsonString(writer, id);
+    try writer.writeAll(",\"text\":");
+    try protocol.writeJsonString(writer, text);
+    try writer.writeByte('}');
+}
+
+fn writeInputNode(writer: anytype, id: []const u8, placeholder: []const u8) !void {
+    try writer.writeAll("{\"type\":\"input\",\"id\":");
+    try protocol.writeJsonString(writer, id);
+    try writer.writeAll(",\"placeholder\":");
+    try protocol.writeJsonString(writer, placeholder);
+    try writer.writeByte('}');
 }
 
 fn emitTextPatchById(writer: anytype, target: []const u8, text: []const u8) !void {

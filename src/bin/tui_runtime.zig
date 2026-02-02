@@ -100,7 +100,11 @@ pub fn main() !void {
                 const line_owned = try next_arena.allocator().dupe(u8, line);
 
                 const msg = protocol.parseMsgLeaky(next_arena.allocator(), line_owned) catch |e| {
-                    std.debug.print("PATCH_ERR reason={s}\n", .{@errorName(e)});
+                    if (e == error.UnknownPatchMode) {
+                        std.debug.print("PATCH_ERR reason=unknown_mode\n", .{});
+                    } else {
+                        std.debug.print("PATCH_ERR reason={s}\n", .{@errorName(e)});
+                    }
                     continue;
                 };
 
@@ -120,6 +124,14 @@ pub fn main() !void {
                                     try protocol.writeFocusEventJsonl(child_in, query_id);
                                     try child_in.flush();
                                 }
+                                if (focused_id) |fid| {
+                                    if (!tree.treeContainsId(current_root.?, fid)) {
+                                        focused_id = null;
+                                        std.debug.print("EVENT_TX name=focus id=\n", .{});
+                                        try protocol.writeFocusEventJsonl(child_in, "");
+                                        try child_in.flush();
+                                    }
+                                }
 
                                 try render.render(&term, current_root.?, .{
                                     .focused_id = focused_id,
@@ -135,11 +147,58 @@ pub fn main() !void {
                                 }
 
                                 const cloned = try cloneNodeLeaky(current_arena.allocator(), t.node);
-                                const found = tree.applyPatchById(&current_root.?, t.target, cloned);
-                                std.debug.print(
-                                    "PATCH_{s} kind=target id={s} found={s}\n",
-                                    .{ if (found) "OK" else "WARN", t.target, if (found) "true" else "false" },
-                                );
+                                var found: bool = false;
+                                switch (t.mode) {
+                                    .replace => {
+                                        found = tree.applyPatchById(&current_root.?, t.target, cloned);
+                                        std.debug.print(
+                                            "PATCH_{s} kind=target mode=replace id={s} found={s}\n",
+                                            .{ if (found) "OK" else "WARN", t.target, if (found) "true" else "false" },
+                                        );
+                                    },
+                                    .morph => {
+                                        var stats: tree.MorphStats = .{};
+                                        found = tree.morphPatchByIdLeaky(
+                                            current_arena.allocator(),
+                                            &current_root.?,
+                                            t.target,
+                                            cloned,
+                                            &stats,
+                                        ) catch |e| {
+                                            std.debug.print("PATCH_ERR reason={s}\n", .{@errorName(e)});
+                                            continue;
+                                        };
+
+                                        std.debug.print(
+                                            "PATCH_{s} kind=target mode=morph id={s} found={s} reused={d} inserted={d} removed={d}\n",
+                                            .{
+                                                if (found) "OK" else "WARN",
+                                                t.target,
+                                                if (found) "true" else "false",
+                                                stats.reused,
+                                                stats.inserted,
+                                                stats.removed,
+                                            },
+                                        );
+                                        if (stats.type_mismatch > 0) {
+                                            std.debug.print(
+                                                "MORPH_WARN type_mismatch replaced=true count={d}\n",
+                                                .{stats.type_mismatch},
+                                            );
+                                        }
+                                    },
+                                }
+
+                                if (!found) continue;
+
+                                if (focused_id) |fid| {
+                                    if (!tree.treeContainsId(current_root.?, fid)) {
+                                        focused_id = null;
+                                        std.debug.print("EVENT_TX name=focus id=\n", .{});
+                                        try protocol.writeFocusEventJsonl(child_in, "");
+                                        try child_in.flush();
+                                    }
+                                }
 
                                 try render.render(&term, current_root.?, .{
                                     .focused_id = focused_id,

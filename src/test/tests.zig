@@ -109,3 +109,41 @@ test "tree: patch-by-id replaces matching node" {
     const clock = v.children[0].text;
     try std.testing.expectEqualStrings("Tick: 12", clock.text);
 }
+
+test "tree: morph-by-id reorders and inserts children" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var old_children = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
+        .{ .text = .{ .id = "clock", .text = "Tick: 0" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type here" } },
+        .{ .text = .{ .id = "status", .text = "State: OFF" } },
+    };
+    var root = protocol.Node{ .vbox = .{ .id = "root", .children = old_children[0..] } };
+
+    var new_children = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
+        .{ .text = .{ .id = "status", .text = "State: ON" } },
+        .{ .text = .{ .id = "banner", .text = "Banner!" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type here" } },
+        .{ .text = .{ .id = "clock", .text = "Tick: 1" } },
+    };
+    const incoming = protocol.Node{ .vbox = .{ .id = "root", .children = new_children[0..] } };
+
+    var stats: tree.MorphStats = .{};
+    const found = try tree.morphPatchByIdLeaky(arena.allocator(), &root, "root", incoming, &stats);
+    try std.testing.expect(found);
+    try std.testing.expectEqual(@as(usize, 4), stats.reused);
+    try std.testing.expectEqual(@as(usize, 1), stats.inserted);
+    try std.testing.expectEqual(@as(usize, 0), stats.removed);
+
+    const v = root.vbox;
+    try std.testing.expectEqual(@as(usize, 5), v.children.len);
+    try std.testing.expectEqualStrings("title", v.children[0].text.id);
+    try std.testing.expectEqualStrings("status", v.children[1].text.id);
+    try std.testing.expectEqualStrings("banner", v.children[2].text.id);
+    try std.testing.expectEqualStrings("query", v.children[3].input.id);
+    try std.testing.expectEqualStrings("clock", v.children[4].text.id);
+    try std.testing.expectEqualStrings("Tick: 1", v.children[4].text.text);
+}
