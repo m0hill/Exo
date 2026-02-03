@@ -16,7 +16,15 @@
       "Child process spawn/pipe",
       "stdin polled alongside backend stdout"
     ],
-    "timestamp": "2026-02-02"
+    "timestamp": "2026-02-02",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm screen shows 'State: OFF'",
+      "Press 'q' → screen updates to 'State: ON'",
+      "Press 'q' again → 'OFF'",
+      "Press 'x' → program exits, terminal restored",
+      "If terminal is broken, run 'reset'"
+    ]
   },
   {
     "slice": 2,
@@ -34,7 +42,17 @@
       "Local interactive state preserved across patches",
       "Backend poll timeout tick loop"
     ],
-    "timestamp": "2026-02-02"
+    "timestamp": "2026-02-02",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm 'Tick: 0' increments every ~250ms",
+      "Confirm input is focused (cursor visible on the input line); press Tab to toggle focus",
+      "Type 'hello' (don't press Enter)",
+      "Confirm tick keeps updating and the input stays intact (value + cursor) during patches",
+      "Confirm status updates to include your last input and focus id",
+      "Press 'x' (or Ctrl-C) to exit",
+      "Tip: when running interactively, logs go to /tmp/tui_trace.log"
+    ]
   },
   {
     "slice": 3,
@@ -52,7 +70,15 @@
       "Structural updates (reorder/insert/remove) from backend while typing",
       "Patch-mode compatibility (default replace)"
     ],
-    "timestamp": "2026-02-02"
+    "timestamp": "2026-02-02",
+    "manual_repro": [
+      "zig build demo",
+      "Type in the input while the backend keeps morphing the layout",
+      "Observe that the input value and cursor are preserved even as nodes reorder",
+      "Note that a banner sometimes appears/disappears during morph cycles (every ~6 ticks)",
+      "Confirm focus remains valid (if focused node is removed, focus resets gracefully)",
+      "Press 'x' to exit"
+    ]
   },
   {
     "slice": 4,
@@ -71,7 +97,16 @@
       "Keyed morphing with reorder/insert/remove under live interaction",
       "Selection + scroll stability under backend-driven structural updates"
     ],
-    "timestamp": "2026-02-02"
+    "timestamp": "2026-02-02",
+    "manual_repro": [
+      "zig build demo",
+      "Tab to focus the list widget",
+      "Use 'j'/'k' to move selection up/down in the list",
+      "Use 'Enter' to activate an item (status shows activated item)",
+      "Type in an input while the list keeps morphing; confirm selection stays on the same logical item",
+      "Scroll within the list (if taller than height) and confirm scroll position is preserved",
+      "Press 'x' to exit"
+    ]
   },
   {
     "slice": 5,
@@ -88,7 +123,17 @@
       "Focus traversal derived from current tree order",
       "Backend-driven structural morphs without hardcoded widget ids"
     ],
-    "timestamp": "2026-02-02"
+    "timestamp": "2026-02-02",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm there are 2 inputs and 2 lists in the UI",
+      "Type in both inputs; confirm each maintains its own value",
+      "Tab cycles through all 4 widgets in tree order (visual top-to-bottom)",
+      "Wait for root morph (every ~1 second); panels swap order",
+      "Confirm Tab still follows the new visual order after reorder",
+      "Confirm all input values and list selections are preserved across morphs",
+      "Press 'x' to exit"
+    ]
   },
   {
     "slice": 6,
@@ -107,7 +152,13 @@
       "O(rows*cols) diff with contiguous runs and erase-to-EOL for shrink",
       "Cursor visibility/placement preserved under partial updates"
     ],
-    "timestamp": "2026-02-02"
+    "timestamp": "2026-02-02",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm the UI updates without full-screen flashing (no flicker) as Tick increments (~250ms) and the list morphs",
+      "Type while patches keep arriving; cursor and selection should remain stable",
+      "Check /tmp/tui_trace.log for 'RENDER full=true ...' on the first draw and 'RENDER full=false ...' on subsequent draws"
+    ]
   },
   {
     "slice": 7,
@@ -126,7 +177,19 @@
       "Immediate redraw on resize without waiting for backend patches",
       "Debounced resize event storm protection (~100ms)"
     ],
-    "timestamp": "2026-02-02"
+    "timestamp": "2026-02-02",
+    "manual_repro": [
+      "zig build demo",
+      "Focus an input, type 'hello'",
+      "Focus a list, move selection down a few items (j/k)",
+      "Resize the terminal narrower/shorter while the backend is still ticking/morphing",
+      "Confirm immediately:",
+      "  - UI redraws to the new size (no stale screen)",
+      "  - input still contains 'hello' (cursor placement remains sensible)",
+      "  - list selection stays on the same item id and remains visible (scroll is clamped)",
+      "  - status shows 'Size: <rows>x<cols>' (from the backend reacting to resize)",
+      "Exit with 'x'"
+    ]
   },
   {
     "slice": 8,
@@ -142,7 +205,14 @@
       "Renderer traversal no longer assumes one node = one line",
       "Soft-wrap behavior for text nodes"
     ],
-    "timestamp": "2026-02-03"
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Make the terminal narrow (e.g. ~40 cols)",
+      "Confirm the hint text respects an explicit newline and also soft-wraps the long line",
+      "Note: input wrapping was superseded by slice 9 (single-line + horizontal scroll)",
+      "Exit with 'x'"
+    ]
   },
   {
     "slice": 9,
@@ -160,7 +230,19 @@
       "Local navigation/edit keys decoded from terminal sequences",
       "Word-jump semantics with ASCII word chars"
     ],
-    "timestamp": "2026-02-03"
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Focus an input",
+      "Type a long string that exceeds terminal width (e.g. 80 chars)",
+      "Confirm text scrolls horizontally and the cursor stays visible",
+      "Hold Left/Right: cursor moves and viewport scrolls appropriately",
+      "Home/End jump to start/end (viewport updates)",
+      "Backspace and Delete work (middle + edges)",
+      "Alt-b / Alt-f word jumps work",
+      "Backend continues ticking/morphing and input stays responsive",
+      "Exit with 'x'"
+    ]
   },
   {
     "slice": 10,
@@ -179,7 +261,16 @@
       "Clipping prevents widget bleed across allocated regions",
       "Widget cursor/scroll must use per-node rect sizing"
     ],
-    "timestamp": "2026-02-03"
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm you see two panels side-by-side (an hbox layout)",
+      "Confirm panels have padding (content is inset)",
+      "Make the terminal narrow:",
+      "  - long text stays clipped inside its panel (no bleed into the other column)",
+      "  - focus/cursor still tracks the focused input as panels swap order",
+      "Exit with 'x'"
+    ]
   },
   {
     "slice": 11,
@@ -199,7 +290,15 @@
       "Grapheme-safe truncation prevents split combining/ZWJ/flag sequences",
       "Frame diff no longer assumes 1 byte = 1 cell"
     ],
-    "timestamp": "2026-02-03"
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm the hint line shows some Unicode (e.g. 'é 漢 🇯🇵 👩‍👩‍👧‍👦') without breaking alignment",
+      "Make the terminal narrow:",
+      "  - the Unicode hint is clipped/soft-wrapped without splitting glyphs",
+      "  - the input placeholder contains Unicode and the cursor remains aligned while typing/moving",
+      "Exit with 'x'"
+    ]
   },
   {
     "slice": 12,
@@ -218,6 +317,17 @@
       "Preventing resize debounce starvation under backend floods",
       "Bounded pending map to avoid unbounded allocations"
     ],
-    "timestamp": "2026-02-03"
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo -- --flood",
+      "Type into an input while patches are flooding:",
+      "  - input stays responsive (cursor and edits feel immediate)",
+      "  - UI updates keep happening, but terminal does not feel 'busy'",
+      "Resize the terminal while flood is on:",
+      "  - redraw happens immediately (no stale layout)",
+      "Check /tmp/tui_trace.log for:",
+      "  - 'SCHED_PENDING ...' coalescing summaries",
+      "  - 'RENDER reason=frame ...' bounded render cadence even under patch floods"
+    ]
   }
 ]
