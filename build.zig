@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const tui_runtime_mod = b.createModule(.{
-        .root_source_file = b.path("src/bin/tui_runtime.zig"),
+        .root_source_file = b.path("src/bin/runtime/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const backend_demo_mod = b.createModule(.{
-        .root_source_file = b.path("src/bin/backend_demo.zig"),
+        .root_source_file = b.path("src/bin/demo/main.zig"),
         .target = target,
         .optimize = optimize,
     });
