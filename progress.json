@@ -439,5 +439,30 @@
       "Make the terminal narrow and confirm the rich line soft-wraps correctly across span boundaries",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 17,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Markdown → styled_text spans (rich text v2): compile a minimal Markdown subset into existing styled_text/list/quote primitives",
+    "deliverables": [
+      "src/lib/markdown.zig: Markdown compiler (headings, bold, italic, inline code, blockquote, bulleted lists) emitting protocol.Node trees",
+      "src/lib/protocol.zig: JSON writer for nodes/spans/styles (writeNodeJson/writeSpanJson/writeStyleOverrideJson)",
+      "src/bin/demo/render.zig: demo uses markdown compiler for the rich status line + a small markdown block",
+      "src/test/tests.zig: golden-ish markdown compile tests + wrap-alignment render test"
+    ],
+    "boundaries_hit": [
+      "Loss-minimizing parsing (unmatched delimiters are literal; unsupported constructs preserved as text)",
+      "Prefix-layout via hbox to keep wrapped list/quote lines aligned without renderer changes",
+      "Backend-side compilation only; no protocol changes required"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm the 'Status: ...' line renders bold + inline-code styling derived from Markdown",
+      "Confirm a small 'Markdown demo' block shows a heading, bullet list, and blockquote prefix",
+      "Make the terminal narrow: list/quote continuation lines should align under the body (hanging indent)",
+      "Exit with 'x'"
+    ]
   }
 ]

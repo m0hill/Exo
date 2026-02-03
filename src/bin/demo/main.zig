@@ -51,6 +51,9 @@ pub fn main() !void {
     var term_cols: ?usize = null;
     const list_height: usize = 8;
 
+    var arena_tx = std.heap.ArenaAllocator.init(allocator);
+    defer arena_tx.deinit();
+
     try state.initItems(allocator, &lists[0].items, 1, 20);
     try state.initItems(allocator, &lists[1].items, 1001, 1020);
 
@@ -69,7 +72,8 @@ pub fn main() !void {
             term_rows,
             term_cols,
         );
-        try render.emitInitialFull(out, tick_text, status_text, inputs[0..], lists[0..], list_height);
+        _ = arena_tx.reset(.retain_capacity);
+        try render.emitInitialFull(arena_tx.allocator(), out, tick_text, status_text, inputs[0..], lists[0..], list_height);
     }
     try out.flush();
 
@@ -135,7 +139,17 @@ pub fn main() !void {
             if ((tick % 4) == 0) {
                 if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=root mode=morph tick={d}\n", .{tick});
                 const layout_alt = (tick % 2) == 1;
-                try render.emitRootMorphPatch(out, tick_text, status_text, inputs[0..], lists[0..], layout_alt, list_height);
+                _ = arena_tx.reset(.retain_capacity);
+                try render.emitRootMorphPatch(
+                    arena_tx.allocator(),
+                    out,
+                    tick_text,
+                    status_text,
+                    inputs[0..],
+                    lists[0..],
+                    layout_alt,
+                    list_height,
+                );
             }
 
             if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=status\n", .{});

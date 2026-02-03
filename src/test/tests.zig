@@ -13,6 +13,7 @@ const tree = tui.tree;
 const scheduler_mod = tui.scheduler;
 const mouse = tui.mouse;
 const style = tui.style;
+const markdown = tui.markdown;
 
 fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     const c = frame.rowSlice(row)[col];
@@ -223,6 +224,127 @@ test "scheduler: target patch preserves style fields" {
     try std.testing.expect(child.style != null);
     const st = child.style.?;
     try std.testing.expect(st.fg == .rgb);
+}
+
+test "markdown: inline spans bold + code" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const spans = try markdown.compileInlineSpansLeaky(
+        arena.allocator(),
+        "Status: **Connected** (latency `42ms`)",
+        .{},
+    );
+
+    try std.testing.expectEqual(@as(usize, 5), spans.len);
+    try std.testing.expectEqualStrings("Status: ", spans[0].text);
+
+    const bold_style = spans[1].style orelse return error.TestUnexpectedResult;
+    try std.testing.expect((bold_style.attrs_set & style.ATTR_BOLD) != 0);
+    try std.testing.expect((bold_style.attrs_values & style.ATTR_BOLD) != 0);
+    try std.testing.expectEqualStrings("Connected", spans[1].text);
+
+    try std.testing.expectEqualStrings(" (latency ", spans[2].text);
+    try std.testing.expectEqualStrings("42ms", spans[3].text);
+
+    const code_style = spans[3].style orelse return error.TestUnexpectedResult;
+    const fg = switch (code_style.fg) {
+        .rgb => |c| c,
+        else => return error.TestUnexpectedResult,
+    };
+    const bg = switch (code_style.bg) {
+        .rgb => |c| c,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(u8, 0xE5), fg.r);
+    try std.testing.expectEqual(@as(u8, 0xE7), fg.g);
+    try std.testing.expectEqual(@as(u8, 0xEB), fg.b);
+    try std.testing.expectEqual(@as(u8, 0x11), bg.r);
+    try std.testing.expectEqual(@as(u8, 0x18), bg.g);
+    try std.testing.expectEqual(@as(u8, 0x27), bg.b);
+}
+
+test "markdown: unmatched delimiters are literal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const spans = try markdown.compileInlineSpansLeaky(arena.allocator(), "`code", .{});
+    try std.testing.expectEqual(@as(usize, 1), spans.len);
+    try std.testing.expectEqualStrings("`code", spans[0].text);
+}
+
+test "markdown: span cap falls back to plain" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const md = "a **b** c `d` e";
+    const spans = try markdown.compileInlineSpansLeaky(arena.allocator(), md, .{ .max_spans = 2 });
+    try std.testing.expectEqual(@as(usize, 1), spans.len);
+    try std.testing.expectEqualStrings(md, spans[0].text);
+}
+
+test "markdown: blocks compile to vbox + hbox prefixes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const doc =
+        "# Heading\n" ++
+        "\n" ++
+        "- item\n" ++
+        "> quote\n" ++
+        "para\n" ++
+        "line2";
+
+    const root = try markdown.compileLeaky(arena.allocator(), doc, .{ .id = "md", .id_prefix = "md", .pretty_prefixes = false });
+    const v = switch (root) {
+        .vbox => |vv| vv,
+        else => return error.TestUnexpectedResult,
+    };
+
+    try std.testing.expectEqual(@as(usize, 5), v.children.len);
+
+    try std.testing.expect(v.children[0] == .styled_text);
+    try std.testing.expect(v.children[1] == .text);
+    try std.testing.expect(v.children[2] == .hbox);
+    try std.testing.expect(v.children[3] == .hbox);
+    try std.testing.expect(v.children[4] == .styled_text);
+
+    const li = switch (v.children[2]) {
+        .hbox => |h| h,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(usize, 2), li.children.len);
+    try std.testing.expect(li.children[0] == .text);
+    try std.testing.expect(li.children[1] == .styled_text);
+    const li_prefix = switch (li.children[0]) {
+        .text => |t| t,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(?usize, 2), li_prefix.w);
+    try std.testing.expectEqualStrings("- ", li_prefix.text);
+}
+
+test "markdown: list prefix aligns wrapped continuation lines" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const root = try markdown.compileLeaky(
+        arena.allocator(),
+        "- abcdefghij",
+        .{ .id = "md", .id_prefix = "md", .pretty_prefixes = false },
+    );
+
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 6);
+    frame.clear(' ');
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqual(@as(u8, '-'), cellByte(&frame, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'a'), cellByte(&frame, 0, 2));
+    try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 1, 0));
+    try std.testing.expectEqual(@as(u8, 'e'), cellByte(&frame, 1, 2));
 }
 
 test "render: unfocused input hides cursor and brackets placeholder" {

@@ -2,10 +2,13 @@ const std = @import("std");
 
 const tui = @import("tui");
 const protocol = tui.protocol;
+const style = tui.style;
+const markdown = tui.markdown;
 
 const state = @import("state.zig");
 
 pub fn emitInitialFull(
+    allocator: std.mem.Allocator,
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
@@ -14,11 +17,12 @@ pub fn emitInitialFull(
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"root\":");
-    try writeRootNode(writer, tick_text, status_text, inputs, lists, false, list_height);
+    try writeRootNode(allocator, writer, tick_text, status_text, inputs, lists, false, list_height);
     try writer.writeAll("}\n");
 }
 
 pub fn emitRootMorphPatch(
+    allocator: std.mem.Allocator,
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
@@ -28,7 +32,7 @@ pub fn emitRootMorphPatch(
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
-    try writeRootNode(writer, tick_text, status_text, inputs, lists, layout_alt, list_height);
+    try writeRootNode(allocator, writer, tick_text, status_text, inputs, lists, layout_alt, list_height);
     try writer.writeAll("}\n");
 }
 
@@ -242,6 +246,7 @@ fn writePanelNode(
 }
 
 fn writeRootNode(
+    allocator: std.mem.Allocator,
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
@@ -264,17 +269,39 @@ fn writeRootNode(
     try writer.writeByte(',');
     try writeTextNodeLayoutStyled(writer, "clock", tick_text, null, 1, 0, "{\"fg\":\"#22c55e\",\"bold\":true}");
     try writer.writeByte(',');
-    {
-        const spans = [_]SpanSpec{
-            .{ .text = "Status: " },
-            .{ .text = "Connected", .style_json = "{\"fg\":\"#22c55e\",\"bold\":true}" },
-            .{ .text = "  (", .style_json = "{\"dim\":true}" },
-            .{ .text = "42ms", .style_json = "{\"fg\":\"#fbbf24\"}" },
-            .{ .text = ")", .style_json = "{\"dim\":true}" },
-            .{ .text = "  — inline spans wrap across style boundaries when narrow" },
-        };
-        try writeStyledTextNodeLayoutStyled(writer, "rich", spans[0..], null, 1, 0, "{\"fg\":\"#e5e7eb\"}");
-    }
+    const rich_md =
+        "Status: **Connected**  (latency `42ms`)  — inline spans wrap across style boundaries when narrow";
+    const rich_style: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 0xE5, .g = 0xE7, .b = 0xEB } } };
+    const rich_spans = try markdown.compileInlineSpansLeaky(allocator, rich_md, .{ .own_text = false });
+    try protocol.writeNodeJson(writer, .{
+        .styled_text = .{
+            .id = "rich",
+            .h = 1,
+            .style = rich_style,
+            .spans = rich_spans,
+        },
+    });
+    try writer.writeByte(',');
+    const md_demo =
+        "# Markdown demo\n" ++
+        "- Tab cycles focus\n" ++
+        "- Mouse: click to focus; wheel to scroll\n" ++
+        "> Tip: Try **bold**, *italic*, and `code`.";
+    const md_doc = try markdown.compileLeaky(
+        allocator,
+        md_demo,
+        .{ .id = "md-demo", .id_prefix = "md-demo", .own_text = false },
+    );
+    var md_wrap_children = try allocator.alloc(protocol.Node, 1);
+    md_wrap_children[0] = md_doc;
+    try protocol.writeNodeJson(writer, .{
+        .vbox = .{
+            .id = "md-demo-wrap",
+            .h = 5,
+            .clip = true,
+            .children = md_wrap_children,
+        },
+    });
     try writer.writeByte(',');
 
     try writer.writeAll("{\"type\":\"hbox\",\"id\":\"body\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
