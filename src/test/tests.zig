@@ -11,6 +11,7 @@ const unicode = tui.unicode;
 const state = tui.state;
 const tree = tui.tree;
 const scheduler_mod = tui.scheduler;
+const mouse = tui.mouse;
 
 fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     const c = frame.rowSlice(row)[col];
@@ -555,4 +556,31 @@ test "scheduler: full patch supersedes earlier targets and flush applies full th
 
     const v = current_root.?.vbox;
     try std.testing.expectEqualStrings("Tick: after", v.children[0].text.text);
+}
+
+test "mouse: parse SGR left click" {
+    const ev = mouse.parseSgrMouseSequence("\x1b[<0;10;5M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.down_left, ev.kind);
+    try std.testing.expectEqual(@as(usize, 9), ev.x);
+    try std.testing.expectEqual(@as(usize, 4), ev.y);
+}
+
+test "mouse: parse SGR wheel up/down" {
+    const up = mouse.parseSgrMouseSequence("\x1b[<64;10;5M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.wheel_up, up.kind);
+    try std.testing.expectEqual(@as(usize, 9), up.x);
+    try std.testing.expectEqual(@as(usize, 4), up.y);
+
+    const down = mouse.parseSgrMouseSequence("<65;1;1M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.wheel_down, down.kind);
+    try std.testing.expectEqual(@as(usize, 0), down.x);
+    try std.testing.expectEqual(@as(usize, 0), down.y);
+}
+
+test "mouse: modifiers ignored for left click" {
+    // shift modifier bit (4) should still decode as left click.
+    const ev = mouse.parseSgrMouseSequence("<4;2;3M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.down_left, ev.kind);
+    try std.testing.expectEqual(@as(usize, 1), ev.x);
+    try std.testing.expectEqual(@as(usize, 2), ev.y);
 }

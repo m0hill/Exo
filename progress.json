@@ -329,5 +329,34 @@
       "  - 'SCHED_PENDING ...' coalescing summaries",
       "  - 'RENDER reason=frame ...' bounded render cadence even under patch floods"
     ]
+  },
+  {
+    "slice": 13,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Mouse + scroll wheel: enable SGR mouse reporting, click-to-focus/select, and local list wheel scroll with rect-based hit testing",
+    "deliverables": [
+      "src/lib/terminal.zig: enable/disable SGR mouse mode (1000/1006)",
+      "src/lib/mouse.zig: parse SGR mouse events (left click + wheel up/down)",
+      "src/bin/tui_runtime.zig: decode CSI SGR sequences, hit-test by rects, click-to-focus, click-to-select, wheel scroll",
+      "src/bin/backend_demo.zig: hint text mentions mouse support",
+      "src/test/tests.zig: unit tests for SGR mouse parsing"
+    ],
+    "boundaries_hit": [
+      "Terminal mouse reporting via SGR (ESC [ < ... M)",
+      "Rect-based hit testing using layout (findRectForId)",
+      "Local list scroll updates without backend round trips",
+      "Input-priority scheduling under backend patch floods"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Use mouse wheel over a list: list scrolls locally (no backend interaction required)",
+      "Click on a list: focus changes; click an item row: selection changes (status shows selected id)",
+      "Click on an input: focus changes; typing goes into that input",
+      "Run a flood: zig build demo -- --flood",
+      "While flooding, click/scroll: mouse stays responsive; list scroll and focus changes apply immediately",
+      "Exit with 'x' (or Ctrl-C)"
+    ]
   }
 ]

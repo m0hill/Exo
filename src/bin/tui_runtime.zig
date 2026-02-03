@@ -9,6 +9,7 @@ const scheduler_mod = tui.scheduler;
 const terminal = tui.terminal;
 const input = tui.input;
 const unicode = tui.unicode;
+const mouse = tui.mouse;
 const state = tui.state;
 const tree = tui.tree;
 
@@ -351,6 +352,7 @@ pub fn main() !void {
     var pending_resize: ?terminal.Size = null;
     var last_resize_tx_ns: u64 = 0;
     var utf8_pending: Utf8Pending = .{};
+    var csi_pending: CsiPending = .{};
 
     const RenderReason = enum {
         input,
@@ -410,7 +412,26 @@ pub fn main() !void {
 
             if ((fds[2].revents & std.posix.POLL.IN) != 0) {
                 const first = try term.readByte();
-                const decoded = try decodeKeyWithUtf8(&term, &utf8_pending, first) orelse continue;
+                const decoded = try decodeKeyWithUtf8(&term, &utf8_pending, &csi_pending, first) orelse continue;
+
+                if (decoded == .mouse and current_root != null) {
+                    const rows: usize = @as(usize, last_term_size.rows);
+                    const cols: usize = @as(usize, last_term_size.cols);
+                    const changed = try handleMouseEvent(
+                        allocator,
+                        &log_sink,
+                        child_in,
+                        &widgets,
+                        &focused_id_buf,
+                        &focused_id,
+                        current_root.?,
+                        rows,
+                        cols,
+                        decoded.mouse,
+                    );
+                    if (changed) requested_reason = .input;
+                    continue;
+                }
 
                 if (decoded == .tab or decoded == .shift_tab) {
                     if (current_root != null) {
@@ -704,6 +725,89 @@ fn readByteIfReady(term: *terminal.Terminal) !?u8 {
     return try term.readByte();
 }
 
+const CsiPending = struct {
+    active: bool = false,
+    buf: [64]u8 = undefined,
+    len: u8 = 0,
+
+    fn reset(self: *CsiPending) void {
+        self.active = false;
+        self.len = 0;
+    }
+
+    fn start(self: *CsiPending) void {
+        self.active = true;
+        self.len = 0;
+    }
+
+    fn feed(self: *CsiPending, b: u8) ?DecodedKey {
+        if (!self.active) return null;
+        if (@as(usize, self.len) >= self.buf.len) {
+            self.reset();
+            return null;
+        }
+
+        self.buf[@as(usize, self.len)] = b;
+        self.len += 1;
+
+        const seq = self.buf[0..@as(usize, self.len)];
+        const first = seq[0];
+
+        switch (first) {
+            'Z' => {
+                self.reset();
+                return .shift_tab;
+            },
+            'D' => {
+                self.reset();
+                return .left;
+            },
+            'C' => {
+                self.reset();
+                return .right;
+            },
+            'H' => {
+                self.reset();
+                return .home;
+            },
+            'F' => {
+                self.reset();
+                return .end;
+            },
+            '<' => {
+                // SGR mouse: <b;x;yM or <b;x;ym
+                if (b == 'M' or b == 'm') {
+                    defer self.reset();
+                    if (mouse.parseSgrMouseSequence(seq)) |ev| {
+                        return .{ .mouse = ev };
+                    }
+                    return null;
+                }
+                return null;
+            },
+            '3', '1', '4' => {
+                if (seq.len < 2) return null;
+                if (seq[1] != '~') {
+                    self.reset();
+                    return null;
+                }
+                const out: DecodedKey = switch (first) {
+                    '3' => .delete,
+                    '1' => .home,
+                    '4' => .end,
+                    else => unreachable,
+                };
+                self.reset();
+                return out;
+            },
+            else => {
+                self.reset();
+                return null;
+            },
+        }
+    }
+};
+
 const DecodedKey = union(enum) {
     byte: u8,
     utf8: Utf8Bytes,
@@ -716,6 +820,7 @@ const DecodedKey = union(enum) {
     delete,
     word_left,
     word_right,
+    mouse: mouse.MouseEvent,
 };
 
 const Utf8Bytes = struct {
@@ -742,37 +847,23 @@ fn isUtf8ContinuationByte(b: u8) bool {
     return (b & 0b1100_0000) == 0b1000_0000;
 }
 
-fn decodeKey(term: *terminal.Terminal, first: u8) !?DecodedKey {
+fn decodeKey(term: *terminal.Terminal, csi_pending: *CsiPending, first: u8) !?DecodedKey {
     if (first == '\t') return .tab;
     if (first != 0x1b) return .{ .byte = first };
 
     const b2 = try readByteIfReady(term) orelse return .{ .byte = first };
     switch (b2) {
         '[' => {
+            csi_pending.start();
+
             const b3 = try readByteIfReady(term) orelse return null;
-            return switch (b3) {
-                'Z' => .shift_tab,
-                'D' => .left,
-                'C' => .right,
-                'H' => .home,
-                'F' => .end,
-                '3' => blk: {
-                    const b4 = try readByteIfReady(term) orelse break :blk null;
-                    if (b4 != '~') break :blk null;
-                    break :blk .delete;
-                },
-                '1' => blk: {
-                    const b4 = try readByteIfReady(term) orelse break :blk null;
-                    if (b4 != '~') break :blk null;
-                    break :blk .home;
-                },
-                '4' => blk: {
-                    const b4 = try readByteIfReady(term) orelse break :blk null;
-                    if (b4 != '~') break :blk null;
-                    break :blk .end;
-                },
-                else => null,
-            };
+            if (csi_pending.feed(b3)) |ev| return ev;
+
+            while (csi_pending.active) {
+                const next = try readByteIfReady(term) orelse break;
+                if (csi_pending.feed(next)) |ev| return ev;
+            }
+            return null;
         },
         'O' => {
             const b3 = try readByteIfReady(term) orelse return null;
@@ -788,7 +879,11 @@ fn decodeKey(term: *terminal.Terminal, first: u8) !?DecodedKey {
     }
 }
 
-fn decodeKeyWithUtf8(term: *terminal.Terminal, pending: *Utf8Pending, b: u8) !?DecodedKey {
+fn decodeKeyWithUtf8(term: *terminal.Terminal, pending: *Utf8Pending, csi_pending: *CsiPending, b: u8) !?DecodedKey {
+    if (csi_pending.active) {
+        return csi_pending.feed(b);
+    }
+
     if (pending.expect != 0) {
         if (isUtf8ContinuationByte(b)) {
             if (@as(usize, pending.len) >= pending.bytes.len) {
@@ -810,7 +905,7 @@ fn decodeKeyWithUtf8(term: *terminal.Terminal, pending: *Utf8Pending, b: u8) !?D
         pending.reset();
     }
 
-    if (b == 0x1b or b < 0x80) return decodeKey(term, b);
+    if (b == 0x1b or b < 0x80) return decodeKey(term, csi_pending, b);
 
     const expect = std.unicode.utf8ByteSequenceLength(b) catch return null;
     if (expect <= 1 or expect > 4) return null;
@@ -1097,6 +1192,229 @@ fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
     if (a == null and b == null) return true;
     if (a == null or b == null) return false;
     return std.mem.eql(u8, a.?, b.?);
+}
+
+fn rectContains(r: render.Rect, x: usize, y: usize) bool {
+    if (r.w == 0 or r.h == 0) return false;
+    if (x < r.x or y < r.y) return false;
+    if (x >= r.x + r.w) return false;
+    if (y >= r.y + r.h) return false;
+    return true;
+}
+
+fn listVisibleHeight(rect: render.Rect, l: protocol.ListNode) usize {
+    const desired = l.height orelse rect.h;
+    return @min(desired, rect.h);
+}
+
+fn findSelectedIndexInList(l: protocol.ListNode, selected_id: []const u8) ?usize {
+    if (selected_id.len == 0) return null;
+    for (l.children, 0..) |child, idx| {
+        if (std.mem.eql(u8, nodeId(child), selected_id)) return idx;
+    }
+    return null;
+}
+
+fn handleMouseEvent(
+    allocator: std.mem.Allocator,
+    log_sink: *LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    focused_id_buf: *std.ArrayList(u8),
+    focused_id: *?[]const u8,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    ev: mouse.MouseEvent,
+) !bool {
+    switch (ev.kind) {
+        .down_left => return try handleMouseDownLeft(
+            allocator,
+            log_sink,
+            backend_in,
+            widgets,
+            focused_id_buf,
+            focused_id,
+            root,
+            rows,
+            cols,
+            ev.x,
+            ev.y,
+        ),
+        .wheel_up => return try handleMouseWheel(
+            allocator,
+            log_sink,
+            widgets,
+            root,
+            rows,
+            cols,
+            ev.x,
+            ev.y,
+            -1,
+        ),
+        .wheel_down => return try handleMouseWheel(
+            allocator,
+            log_sink,
+            widgets,
+            root,
+            rows,
+            cols,
+            ev.x,
+            ev.y,
+            1,
+        ),
+    }
+}
+
+fn handleMouseDownLeft(
+    allocator: std.mem.Allocator,
+    log_sink: *LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    focused_id_buf: *std.ArrayList(u8),
+    focused_id: *?[]const u8,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    x: usize,
+    y: usize,
+) !bool {
+    var hit_idx: ?usize = null;
+    var hit_rect: render.Rect = undefined;
+
+    for (widgets.items, 0..) |w, idx| {
+        const r = render.findRectForId(root, rows, cols, w.id.items) orelse continue;
+        if (rectContains(r, x, y)) {
+            hit_idx = idx;
+            hit_rect = r;
+            break;
+        }
+    }
+
+    const idx = hit_idx orelse return false;
+    const id = widgets.items[idx].id.items;
+
+    var changed: bool = false;
+    var need_flush: bool = false;
+
+    if (!optEql(focused_id.*, id)) {
+        try setFocusId(allocator, focused_id_buf, focused_id, id);
+        logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{id});
+        try protocol.writeFocusEventJsonl(backend_in, id);
+        need_flush = true;
+        changed = true;
+    }
+
+    switch (widgets.items[idx].state) {
+        .input => |*st| {
+            const visible_cols = inputVisibleCols(hit_rect.w);
+            const before_cursor = st.cursor;
+            const before_scroll = st.scroll_x;
+            st.cursor = st.value.items.len;
+            if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+            if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
+            _ = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
+            if (st.cursor != before_cursor or st.scroll_x != before_scroll) changed = true;
+        },
+        .list => |*st| {
+            const l = findListNodeById(root, id) orelse {
+                if (need_flush) try backend_in.flush();
+                return changed;
+            };
+
+            const visible_height = listVisibleHeight(hit_rect, l);
+            if (visible_height == 0) {
+                if (need_flush) try backend_in.flush();
+                return changed;
+            }
+
+            const start: usize = @min(st.scroll, l.children.len);
+            if (y < hit_rect.y) {
+                if (need_flush) try backend_in.flush();
+                return changed;
+            }
+            const row_idx: usize = y - hit_rect.y;
+            if (row_idx >= visible_height) {
+                if (need_flush) try backend_in.flush();
+                return changed;
+            }
+
+            const item_idx: usize = start + row_idx;
+            if (item_idx >= l.children.len) {
+                if (need_flush) try backend_in.flush();
+                return changed;
+            }
+
+            const next_id = nodeId(l.children[item_idx]);
+            const selection_changed = !(st.selected_id.items.len > 0 and std.mem.eql(u8, st.selected_id.items, next_id));
+            if (selection_changed) {
+                st.selected_id.clearRetainingCapacity();
+                try st.selected_id.appendSlice(allocator, next_id);
+                logPrint(
+                    log_sink,
+                    "LIST_SELECT id={s} item={s} index={d} scroll={d}\n",
+                    .{ id, next_id, item_idx, st.scroll },
+                );
+                logPrint(log_sink, "EVENT_TX name=select id={s} item={s}\n", .{ id, next_id });
+                try protocol.writeSelectEventJsonl(backend_in, id, next_id);
+                need_flush = true;
+                changed = true;
+            }
+
+            const selected_index = findSelectedIndexInList(l, st.selected_id.items);
+            const before_scroll = st.scroll;
+            st.scroll = state.clampListScroll(st.scroll, selected_index, visible_height, l.children.len);
+            if (st.scroll != before_scroll) changed = true;
+        },
+    }
+
+    if (need_flush) try backend_in.flush();
+    return changed;
+}
+
+fn handleMouseWheel(
+    allocator: std.mem.Allocator,
+    log_sink: *LogSink,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    x: usize,
+    y: usize,
+    delta: isize,
+) !bool {
+    _ = allocator;
+    _ = log_sink;
+
+    for (widgets.items) |*w| {
+        if (w.state != .list) continue;
+        const list_id = w.id.items;
+
+        const r = render.findRectForId(root, rows, cols, list_id) orelse continue;
+        if (!rectContains(r, x, y)) continue;
+
+        const l = findListNodeById(root, list_id) orelse return false;
+        const visible_height = listVisibleHeight(r, l);
+        if (visible_height == 0) return false;
+
+        const st = &w.state.list;
+        const max_scroll: usize = if (l.children.len > visible_height) l.children.len - visible_height else 0;
+
+        var next: usize = st.scroll;
+        if (delta > 0) {
+            if (next < max_scroll) next += 1;
+        } else if (delta < 0) {
+            if (next > 0) next -= 1;
+        }
+
+        const selected_index = findSelectedIndexInList(l, st.selected_id.items);
+        next = state.clampListScroll(next, selected_index, visible_height, l.children.len);
+        if (next == st.scroll) return false;
+        st.scroll = next;
+        return true;
+    }
+
+    return false;
 }
 
 fn pruneWidgetsNotInFocusables(

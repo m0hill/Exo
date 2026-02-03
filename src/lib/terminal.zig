@@ -8,6 +8,7 @@ pub const Terminal = struct {
     orig_termios: std.posix.termios,
     raw_enabled: bool = false,
     screen_enabled: bool = false,
+    mouse_enabled: bool = false,
 
     pub fn init() !Terminal {
         const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
@@ -60,12 +61,21 @@ pub const Terminal = struct {
 
         try t.writeAll("\x1b[?1049h"); // alt screen
         try t.writeAll("\x1b[?25l"); // hide cursor
+        // Enable SGR mouse reporting (Tracer 13).
+        try t.writeAll("\x1b[?1000h"); // basic mouse press/release
+        try t.writeAll("\x1b[?1006h"); // SGR extended coordinates
         t.screen_enabled = true;
+        t.mouse_enabled = true;
         return t;
     }
 
     pub fn deinit(self: *Terminal) void {
         if (self.screen_enabled) {
+            if (self.mouse_enabled) {
+                _ = self.writeAll("\x1b[?1006l") catch {};
+                _ = self.writeAll("\x1b[?1000l") catch {};
+                self.mouse_enabled = false;
+            }
             _ = self.writeAll("\x1b[?25h") catch {};
             _ = self.writeAll("\x1b[?1049l") catch {};
             self.screen_enabled = false;

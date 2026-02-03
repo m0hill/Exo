@@ -11,3 +11,4 @@ pub const unicode = @import("unicode.zig");
 pub const tree = @import("tree.zig");
 pub const state = @import("state.zig");
 pub const scheduler = @import("scheduler.zig");
+pub const mouse = @import("mouse.zig");

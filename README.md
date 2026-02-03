@@ -2,7 +2,7 @@
 
 This repository contains a minimal two-process tracer demo:
 
-- `tui_runtime`: spawns a backend, reads JSONL patches, renders, sends JSONL key events
+- `tui_runtime`: spawns a backend, reads JSONL patches, renders, sends JSONL events (key/focus/input/select); mouse click-to-focus/select + wheel list scroll are handled in the runtime
 - `backend_demo`: emits patches and reacts to key events
 
 ## Layout
