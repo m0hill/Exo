@@ -26,6 +26,7 @@ pub const EventMsg = union(enum) {
 
 pub const Node = union(enum) {
     vbox: VBoxNode,
+    hbox: HBoxNode,
     text: TextNode,
     input: InputNode,
     list: ListNode,
@@ -33,21 +34,45 @@ pub const Node = union(enum) {
 
 pub const VBoxNode = struct {
     id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
+    pad: usize = 0,
+    clip: bool = false,
+    children: []Node,
+};
+
+pub const HBoxNode = struct {
+    id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
+    pad: usize = 0,
+    clip: bool = false,
     children: []Node,
 };
 
 pub const TextNode = struct {
     id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
     text: []const u8,
 };
 
 pub const InputNode = struct {
     id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
     placeholder: ?[]const u8 = null,
 };
 
 pub const ListNode = struct {
     id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
     height: ?usize = null,
     children: []Node,
 };
@@ -141,23 +166,51 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
     const type_str = try getRequiredString(obj, "type");
     if (std.mem.eql(u8, type_str, "vbox")) {
         const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const pad = try getOptionalUsize(obj, "pad") orelse 0;
+        const clip = try getOptionalBool(obj, "clip") orelse false;
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
         var out = try allocator.alloc(Node, children_arr.items.len);
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .vbox = .{ .id = id, .children = out } };
+        return .{ .vbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .children = out } };
+    } else if (std.mem.eql(u8, type_str, "hbox")) {
+        const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const pad = try getOptionalUsize(obj, "pad") orelse 0;
+        const clip = try getOptionalBool(obj, "clip") orelse false;
+        const children_val = try getRequired(obj, "children");
+        const children_arr = try asArray(children_val);
+        var out = try allocator.alloc(Node, children_arr.items.len);
+        for (children_arr.items, 0..) |child_val, i| {
+            out[i] = try parseNodeLeaky(allocator, child_val);
+        }
+        return .{ .hbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .children = out } };
     } else if (std.mem.eql(u8, type_str, "text")) {
         const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const text = try getRequiredString(obj, "text");
-        return .{ .text = .{ .id = id, .text = text } };
+        return .{ .text = .{ .id = id, .w = w, .h = h, .flex = flex, .text = text } };
     } else if (std.mem.eql(u8, type_str, "input")) {
         const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const placeholder = try getOptionalString(obj, "placeholder");
-        return .{ .input = .{ .id = id, .placeholder = placeholder } };
+        return .{ .input = .{ .id = id, .w = w, .h = h, .flex = flex, .placeholder = placeholder } };
     } else if (std.mem.eql(u8, type_str, "list")) {
         const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const height = try getOptionalUsize(obj, "height");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -165,7 +218,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .list = .{ .id = id, .height = height, .children = out } };
+        return .{ .list = .{ .id = id, .w = w, .h = h, .flex = flex, .height = height, .children = out } };
     } else {
         return error.UnknownNodeType;
     }
@@ -217,6 +270,14 @@ fn getOptionalUsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?u
     const v = obj.get(field) orelse return null;
     return switch (v) {
         .integer => |n| if (n < 0) return error.WrongType else @as(usize, @intCast(n)),
+        else => error.WrongType,
+    };
+}
+
+fn getOptionalBool(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?bool {
+    const v = obj.get(field) orelse return null;
+    return switch (v) {
+        .bool => |b| b,
         else => error.WrongType,
     };
 }

@@ -326,9 +326,38 @@ fn writeTextNode(writer: anytype, id: []const u8, text: []const u8) !void {
     try writer.writeByte('}');
 }
 
+fn writeTextNodeLayout(
+    writer: anytype,
+    id: []const u8,
+    text: []const u8,
+    w: ?usize,
+    h: ?usize,
+    flex: usize,
+) !void {
+    try writer.writeAll("{\"type\":\"text\",\"id\":");
+    try protocol.writeJsonString(writer, id);
+    if (w) |vw| try writer.print(",\"w\":{d}", .{vw});
+    if (h) |vh| try writer.print(",\"h\":{d}", .{vh});
+    if (flex != 0) try writer.print(",\"flex\":{d}", .{flex});
+    try writer.writeAll(",\"text\":");
+    try protocol.writeJsonString(writer, text);
+    try writer.writeByte('}');
+}
+
 fn writeInputNode(writer: anytype, id: []const u8, placeholder: []const u8) !void {
     try writer.writeAll("{\"type\":\"input\",\"id\":");
     try protocol.writeJsonString(writer, id);
+    try writer.writeAll(",\"placeholder\":");
+    try protocol.writeJsonString(writer, placeholder);
+    try writer.writeByte('}');
+}
+
+fn writeInputNodeLayout(writer: anytype, id: []const u8, placeholder: []const u8, w: ?usize, h: ?usize, flex: usize) !void {
+    try writer.writeAll("{\"type\":\"input\",\"id\":");
+    try protocol.writeJsonString(writer, id);
+    if (w) |vw| try writer.print(",\"w\":{d}", .{vw});
+    if (h) |vh| try writer.print(",\"h\":{d}", .{vh});
+    if (flex != 0) try writer.print(",\"flex\":{d}", .{flex});
     try writer.writeAll(",\"placeholder\":");
     try protocol.writeJsonString(writer, placeholder);
     try writer.writeByte('}');
@@ -347,6 +376,7 @@ fn emitTextPatchById(writer: anytype, target: []const u8, text: []const u8) !voi
     try protocol.writeJsonString(writer, target);
     try writer.writeAll(",\"node\":{\"type\":\"text\",\"id\":");
     try protocol.writeJsonString(writer, target);
+    try writer.writeAll(",\"h\":1");
     try writer.writeAll(",\"text\":");
     try protocol.writeJsonString(writer, text);
     try writer.writeAll("}}\n");
@@ -446,29 +476,78 @@ fn writeRootNode(
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
-    try writeTextNode(writer, "title", "Tracer Demo");
+    try writeTextNodeLayout(writer, "title", "Tracer Demo", null, 1, 0);
     try writer.writeByte(',');
-    try writeTextNode(
+    try writeTextNodeLayout(
         writer,
         "hint",
         "Tab cycles focus by tree order. Arrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x exits.\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
+        null,
+        3,
+        0,
     );
     try writer.writeByte(',');
-    try writeTextNode(writer, "clock", tick_text);
+    try writeTextNodeLayout(writer, "clock", tick_text, null, 1, 0);
     try writer.writeByte(',');
 
+    try writer.writeAll("{\"type\":\"hbox\",\"id\":\"body\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
     if (!layout_alt) {
-        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, list_height);
+        try writePanelNode(
+            writer,
+            "panel-a",
+            "Panel A",
+            inputs[0].id,
+            lists[0].id,
+            lists[0].items.items,
+            status_text,
+            list_height,
+            30,
+            0,
+        );
         try writer.writeByte(',');
-        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, list_height);
+        try writePanelNode(
+            writer,
+            "panel-b",
+            "Panel B",
+            inputs[1].id,
+            lists[1].id,
+            lists[1].items.items,
+            status_text,
+            list_height,
+            null,
+            1,
+        );
     } else {
-        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, list_height);
+        try writePanelNode(
+            writer,
+            "panel-b",
+            "Panel B",
+            inputs[1].id,
+            lists[1].id,
+            lists[1].items.items,
+            status_text,
+            list_height,
+            null,
+            1,
+        );
         try writer.writeByte(',');
-        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, list_height);
+        try writePanelNode(
+            writer,
+            "panel-a",
+            "Panel A",
+            inputs[0].id,
+            lists[0].id,
+            lists[0].items.items,
+            status_text,
+            list_height,
+            30,
+            0,
+        );
     }
+    try writer.writeAll("]}");
 
     try writer.writeByte(',');
-    try writeTextNode(writer, "status", status_text);
+    try writeTextNodeLayout(writer, "status", status_text, null, 1, 0);
     try writer.writeAll("]}");
 }
 
@@ -479,17 +558,36 @@ fn writePanelNode(
     input_id: []const u8,
     list_id: []const u8,
     list_items: []const u64,
+    status_text: []const u8,
     list_height: usize,
+    w: ?usize,
+    flex: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"vbox\",\"id\":");
     try protocol.writeJsonString(writer, panel_id);
-    try writer.writeAll(",\"children\":[");
+    if (w) |vw| try writer.print(",\"w\":{d}", .{vw});
+    if (flex != 0) try writer.print(",\"flex\":{d}", .{flex});
+    try writer.writeAll(",\"pad\":1,\"clip\":true,\"children\":[");
 
     var title_id_buf: [64]u8 = undefined;
     const title_id = try std.fmt.bufPrint(&title_id_buf, "{s}-title", .{panel_id});
     try writeTextNode(writer, title_id, title);
     try writer.writeByte(',');
-    try writeInputNode(writer, input_id, "Type here");
+    if (std.mem.eql(u8, panel_id, "panel-a")) {
+        try writeTextNodeLayout(
+            writer,
+            "panel-a-long",
+            "This long line should be clipped inside Panel A. It must not overwrite the other column when the terminal is narrow.",
+            null,
+            2,
+            0,
+        );
+        try writer.writeByte(',');
+    } else {
+        try writeTextNodeLayout(writer, "panel-b-status", status_text, null, 2, 0);
+        try writer.writeByte(',');
+    }
+    try writeInputNodeLayout(writer, input_id, "Type here", null, 1, 0);
     try writer.writeByte(',');
     try writeListNode(writer, list_id, list_height, list_items);
 

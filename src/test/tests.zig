@@ -2,11 +2,67 @@ const std = @import("std");
 
 const tui = @import("tui");
 const protocol = tui.protocol;
+const Frame = tui.frame.Frame;
+const render = tui.render;
 const renderer_mod = tui.renderer;
 const testing_terminal = @import("testing_terminal.zig");
 const input = tui.input;
 const state = tui.state;
 const tree = tui.tree;
+
+test "layout: padding offsets child origin" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 5);
+    frame.clear(' ');
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "t", .text = "X" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .pad = 1, .children = children[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'X'), frame.rowSlice(1)[1]);
+}
+
+test "layout: hbox fixed width + flex places siblings" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 30);
+    frame.clear(' ');
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "left", .w = 10, .text = "L" } },
+        .{ .text = .{ .id = "right", .flex = 1, .text = "R" } },
+    };
+    const root = protocol.Node{ .hbox = .{ .id = "root", .pad = 1, .children = children[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'L'), frame.rowSlice(1)[1]);
+    // pad=1 => inner.x=1. left.w=10 => right.x=11 (0-based), i.e. column 12 (1-based).
+    try std.testing.expectEqual(@as(u8, 'R'), frame.rowSlice(1)[11]);
+}
+
+test "layout: clipping prevents hbox child bleed" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 20);
+    frame.clear(' ');
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "left", .w = 10, .text = "AAAAAAAAAAAAAAA" } },
+        .{ .text = .{ .id = "right", .w = 10, .text = "B" } },
+    };
+    const root = protocol.Node{ .hbox = .{ .id = "root", .children = children[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'B'), frame.rowSlice(0)[10]);
+    try std.testing.expectEqual(@as(u8, ' '), frame.rowSlice(0)[11]);
+    try std.testing.expectEqual(@as(u8, ' '), frame.rowSlice(0)[19]);
+}
 
 test "render: focused input shows cursor + placeholder" {
     var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });

@@ -74,6 +74,16 @@ Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrup
 9. Backend continues ticking/morphing and input stays responsive
 10. Exit with `x`
 
+## Manual repro (slice 10)
+
+1. `zig build demo`
+2. Confirm you see two panels side-by-side (an `hbox` layout)
+3. Confirm panels have padding (content is inset)
+4. Make the terminal narrow:
+   - long text stays clipped inside its panel (no bleed into the other column)
+   - focus/cursor still tracks the focused input as panels swap order
+5. Exit with `x`
+
 ## Automated tests
 
 Run:
@@ -88,7 +98,7 @@ What’s covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.4)
+## Protocol (v0.5)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -153,9 +163,23 @@ Resize (runtime-generated):
 ### Nodes
 
 - `vbox`: `{ "type":"vbox", "id":"...", "children":[ ... ] }`
+- `hbox`: `{ "type":"hbox", "id":"...", "children":[ ... ] }`
 - `text`: `{ "type":"text", "id":"...", "text":"..." }`
 - `input`: `{ "type":"input", "id":"...", "placeholder":"..." }`
 - `list`: `{ "type":"list", "id":"...", "height":3, "children":[ ... ] }`
+
+### Layout hints (optional)
+
+Any node may include:
+
+- `w` (int): fixed width (used when the parent is an `hbox`)
+- `h` (int): fixed height (used when the parent is a `vbox`)
+- `flex` (int, default 0): share of remaining space along the parent’s main axis
+
+Containers (`vbox`/`hbox`) may also include:
+
+- `pad` (int, default 0): uniform padding (in cells)
+- `clip` (bool, default false): clip child rendering to the padded inner rect
 
 Runtime owns `input.value` + `input.cursor` (patches must not clobber local editing state).
 

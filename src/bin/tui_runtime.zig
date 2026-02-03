@@ -176,41 +176,45 @@ fn inputVisibleCols(cols: usize) usize {
 }
 
 fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, size: terminal.Size) void {
-    // Ensure cursors remain valid even if state came from elsewhere.
-    const cols: usize = @as(usize, effectiveTermSize(size).cols);
-    const visible_cols: usize = inputVisibleCols(cols);
+    const eff = effectiveTermSize(size);
+    const rows: usize = @as(usize, eff.rows);
+    const cols: usize = @as(usize, eff.cols);
+
     for (widgets.items) |*e| {
         switch (e.state) {
             .input => |*s| {
                 s.cursor = @min(s.cursor, s.value.items.len);
                 if (s.scroll_x > s.value.items.len) s.scroll_x = s.value.items.len;
+
+                var visible_cols: usize = inputVisibleCols(cols);
+                if (render.findRectForId(root, rows, cols, e.id.items)) |r| {
+                    visible_cols = inputVisibleCols(r.w);
+                }
                 _ = input.ensure_cursor_visible(&s.scroll_x, s.cursor, s.value.items.len, visible_cols);
             },
             .list => {},
         }
     }
 
-    var rows_left: usize = @as(usize, effectiveTermSize(size).rows);
-    clampNodeForResize(widgets, root, &rows_left);
-}
+    for (widgets.items) |*e| {
+        switch (e.state) {
+            .list => {
+                const list_id = e.id.items;
+                const l = findListNodeById(root, list_id) orelse continue;
+                var visible_height: usize = 0;
 
-fn clampNodeForResize(widgets: *std.ArrayList(WidgetEntry), node: protocol.Node, rows_left: *usize) void {
-    if (rows_left.* == 0) return;
-    switch (node) {
-        .text => rows_left.* -= 1,
-        .input => rows_left.* -= 1,
-        .vbox => |v| {
-            for (v.children) |child| {
-                if (rows_left.* == 0) break;
-                clampNodeForResize(widgets, child, rows_left);
-            }
-        },
-        .list => |l| {
-            const desired_height: usize = l.height orelse rows_left.*;
-            const height: usize = @min(desired_height, rows_left.*);
-            clampListScrollForNode(widgets, l, height);
-            rows_left.* -= height;
-        },
+                if (render.findRectForId(root, rows, cols, list_id)) |r| {
+                    visible_height = r.h;
+                    const desired: usize = l.height orelse visible_height;
+                    visible_height = @min(desired, visible_height);
+                } else {
+                    visible_height = l.height orelse rows;
+                }
+
+                clampListScrollForNode(widgets, l, visible_height);
+            },
+            else => {},
+        }
     }
 }
 
@@ -589,7 +593,14 @@ pub fn main() !void {
                     }
                 },
                 .input => {
-                    const changed = handleFocusedInputKey(allocator, &widgets, focused_id.?, decoded, last_term_size.cols) catch |e| blk: {
+                    const rows: usize = @as(usize, last_term_size.rows);
+                    const cols: usize = @as(usize, last_term_size.cols);
+                    var visible_cols: usize = inputVisibleCols(cols);
+                    if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                        visible_cols = inputVisibleCols(r.w);
+                    }
+
+                    const changed = handleFocusedInputKey(allocator, &widgets, focused_id.?, decoded, visible_cols) catch |e| blk: {
                         logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
                         break :blk false;
                     };
@@ -734,10 +745,16 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
     return switch (node) {
         .text => |t| .{ .text = .{
             .id = try allocator.dupe(u8, t.id),
+            .w = t.w,
+            .h = t.h,
+            .flex = t.flex,
             .text = try allocator.dupe(u8, t.text),
         } },
         .input => |i| .{ .input = .{
             .id = try allocator.dupe(u8, i.id),
+            .w = i.w,
+            .h = i.h,
+            .flex = i.flex,
             .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
         } },
         .vbox => |v| blk: {
@@ -745,7 +762,30 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             for (v.children, 0..) |child, idx| {
                 children[idx] = try cloneNodeLeaky(allocator, child);
             }
-            break :blk .{ .vbox = .{ .id = try allocator.dupe(u8, v.id), .children = children } };
+            break :blk .{ .vbox = .{
+                .id = try allocator.dupe(u8, v.id),
+                .w = v.w,
+                .h = v.h,
+                .flex = v.flex,
+                .pad = v.pad,
+                .clip = v.clip,
+                .children = children,
+            } };
+        },
+        .hbox => |h| blk: {
+            var children = try allocator.alloc(protocol.Node, h.children.len);
+            for (h.children, 0..) |child, idx| {
+                children[idx] = try cloneNodeLeaky(allocator, child);
+            }
+            break :blk .{ .hbox = .{
+                .id = try allocator.dupe(u8, h.id),
+                .w = h.w,
+                .h = h.h,
+                .flex = h.flex,
+                .pad = h.pad,
+                .clip = h.clip,
+                .children = children,
+            } };
         },
         .list => |l| blk: {
             var children = try allocator.alloc(protocol.Node, l.children.len);
@@ -754,6 +794,9 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             }
             break :blk .{ .list = .{
                 .id = try allocator.dupe(u8, l.id),
+                .w = l.w,
+                .h = l.h,
+                .flex = l.flex,
                 .height = l.height,
                 .children = children,
             } };
@@ -764,6 +807,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
 fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
+        .hbox => |h| h.id,
         .text => |t| t.id,
         .input => |i| i.id,
         .list => |l| l.id,
@@ -877,6 +921,9 @@ fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focus
         },
         .vbox => |v| {
             for (v.children) |child| try collectFocusablesInto(allocator, out, child);
+        },
+        .hbox => |h| {
+            for (h.children) |child| try collectFocusablesInto(allocator, out, child);
         },
         .text => {},
     }
@@ -1072,6 +1119,12 @@ fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
             }
             break :blk null;
         },
+        .hbox => |h| blk: {
+            for (h.children) |child| {
+                if (findListNodeById(child, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
         .list => |l| blk: {
             for (l.children) |child| {
                 if (findListNodeById(child, id)) |ll| break :blk ll;
@@ -1206,7 +1259,7 @@ fn handleFocusedInputKey(
     widgets: *std.ArrayList(WidgetEntry),
     input_id: []const u8,
     key: DecodedKey,
-    term_cols: u16,
+    visible_cols: usize,
 ) !bool {
     const idx = try ensureWidgetKind(allocator, widgets, input_id, .input);
     var st = &widgets.items[idx].state.input;
@@ -1256,8 +1309,6 @@ fn handleFocusedInputKey(
 
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
-    const cols: usize = @as(usize, term_cols);
-    const visible_cols: usize = inputVisibleCols(cols);
     const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items.len, visible_cols);
     return changed or scroll_changed;
 }

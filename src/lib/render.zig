@@ -24,131 +24,451 @@ pub const ListState = struct {
     scroll: usize,
 };
 
-const RenderCtx = struct {
-    cols: usize,
-    rows_left: usize,
-    row: usize = 0, // 0-based
-    cursor: ?CursorPos = null,
+pub const Rect = struct {
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
 };
 
 pub fn renderToFrame(root: protocol.Node, state: RenderState, frame: *Frame) void {
-    var ctx: RenderCtx = .{
-        .cols = @as(usize, frame.cols),
-        .rows_left = @as(usize, frame.rows),
+    const root_rect: Rect = .{
+        .x = 0,
+        .y = 0,
+        .w = @as(usize, frame.cols),
+        .h = @as(usize, frame.rows),
     };
-    renderNode(frame, root, &ctx, state);
-    frame.cursor = ctx.cursor;
+    var cursor: ?CursorPos = null;
+    paintNode(frame, root, root_rect, root_rect, state, &cursor);
+    frame.cursor = cursor;
 }
 
-fn renderNode(frame: *Frame, node: protocol.Node, ctx: *RenderCtx, state: RenderState) void {
-    if (ctx.rows_left == 0) return;
+fn rectIntersect(a: Rect, b: Rect) Rect {
+    const ax2 = a.x + a.w;
+    const ay2 = a.y + a.h;
+    const bx2 = b.x + b.w;
+    const by2 = b.y + b.h;
+
+    const x1 = if (a.x > b.x) a.x else b.x;
+    const y1 = if (a.y > b.y) a.y else b.y;
+    const x2 = if (ax2 < bx2) ax2 else bx2;
+    const y2 = if (ay2 < by2) ay2 else by2;
+
+    if (x2 <= x1 or y2 <= y1) return .{ .x = x1, .y = y1, .w = 0, .h = 0 };
+    return .{ .x = x1, .y = y1, .w = x2 - x1, .h = y2 - y1 };
+}
+
+fn rectDeflate(r: Rect, pad: usize) Rect {
+    if (pad == 0) return r;
+    if (r.w <= pad * 2 or r.h <= pad * 2) return .{ .x = r.x, .y = r.y, .w = 0, .h = 0 };
+    return .{ .x = r.x + pad, .y = r.y + pad, .w = r.w - pad * 2, .h = r.h - pad * 2 };
+}
+
+fn nodeId(node: protocol.Node) []const u8 {
+    return switch (node) {
+        .vbox => |v| v.id,
+        .hbox => |h| h.id,
+        .text => |t| t.id,
+        .input => |i| i.id,
+        .list => |l| l.id,
+    };
+}
+
+fn nodeHintW(node: protocol.Node) ?usize {
+    return switch (node) {
+        .vbox => |v| v.w,
+        .hbox => |h| h.w,
+        .text => |t| t.w,
+        .input => |i| i.w,
+        .list => |l| l.w,
+    };
+}
+
+fn nodeHintH(node: protocol.Node) ?usize {
+    return switch (node) {
+        .vbox => |v| v.h,
+        .hbox => |h| h.h,
+        .text => |t| t.h,
+        .input => |i| i.h,
+        .list => |l| l.h,
+    };
+}
+
+fn nodeFlex(node: protocol.Node) usize {
+    return switch (node) {
+        .vbox => |v| v.flex,
+        .hbox => |h| h.flex,
+        .text => |t| t.flex,
+        .input => |i| i.flex,
+        .list => |l| l.flex,
+    };
+}
+
+fn nodePad(node: protocol.Node) usize {
+    return switch (node) {
+        .vbox => |v| v.pad,
+        .hbox => |h| h.pad,
+        else => 0,
+    };
+}
+
+fn nodeClip(node: protocol.Node) bool {
+    return switch (node) {
+        .vbox => |v| v.clip,
+        .hbox => |h| h.clip,
+        else => false,
+    };
+}
+
+fn countWrappedLines(text: []const u8, cols: usize) usize {
+    var lines: usize = 1;
+    var col: usize = 0;
+
+    for (text) |b| {
+        if (b == '\n') {
+            lines += 1;
+            col = 0;
+            continue;
+        }
+
+        if (cols != 0 and col == cols) {
+            lines += 1;
+            col = 0;
+        }
+        col += 1;
+    }
+    return lines;
+}
+
+fn measureHeight(node: protocol.Node, avail_w: usize) usize {
+    if (nodeHintH(node)) |h| return h;
     switch (node) {
-        .text => |t| {
-            _ = drawWrappedText(frame, ctx, t.text);
-        },
+        .text => |t| return countWrappedLines(t.text, avail_w),
+        .input => return 1,
+        .list => |l| return l.height orelse l.children.len,
         .vbox => |v| {
-            _ = v.id;
+            const inner_w: usize = if (avail_w > v.pad * 2) avail_w - v.pad * 2 else 0;
+            var total: usize = v.pad * 2;
             for (v.children) |child| {
-                if (ctx.rows_left == 0) break;
-                renderNode(frame, child, ctx, state);
+                total += measureHeight(child, inner_w);
             }
+            return total;
         },
-        .input => |i| {
-            const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, i.id);
-            const input_state = findInputState(state.inputs, i.id);
-            const prefix = "> ";
-            const prefix_len: usize = prefix.len;
-            const cols: usize = ctx.cols;
-            const visible_cols: usize = if (cols > prefix_len) cols - prefix_len else 0;
+        .hbox => |h| {
+            const inner_w: usize = if (avail_w > h.pad * 2) avail_w - h.pad * 2 else 0;
 
-            if (input_state == null) {
-                // Unknown input id: render empty line with prefix only.
-                if (focused and ctx.cursor == null) {
-                    ctx.cursor = .{ .row = ctx.row + 1, .col = @min(prefix_len + 1, @max(@as(usize, 1), cols)) };
+            var fixed_sum: usize = 0;
+            var total_flex: usize = 0;
+            for (h.children) |child| {
+                if (nodeHintW(child)) |w| {
+                    fixed_sum += w;
+                } else if (nodeFlex(child) > 0) {
+                    total_flex += nodeFlex(child);
                 }
-                renderLinePieces(frame, ctx, &.{prefix});
-                return;
             }
 
-            const st = input_state.?;
-            const effective_cursor = @min(st.cursor, st.value.len);
+            const remaining: usize = if (inner_w > fixed_sum) inner_w - fixed_sum else 0;
 
-            if (st.value.len > 0) {
-                var start: usize = @min(st.scroll_x, st.value.len);
-                if (visible_cols == 0 or st.value.len <= visible_cols) {
-                    start = 0;
-                } else {
-                    if (effective_cursor < start) start = effective_cursor;
-                    if (effective_cursor > start + visible_cols) start = effective_cursor - visible_cols;
-                    if (start > st.value.len) start = st.value.len;
-                }
-                const end: usize = @min(st.value.len, start + visible_cols);
-                const visible = if (start < end) st.value[start..end] else "";
-
-                if (focused and ctx.cursor == null) {
-                    var col: usize = prefix_len + (effective_cursor - start) + 1; // 1-based
-                    if (cols != 0) {
-                        if (col > cols) col = cols;
-                        if (col == 0) col = 1;
-                    }
-                    ctx.cursor = .{ .row = ctx.row + 1, .col = col };
-                }
-
-                renderLinePieces(frame, ctx, &.{ prefix, visible });
-                return;
+            var max_h: usize = 0;
+            var carry: u128 = 0;
+            for (h.children) |child| {
+                const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
+                    const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                    const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+                    carry = numer % @as(u128, total_flex);
+                    break :blk share;
+                } else 0;
+                const ch = measureHeight(child, child_w);
+                if (ch > max_h) max_h = ch;
             }
-
-            if (i.placeholder) |ph| {
-                if (focused) {
-                    if (ctx.cursor == null) {
-                        ctx.cursor = .{ .row = ctx.row + 1, .col = @min(prefix_len + 1, @max(@as(usize, 1), cols)) };
-                    }
-                    renderLinePieces(frame, ctx, &.{ prefix, ph });
-                } else {
-                    renderLinePieces(frame, ctx, &.{ prefix, "[", ph, "]" });
-                }
-            } else {
-                if (focused and ctx.cursor == null) {
-                    ctx.cursor = .{ .row = ctx.row + 1, .col = @min(prefix_len + 1, @max(@as(usize, 1), cols)) };
-                }
-                renderLinePieces(frame, ctx, &.{prefix});
-            }
+            return max_h + h.pad * 2;
         },
-        .list => |l| {
-            const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, l.id);
-            const list_state = findListState(state.lists, l.id);
-            const selected_id = if (list_state) |st| st.selected_id else "";
-            const scroll = if (list_state) |st| st.scroll else 0;
+    }
+}
 
-            const desired_height: usize = l.height orelse ctx.rows_left;
-            const height: usize = @min(desired_height, ctx.rows_left);
-            const start: usize = @min(scroll, l.children.len);
+fn putTextClipped(frame: *Frame, row: usize, col: usize, text: []const u8, clip: Rect) void {
+    if (clip.w == 0 or clip.h == 0) return;
+    if (row < clip.y or row >= clip.y + clip.h) return;
+    if (col >= clip.x + clip.w) return;
 
-            var row_idx: usize = 0;
-            while (row_idx < height) : (row_idx += 1) {
-                const item_idx = start + row_idx;
-                if (item_idx >= l.children.len) {
-                    renderBlankLine(ctx);
-                    continue;
+    const start_col = if (col > clip.x) col else clip.x;
+    const end_col = blk: {
+        const row_end = clip.x + clip.w;
+        const write_end = col + text.len;
+        break :blk if (write_end < row_end) write_end else row_end;
+    };
+    if (end_col <= start_col) return;
+
+    const src_off: usize = start_col - col;
+    const n: usize = end_col - start_col;
+    frame.putText(row, start_col, text[src_off .. src_off + n]);
+}
+
+fn drawWrappedTextInRect(frame: *Frame, rect: Rect, clip: Rect, text: []const u8) void {
+    if (rect.w == 0 or rect.h == 0) return;
+
+    const max_rows: usize = rect.y + rect.h;
+    const cols: usize = rect.w;
+
+    var row: usize = rect.y;
+    var col: usize = 0;
+    var i: usize = 0;
+
+    while (i < text.len and row < max_rows) {
+        const b = text[i];
+        if (b == '\n') {
+            row += 1;
+            col = 0;
+            i += 1;
+            continue;
+        }
+
+        if (cols != 0 and col == cols) {
+            row += 1;
+            col = 0;
+            continue;
+        }
+
+        const remaining_cols: usize = if (cols == 0) (text.len - i) else (cols - col);
+        if (remaining_cols == 0) continue;
+
+        const remaining_text = text[i..];
+        const want: usize = @min(remaining_cols, remaining_text.len);
+        const scan = remaining_text[0..want];
+        const n = if (std.mem.indexOfScalar(u8, scan, '\n')) |nl| nl else scan.len;
+        if (n == 0) continue;
+
+        putTextClipped(frame, row, rect.x + col, remaining_text[0..n], clip);
+        col += n;
+        i += n;
+    }
+}
+
+fn renderLinePiecesInRect(frame: *Frame, row: usize, rect: Rect, clip: Rect, pieces: []const []const u8) void {
+    if (rect.w == 0) return;
+
+    var remaining: usize = rect.w;
+    var col: usize = rect.x;
+    for (pieces) |p| {
+        if (remaining == 0) break;
+        const chunk = if (p.len <= remaining) p else p[0..remaining];
+        putTextClipped(frame, row, col, chunk, clip);
+        remaining -= chunk.len;
+        col += chunk.len;
+    }
+}
+
+fn paintInput(
+    frame: *Frame,
+    rect: Rect,
+    clip: Rect,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+    i: protocol.InputNode,
+) void {
+    if (rect.h == 0) return;
+    const row: usize = rect.y;
+
+    const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, i.id);
+    const input_state = findInputState(state.inputs, i.id);
+    const prefix = "> ";
+    const prefix_len: usize = prefix.len;
+    const cols: usize = rect.w;
+    const visible_cols: usize = if (cols > prefix_len) cols - prefix_len else 0;
+
+    if (input_state == null) {
+        if (focused and cursor_out.* == null) {
+            if (cols != 0 and row >= clip.y and row < clip.y + clip.h and rect.x < clip.x + clip.w) {
+                const col_abs = if (rect.x + prefix_len < rect.x + cols) rect.x + prefix_len else (rect.x + cols - 1);
+                if (col_abs >= clip.x and col_abs < clip.x + clip.w) {
+                    cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
                 }
-
-                const item = l.children[item_idx];
-                const item_id = switch (item) {
-                    .text => |t| t.id,
-                    .input => |i| i.id,
-                    .vbox => |v| v.id,
-                    .list => |ll| ll.id,
-                };
-                const is_selected = selected_id.len > 0 and std.mem.eql(u8, selected_id, item_id);
-
-                const prefix = if (is_selected) (if (focused) "> " else "* ") else "  ";
-                const label = switch (item) {
-                    .text => |t| t.text,
-                    else => "",
-                };
-                renderLinePieces(frame, ctx, &.{ prefix, label });
             }
-        },
+        }
+        renderLinePiecesInRect(frame, row, rect, clip, &.{prefix});
+        return;
+    }
+
+    const st = input_state.?;
+    const effective_cursor = @min(st.cursor, st.value.len);
+
+    if (st.value.len > 0) {
+        var start: usize = @min(st.scroll_x, st.value.len);
+        if (visible_cols == 0 or st.value.len <= visible_cols) {
+            start = 0;
+        } else {
+            if (effective_cursor < start) start = effective_cursor;
+            if (effective_cursor > start + visible_cols) start = effective_cursor - visible_cols;
+            if (start > st.value.len) start = st.value.len;
+        }
+
+        const end: usize = @min(st.value.len, start + visible_cols);
+        const visible = if (start < end) st.value[start..end] else "";
+
+        if (focused and cursor_out.* == null and cols != 0) {
+            var col_abs: usize = rect.x + prefix_len + (effective_cursor - start);
+            if (col_abs >= rect.x + cols) col_abs = rect.x + cols - 1;
+            if (row >= clip.y and row < clip.y + clip.h and col_abs >= clip.x and col_abs < clip.x + clip.w) {
+                cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
+            }
+        }
+
+        renderLinePiecesInRect(frame, row, rect, clip, &.{ prefix, visible });
+        return;
+    }
+
+    if (i.placeholder) |ph| {
+        if (focused) {
+            if (cursor_out.* == null and cols != 0) {
+                const col_abs = if (rect.x + prefix_len < rect.x + cols) rect.x + prefix_len else (rect.x + cols - 1);
+                if (row >= clip.y and row < clip.y + clip.h and col_abs >= clip.x and col_abs < clip.x + clip.w) {
+                    cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
+                }
+            }
+            renderLinePiecesInRect(frame, row, rect, clip, &.{ prefix, ph });
+        } else {
+            renderLinePiecesInRect(frame, row, rect, clip, &.{ prefix, "[", ph, "]" });
+        }
+    } else {
+        if (focused and cursor_out.* == null and cols != 0) {
+            const col_abs = if (rect.x + prefix_len < rect.x + cols) rect.x + prefix_len else (rect.x + cols - 1);
+            if (row >= clip.y and row < clip.y + clip.h and col_abs >= clip.x and col_abs < clip.x + clip.w) {
+                cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
+            }
+        }
+        renderLinePiecesInRect(frame, row, rect, clip, &.{prefix});
+    }
+}
+
+fn paintList(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, l: protocol.ListNode) void {
+    if (rect.h == 0) return;
+    const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, l.id);
+    const list_state = findListState(state.lists, l.id);
+    const selected_id = if (list_state) |st| st.selected_id else "";
+    const scroll = if (list_state) |st| st.scroll else 0;
+
+    const desired_height: usize = l.height orelse rect.h;
+    const height: usize = @min(desired_height, rect.h);
+    const start: usize = @min(scroll, l.children.len);
+
+    var row_idx: usize = 0;
+    while (row_idx < height) : (row_idx += 1) {
+        const item_idx = start + row_idx;
+        if (item_idx >= l.children.len) continue;
+
+        const item = l.children[item_idx];
+        const item_id = nodeId(item);
+        const is_selected = selected_id.len > 0 and std.mem.eql(u8, selected_id, item_id);
+
+        const prefix = if (is_selected) (if (focused) "> " else "* ") else "  ";
+        const label = switch (item) {
+            .text => |t| t.text,
+            else => "",
+        };
+
+        const row: usize = rect.y + row_idx;
+        if (row >= rect.y + rect.h) break;
+        renderLinePiecesInRect(frame, row, .{ .x = rect.x, .y = row, .w = rect.w, .h = 1 }, clip, &.{ prefix, label });
+    }
+}
+
+fn paintVBox(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, cursor_out: *?CursorPos, v: protocol.VBoxNode) void {
+    const pad = v.pad;
+    const inner = rectDeflate(rect, pad);
+    const base_clip = rectIntersect(clip, rect);
+    const child_clip = if (v.clip) rectIntersect(base_clip, inner) else base_clip;
+
+    var fixed_sum: usize = 0;
+    var total_flex: usize = 0;
+
+    for (v.children) |child| {
+        if (nodeHintH(child)) |h| {
+            fixed_sum += h;
+        } else if (nodeFlex(child) > 0) {
+            total_flex += nodeFlex(child);
+        } else {
+            fixed_sum += measureHeight(child, inner.w);
+        }
+    }
+
+    const remaining: usize = if (inner.h > fixed_sum) inner.h - fixed_sum else 0;
+
+    var y: usize = inner.y;
+    var carry: u128 = 0;
+
+    for (v.children) |child| {
+        if (y >= inner.y + inner.h) break;
+
+        const child_h: usize = if (nodeHintH(child)) |h| h else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
+            const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+            const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+            carry = numer % @as(u128, total_flex);
+            break :blk share;
+        } else measureHeight(child, inner.w);
+
+        const clamped_h: usize = if (y + child_h <= inner.y + inner.h) child_h else (inner.y + inner.h - y);
+        const child_rect: Rect = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
+        paintNode(frame, child, child_rect, child_clip, state, cursor_out);
+        y += clamped_h;
+    }
+}
+
+fn paintHBox(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, cursor_out: *?CursorPos, h: protocol.HBoxNode) void {
+    const pad = h.pad;
+    const inner = rectDeflate(rect, pad);
+    const base_clip = rectIntersect(clip, rect);
+    const child_clip = if (h.clip) rectIntersect(base_clip, inner) else base_clip;
+
+    var fixed_sum: usize = 0;
+    var total_flex: usize = 0;
+
+    for (h.children) |child| {
+        if (nodeHintW(child)) |w| {
+            fixed_sum += w;
+        } else if (nodeFlex(child) > 0) {
+            total_flex += nodeFlex(child);
+        }
+    }
+
+    const remaining: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+
+    var x: usize = inner.x;
+    var carry: u128 = 0;
+
+    for (h.children) |child| {
+        if (x >= inner.x + inner.w) break;
+
+        const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
+            const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+            const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+            carry = numer % @as(u128, total_flex);
+            break :blk share;
+        } else 0;
+
+        const clamped_w: usize = if (x + child_w <= inner.x + inner.w) child_w else (inner.x + inner.w - x);
+        const child_rect: Rect = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
+        paintNode(frame, child, child_rect, child_clip, state, cursor_out);
+        x += clamped_w;
+    }
+}
+
+fn paintNode(
+    frame: *Frame,
+    node: protocol.Node,
+    rect: Rect,
+    clip: Rect,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+) void {
+    const node_clip = rectIntersect(clip, rect);
+    if (node_clip.w == 0 or node_clip.h == 0) return;
+
+    switch (node) {
+        .text => |t| drawWrappedTextInRect(frame, rect, node_clip, t.text),
+        .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i),
+        .list => |l| paintList(frame, rect, node_clip, state, l),
+        .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v),
+        .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h),
     }
 }
 
@@ -182,88 +502,89 @@ fn findListState(lists: []const ListState, id: []const u8) ?ListState {
     return null;
 }
 
-fn renderLinePieces(frame: *Frame, ctx: *RenderCtx, pieces: []const []const u8) void {
-    if (ctx.rows_left == 0) return;
+pub fn findRectForId(root: protocol.Node, rows: usize, cols: usize, id: []const u8) ?Rect {
+    const root_rect: Rect = .{ .x = 0, .y = 0, .w = cols, .h = rows };
+    return findRectInNode(root, root_rect, id);
+}
 
-    var remaining: usize = if (ctx.cols == 0) std.math.maxInt(usize) else ctx.cols;
-    var col: usize = 0;
-    for (pieces) |p| {
-        if (remaining == 0) break;
-        const chunk = if (p.len <= remaining) p else p[0..remaining];
-        frame.putText(ctx.row, col, chunk);
-        remaining -= chunk.len;
-        col += chunk.len;
+fn findRectInNode(node: protocol.Node, rect: Rect, id: []const u8) ?Rect {
+    if (std.mem.eql(u8, nodeId(node), id)) return rect;
+
+    switch (node) {
+        .vbox => |v| {
+            const inner = rectDeflate(rect, v.pad);
+
+            var fixed_sum: usize = 0;
+            var total_flex: usize = 0;
+
+            for (v.children) |child| {
+                if (nodeHintH(child)) |h| {
+                    fixed_sum += h;
+                } else if (nodeFlex(child) > 0) {
+                    total_flex += nodeFlex(child);
+                } else {
+                    fixed_sum += measureHeight(child, inner.w);
+                }
+            }
+
+            const remaining: usize = if (inner.h > fixed_sum) inner.h - fixed_sum else 0;
+
+            var y: usize = inner.y;
+            var carry: u128 = 0;
+
+            for (v.children) |child| {
+                if (y >= inner.y + inner.h) break;
+
+                const child_h: usize = if (nodeHintH(child)) |h| h else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
+                    const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                    const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+                    carry = numer % @as(u128, total_flex);
+                    break :blk share;
+                } else measureHeight(child, inner.w);
+
+                const clamped_h: usize = if (y + child_h <= inner.y + inner.h) child_h else (inner.y + inner.h - y);
+                const child_rect: Rect = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
+                if (findRectInNode(child, child_rect, id)) |r| return r;
+                y += clamped_h;
+            }
+            return null;
+        },
+        .hbox => |h| {
+            const inner = rectDeflate(rect, h.pad);
+
+            var fixed_sum: usize = 0;
+            var total_flex: usize = 0;
+
+            for (h.children) |child| {
+                if (nodeHintW(child)) |w| {
+                    fixed_sum += w;
+                } else if (nodeFlex(child) > 0) {
+                    total_flex += nodeFlex(child);
+                }
+            }
+
+            const remaining: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+
+            var x: usize = inner.x;
+            var carry: u128 = 0;
+
+            for (h.children) |child| {
+                if (x >= inner.x + inner.w) break;
+
+                const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
+                    const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                    const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+                    carry = numer % @as(u128, total_flex);
+                    break :blk share;
+                } else 0;
+
+                const clamped_w: usize = if (x + child_w <= inner.x + inner.w) child_w else (inner.x + inner.w - x);
+                const child_rect: Rect = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
+                if (findRectInNode(child, child_rect, id)) |r| return r;
+                x += clamped_w;
+            }
+            return null;
+        },
+        else => return null,
     }
-    ctx.rows_left -= 1;
-    ctx.row += 1;
-}
-
-fn renderBlankLine(ctx: *RenderCtx) void {
-    if (ctx.rows_left == 0) return;
-    ctx.rows_left -= 1;
-    ctx.row += 1;
-}
-
-fn drawWrappedText(frame: *Frame, ctx: *RenderCtx, text: []const u8) usize {
-    return drawWrappedTextPieces(frame, ctx, &.{text});
-}
-
-fn drawWrappedTextPieces(frame: *Frame, ctx: *RenderCtx, pieces: []const []const u8) usize {
-    if (ctx.rows_left == 0) return 0;
-
-    const cols: usize = ctx.cols;
-    const start_row: usize = ctx.row;
-    const max_rows: usize = ctx.rows_left;
-
-    var row: usize = start_row;
-    var col: usize = 0;
-    var rows_used: usize = 1;
-
-    var p_idx: usize = 0;
-    var p_off: usize = 0;
-
-    while (p_idx < pieces.len) {
-        if (rows_used > max_rows) break;
-        const p = pieces[p_idx];
-        if (p_off >= p.len) {
-            p_idx += 1;
-            p_off = 0;
-            continue;
-        }
-
-        if (p[p_off] == '\n') {
-            if (rows_used == max_rows) break;
-            p_off += 1;
-            row += 1;
-            col = 0;
-            rows_used += 1;
-            continue;
-        }
-
-        if (cols != 0 and col == cols) {
-            if (rows_used == max_rows) break;
-            row += 1;
-            col = 0;
-            rows_used += 1;
-            continue;
-        }
-
-        const remaining_cols: usize = if (cols == 0) (p.len - p_off) else (cols - col);
-        if (remaining_cols == 0) continue;
-
-        const remaining_p: []const u8 = p[p_off..];
-        const want: usize = @min(remaining_cols, remaining_p.len);
-        const scan = remaining_p[0..want];
-        const n = if (std.mem.indexOfScalar(u8, scan, '\n')) |nl| nl else scan.len;
-        if (n == 0) continue;
-
-        frame.putText(row, col, remaining_p[0..n]);
-        col += n;
-        p_off += n;
-    }
-
-    const consumed: usize = @min(rows_used, max_rows);
-    ctx.row += consumed;
-    ctx.rows_left -= consumed;
-    return consumed;
 }

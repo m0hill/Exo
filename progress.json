@@ -161,5 +161,24 @@
       "Word-jump semantics with ASCII word chars"
     ],
     "timestamp": "2026-02-03"
+  },
+  {
+    "slice": 10,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Rect-based layout + clipping: add hbox, padding, fixed vs flex sizing, and clipped painting within allocated rects",
+    "deliverables": [
+      "src/lib/protocol.zig: add hbox node + layout hints (w/h/flex) and container fields (pad/clip)",
+      "src/lib/render.zig: layout→paint renderer with Rects and clipped drawing",
+      "src/bin/tui_runtime.zig: focus traversal + resize/input viewport aware of laid-out widget rects",
+      "src/bin/backend_demo.zig: demo tree uses hbox + padding and swaps panels horizontally under morph",
+      "src/test/tests.zig: geometry/clipping unit tests"
+    ],
+    "boundaries_hit": [
+      "Side-by-side layout requires rect-based layout pass",
+      "Clipping prevents widget bleed across allocated regions",
+      "Widget cursor/scroll must use per-node rect sizing"
+    ],
+    "timestamp": "2026-02-03"
   }
 ]
