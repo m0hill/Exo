@@ -26,7 +26,7 @@ test "render: focused input shows cursor + placeholder" {
 
     try renderer.draw(&term, root, .{
         .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0, .scroll_x = 0 }},
     });
 
     const out = term.out.items;
@@ -51,7 +51,7 @@ test "render: unfocused input hides cursor and brackets placeholder" {
 
     try renderer.draw(&term, root, .{
         .focused_id = null,
-        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0, .scroll_x = 0 }},
     });
 
     const out = term.out.items;
@@ -75,7 +75,7 @@ test "render: cursor column tracks input_cursor" {
 
     try renderer.draw(&term, root, .{
         .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "hi", .cursor = 2 }},
+        .inputs = &.{.{ .id = "query", .value = "hi", .cursor = 2, .scroll_x = 0 }},
     });
 
     const out = term.out.items;
@@ -110,7 +110,7 @@ test "renderer: second draw is incremental" {
 
     try renderer.draw(&term, root1, .{
         .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0, .scroll_x = 0 }},
     });
     const out1_len: usize = term.out.items.len;
     try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2J") != null);
@@ -119,7 +119,7 @@ test "renderer: second draw is incremental" {
 
     try renderer.draw(&term, root2, .{
         .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0 }},
+        .inputs = &.{.{ .id = "query", .value = "", .cursor = 0, .scroll_x = 0 }},
     });
 
     const out2 = term.out.items;
@@ -146,7 +146,7 @@ test "renderer: resize forces full repaint" {
 
     try renderer.draw(&term, root, .{
         .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
+        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5, .scroll_x = 0 }},
     });
     try std.testing.expect(renderer.last_metrics.full);
 
@@ -155,39 +155,38 @@ test "renderer: resize forces full repaint" {
 
     try renderer.draw(&term, root, .{
         .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
+        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5, .scroll_x = 0 }},
     });
     try std.testing.expect(renderer.last_metrics.full);
     try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2J") != null);
 }
 
-test "render: cursor column clamped after resize" {
-    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 5, .cols = 80 });
+test "render: input horizontal scroll keeps cursor visible" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 4, .cols = 10 });
     defer term.deinit();
 
     var renderer = renderer_mod.Renderer.init(std.testing.allocator);
     defer renderer.deinit();
 
     var children = [_]protocol.Node{
-        .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
+        .{ .text = .{ .id = "title", .text = "T" } },
         .{ .input = .{ .id = "query", .placeholder = "Type here" } },
     };
     const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
 
+    const value = "abcdefghijklmnop";
+    const cursor: usize = value.len;
+    var scroll_x: usize = 0;
+    _ = input.ensure_cursor_visible(&scroll_x, cursor, value.len, 8);
+
     try renderer.draw(&term, root, .{
         .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
-    });
-    term.reset();
-
-    term.size = .{ .rows = 5, .cols = 3 };
-    try renderer.draw(&term, root, .{
-        .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
+        .inputs = &.{.{ .id = "query", .value = value, .cursor = cursor, .scroll_x = scroll_x }},
     });
 
-    // With wrapping (cols=3), the input becomes multi-row and the cursor is clamped to the last visible cell.
-    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[5;3H") != null);
+    const out = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out, "> ijklmnop") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[2;10H") != null);
 }
 
 test "render: text wraps and respects hard newlines" {
@@ -205,30 +204,6 @@ test "render: text wraps and respects hard newlines" {
     try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[K\r\nWorld") != null);
 }
 
-test "render: input cursor row/col maps after wrap" {
-    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 6, .cols = 8 });
-    defer term.deinit();
-
-    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
-    defer renderer.deinit();
-
-    var children = [_]protocol.Node{
-        .{ .text = .{ .id = "title", .text = "T" } },
-        .{ .input = .{ .id = "query", .placeholder = "Type" } },
-    };
-    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
-
-    try renderer.draw(&term, root, .{
-        .focused_id = "query",
-        .inputs = &.{.{ .id = "query", .value = "abcdefghi", .cursor = 7 }},
-    });
-
-    const out = term.out.items;
-    try std.testing.expect(std.mem.indexOf(u8, out, "> abcdef") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "  ghi") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[3;4H") != null);
-}
-
 test "input: insert and backspace edit buffer" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
@@ -242,6 +217,37 @@ test "input: insert and backspace edit buffer" {
     try std.testing.expect(try input.handleInputByte(std.testing.allocator, &buf, &cursor, 127));
     try std.testing.expectEqualStrings("h", buf.items);
     try std.testing.expectEqual(@as(usize, 1), cursor);
+}
+
+test "input: ensure_cursor_visible scrolls window" {
+    const value_len: usize = 16;
+    const visible_cols: usize = 8;
+    var scroll_x: usize = 0;
+
+    _ = input.ensure_cursor_visible(&scroll_x, 16, value_len, visible_cols);
+    try std.testing.expectEqual(@as(usize, 8), scroll_x);
+
+    _ = input.ensure_cursor_visible(&scroll_x, 6, value_len, visible_cols);
+    try std.testing.expectEqual(@as(usize, 6), scroll_x);
+}
+
+test "input: delete_at_cursor deletes without moving cursor" {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "abcd");
+    var cursor: usize = 1;
+
+    try std.testing.expect(input.delete_at_cursor(&buf, &cursor));
+    try std.testing.expectEqualStrings("acd", buf.items);
+    try std.testing.expectEqual(@as(usize, 1), cursor);
+}
+
+test "input: word jumps use ascii word chars" {
+    const value = "abc  def_ghi  j";
+    try std.testing.expectEqual(@as(usize, 3), input.word_right(value, 0));
+    try std.testing.expectEqual(@as(usize, 12), input.word_right(value, 3));
+    try std.testing.expectEqual(@as(usize, 5), input.word_left(value, 12));
+    try std.testing.expectEqual(@as(usize, 0), input.word_left(value, 5));
 }
 
 test "state: clamp list scroll keeps selection visible" {

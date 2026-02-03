@@ -169,11 +169,23 @@ fn effectiveTermSize(sz: terminal.Size) terminal.Size {
     return .{ .rows = rows, .cols = cols };
 }
 
+fn inputVisibleCols(cols: usize) usize {
+    const prefix_len: usize = 2; // "> "
+    if (cols <= prefix_len) return 0;
+    return cols - prefix_len;
+}
+
 fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, size: terminal.Size) void {
     // Ensure cursors remain valid even if state came from elsewhere.
+    const cols: usize = @as(usize, effectiveTermSize(size).cols);
+    const visible_cols: usize = inputVisibleCols(cols);
     for (widgets.items) |*e| {
         switch (e.state) {
-            .input => |*s| s.cursor = @min(s.cursor, s.value.items.len),
+            .input => |*s| {
+                s.cursor = @min(s.cursor, s.value.items.len);
+                if (s.scroll_x > s.value.items.len) s.scroll_x = s.value.items.len;
+                _ = input.ensure_cursor_visible(&s.scroll_x, s.cursor, s.value.items.len, visible_cols);
+            },
             .list => {},
         }
     }
@@ -492,8 +504,9 @@ pub fn main() !void {
         }
 
         if ((fds[2].revents & std.posix.POLL.IN) != 0) {
-            const b = try term.readByte();
-            if (b == '\t' or (b == 0x1b and try readShiftTab(&term))) {
+            const first = try term.readByte();
+            const decoded = try decodeKey(&term, first) orelse continue;
+            if (decoded == .tab or decoded == .shift_tab) {
                 if (current_root != null) {
                     const next_focus = try cycleFocusInTree(allocator, current_root.?, focused_id);
                     try setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
@@ -523,20 +536,20 @@ pub fn main() !void {
             }
 
             // Always allow exit keys.
-            if (b == 3) {
+            if (decoded == .byte and decoded.byte == 3) {
                 logPrint(&log_sink, "EVENT_TX name=key key=ctrl-c\n", .{});
                 try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
                 try child_in.flush();
                 break;
             }
-            if (b == 'x') {
+            if (decoded == .byte and decoded.byte == 'x') {
                 logPrint(&log_sink, "EVENT_TX name=key key=x\n", .{});
                 try protocol.writeKeyEventJsonl(child_in, "x");
                 try child_in.flush();
                 break;
             }
 
-            if (b == 'q') {
+            if (decoded == .byte and decoded.byte == 'q') {
                 logPrint(&log_sink, "EVENT_TX name=key key=q\n", .{});
                 try protocol.writeKeyEventJsonl(child_in, "q");
                 try child_in.flush();
@@ -549,8 +562,8 @@ pub fn main() !void {
 
             switch (fk.?) {
                 .list => {
-                    if (b == 'j' or b == 'k') {
-                        const delta: isize = if (b == 'j') 1 else -1;
+                    if (decoded == .byte and (decoded.byte == 'j' or decoded.byte == 'k')) {
+                        const delta: isize = if (decoded.byte == 'j') 1 else -1;
                         const changed = try moveListSelectionForId(
                             allocator,
                             &log_sink,
@@ -569,24 +582,25 @@ pub fn main() !void {
                         continue;
                     }
 
-                    if (b == '\r' or b == '\n') {
+                    if (decoded == .byte and (decoded.byte == '\r' or decoded.byte == '\n')) {
                         try activateListForId(&log_sink, child_in, widgets.items, focused_id.?);
                         try child_in.flush();
                         continue;
                     }
                 },
                 .input => {
-                    const changed = handleFocusedInputByte(allocator, &widgets, focused_id.?, b) catch |e| blk: {
+                    const changed = handleFocusedInputKey(allocator, &widgets, focused_id.?, decoded, last_term_size.cols) catch |e| blk: {
                         logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
                         break :blk false;
                     };
                     if (!changed) continue;
-                    try emitInputEventForId(&log_sink, child_in, widgets.items, focused_id.?);
-                    try child_in.flush();
 
                     const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
                     try renderer.draw(&term, current_root.?, rs);
                     logRenderReason(&log_sink, "input", renderer.last_metrics);
+
+                    try emitInputEventForId(&log_sink, child_in, widgets.items, focused_id.?);
+                    try child_in.flush();
                     continue;
                 },
             }
@@ -647,14 +661,6 @@ fn mapKey(b: u8) ?[]const u8 {
     };
 }
 
-fn readShiftTab(term: *terminal.Terminal) !bool {
-    // Common sequence: ESC [ Z
-    const b2 = try readByteIfReady(term) orelse return false;
-    if (b2 != '[') return false;
-    const b3 = try readByteIfReady(term) orelse return false;
-    return b3 == 'Z';
-}
-
 fn readByteIfReady(term: *terminal.Terminal) !?u8 {
     var fds = [_]std.posix.pollfd{
         .{ .fd = std.posix.STDIN_FILENO, .events = std.posix.POLL.IN, .revents = 0 },
@@ -663,6 +669,65 @@ fn readByteIfReady(term: *terminal.Terminal) !?u8 {
     if (rc == 0) return null;
     if ((fds[0].revents & std.posix.POLL.IN) == 0) return null;
     return try term.readByte();
+}
+
+const DecodedKey = union(enum) {
+    byte: u8,
+    tab,
+    shift_tab,
+    left,
+    right,
+    home,
+    end,
+    delete,
+    word_left,
+    word_right,
+};
+
+fn decodeKey(term: *terminal.Terminal, first: u8) !?DecodedKey {
+    if (first == '\t') return .tab;
+    if (first != 0x1b) return .{ .byte = first };
+
+    const b2 = try readByteIfReady(term) orelse return .{ .byte = first };
+    switch (b2) {
+        '[' => {
+            const b3 = try readByteIfReady(term) orelse return null;
+            return switch (b3) {
+                'Z' => .shift_tab,
+                'D' => .left,
+                'C' => .right,
+                'H' => .home,
+                'F' => .end,
+                '3' => blk: {
+                    const b4 = try readByteIfReady(term) orelse break :blk null;
+                    if (b4 != '~') break :blk null;
+                    break :blk .delete;
+                },
+                '1' => blk: {
+                    const b4 = try readByteIfReady(term) orelse break :blk null;
+                    if (b4 != '~') break :blk null;
+                    break :blk .home;
+                },
+                '4' => blk: {
+                    const b4 = try readByteIfReady(term) orelse break :blk null;
+                    if (b4 != '~') break :blk null;
+                    break :blk .end;
+                },
+                else => null,
+            };
+        },
+        'O' => {
+            const b3 = try readByteIfReady(term) orelse return null;
+            return switch (b3) {
+                'H' => .home,
+                'F' => .end,
+                else => null,
+            };
+        },
+        'b' => return .word_left,
+        'f' => return .word_right,
+        else => return null,
+    }
 }
 
 fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.Node {
@@ -718,6 +783,7 @@ const Focusable = struct {
 const InputWidgetState = struct {
     value: std.ArrayList(u8) = .empty,
     cursor: usize = 0,
+    scroll_x: usize = 0,
 };
 
 const ListWidgetState = struct {
@@ -763,6 +829,7 @@ fn buildRenderState(
                     .id = e.id.items,
                     .value = s.value.items,
                     .cursor = s.cursor,
+                    .scroll_x = s.scroll_x,
                 });
             },
             .list => |s| {
@@ -1134,15 +1201,65 @@ fn activateListForId(log_sink: *LogSink, backend_in: anytype, widgets: []const W
     try protocol.writeActivateEventJsonl(backend_in, list_id, st.selected_id.items);
 }
 
-fn handleFocusedInputByte(
+fn handleFocusedInputKey(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
     input_id: []const u8,
-    b: u8,
+    key: DecodedKey,
+    term_cols: u16,
 ) !bool {
     const idx = try ensureWidgetKind(allocator, widgets, input_id, .input);
     var st = &widgets.items[idx].state.input;
-    return try input.handleInputByte(allocator, &st.value, &st.cursor, b);
+
+    const before_cursor: usize = st.cursor;
+    const before_len: usize = st.value.items.len;
+    const before_scroll: usize = st.scroll_x;
+
+    var changed: bool = false;
+    switch (key) {
+        .byte => |b| changed = try input.handleInputByte(allocator, &st.value, &st.cursor, b),
+        .left => if (st.cursor > 0) {
+            st.cursor -= 1;
+            changed = true;
+        },
+        .right => if (st.cursor < st.value.items.len) {
+            st.cursor += 1;
+            changed = true;
+        },
+        .home => if (st.cursor != 0) {
+            st.cursor = 0;
+            changed = true;
+        },
+        .end => if (st.cursor != st.value.items.len) {
+            st.cursor = st.value.items.len;
+            changed = true;
+        },
+        .delete => changed = input.delete_at_cursor(&st.value, &st.cursor),
+        .word_left => {
+            const next = input.word_left(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
+        },
+        .word_right => {
+            const next = input.word_right(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
+        },
+        else => return false,
+    }
+
+    if (!changed and before_cursor == st.cursor and before_len == st.value.items.len and before_scroll == st.scroll_x) return false;
+
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+    if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
+    const cols: usize = @as(usize, term_cols);
+    const visible_cols: usize = inputVisibleCols(cols);
+    const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items.len, visible_cols);
+    return changed or scroll_changed;
 }
 
 fn emitInputEventForId(log_sink: *LogSink, backend_in: anytype, widgets: []const WidgetEntry, input_id: []const u8) !void {

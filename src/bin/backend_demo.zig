@@ -451,7 +451,7 @@ fn writeRootNode(
     try writeTextNode(
         writer,
         "hint",
-        "Tab cycles focus by tree order. j/k moves list. Enter activates. q toggles. x exits.\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
+        "Tab cycles focus by tree order. Arrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x exits.\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
     );
     try writer.writeByte(',');
     try writeTextNode(writer, "clock", tick_text);

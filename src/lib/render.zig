@@ -15,6 +15,7 @@ pub const InputState = struct {
     id: []const u8,
     value: []const u8,
     cursor: usize,
+    scroll_x: usize,
 };
 
 pub const ListState = struct {
@@ -55,12 +56,17 @@ fn renderNode(frame: *Frame, node: protocol.Node, ctx: *RenderCtx, state: Render
         .input => |i| {
             const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, i.id);
             const input_state = findInputState(state.inputs, i.id);
-            const prefix_first = "> ";
-            const prefix_cont = "  ";
+            const prefix = "> ";
+            const prefix_len: usize = prefix.len;
+            const cols: usize = ctx.cols;
+            const visible_cols: usize = if (cols > prefix_len) cols - prefix_len else 0;
 
             if (input_state == null) {
                 // Unknown input id: render empty line with prefix only.
-                _ = drawWrappedInputPieces(frame, ctx, prefix_first, prefix_cont, &.{}, 0, false);
+                if (focused and ctx.cursor == null) {
+                    ctx.cursor = .{ .row = ctx.row + 1, .col = @min(prefix_len + 1, @max(@as(usize, 1), cols)) };
+                }
+                renderLinePieces(frame, ctx, &.{prefix});
                 return;
             }
 
@@ -68,21 +74,44 @@ fn renderNode(frame: *Frame, node: protocol.Node, ctx: *RenderCtx, state: Render
             const effective_cursor = @min(st.cursor, st.value.len);
 
             if (st.value.len > 0) {
-                const res = drawWrappedInput(frame, ctx, prefix_first, prefix_cont, st.value, effective_cursor, focused);
-                if (focused and ctx.cursor == null) ctx.cursor = res.cursor;
+                var start: usize = @min(st.scroll_x, st.value.len);
+                if (visible_cols == 0 or st.value.len <= visible_cols) {
+                    start = 0;
+                } else {
+                    if (effective_cursor < start) start = effective_cursor;
+                    if (effective_cursor > start + visible_cols) start = effective_cursor - visible_cols;
+                    if (start > st.value.len) start = st.value.len;
+                }
+                const end: usize = @min(st.value.len, start + visible_cols);
+                const visible = if (start < end) st.value[start..end] else "";
+
+                if (focused and ctx.cursor == null) {
+                    var col: usize = prefix_len + (effective_cursor - start) + 1; // 1-based
+                    if (cols != 0) {
+                        if (col > cols) col = cols;
+                        if (col == 0) col = 1;
+                    }
+                    ctx.cursor = .{ .row = ctx.row + 1, .col = col };
+                }
+
+                renderLinePieces(frame, ctx, &.{ prefix, visible });
                 return;
             }
 
             if (i.placeholder) |ph| {
                 if (focused) {
-                    const res = drawWrappedInput(frame, ctx, prefix_first, prefix_cont, ph, effective_cursor, true);
-                    if (ctx.cursor == null) ctx.cursor = res.cursor;
+                    if (ctx.cursor == null) {
+                        ctx.cursor = .{ .row = ctx.row + 1, .col = @min(prefix_len + 1, @max(@as(usize, 1), cols)) };
+                    }
+                    renderLinePieces(frame, ctx, &.{ prefix, ph });
                 } else {
-                    _ = drawWrappedInputPieces(frame, ctx, prefix_first, prefix_cont, &.{ "[", ph, "]" }, 0, false);
+                    renderLinePieces(frame, ctx, &.{ prefix, "[", ph, "]" });
                 }
             } else {
-                const res = drawWrappedInputPieces(frame, ctx, prefix_first, prefix_cont, &.{}, effective_cursor, focused);
-                if (focused and ctx.cursor == null) ctx.cursor = res.cursor;
+                if (focused and ctx.cursor == null) {
+                    ctx.cursor = .{ .row = ctx.row + 1, .col = @min(prefix_len + 1, @max(@as(usize, 1), cols)) };
+                }
+                renderLinePieces(frame, ctx, &.{prefix});
             }
         },
         .list => |l| {
@@ -152,11 +181,6 @@ fn findListState(lists: []const ListState, id: []const u8) ?ListState {
     }
     return null;
 }
-
-const WrappedInputResult = struct {
-    rows_consumed: usize,
-    cursor: ?CursorPos = null,
-};
 
 fn renderLinePieces(frame: *Frame, ctx: *RenderCtx, pieces: []const []const u8) void {
     if (ctx.rows_left == 0) return;
@@ -242,131 +266,4 @@ fn drawWrappedTextPieces(frame: *Frame, ctx: *RenderCtx, pieces: []const []const
     ctx.row += consumed;
     ctx.rows_left -= consumed;
     return consumed;
-}
-
-fn drawWrappedInput(
-    frame: *Frame,
-    ctx: *RenderCtx,
-    prefix_first: []const u8,
-    prefix_cont: []const u8,
-    value: []const u8,
-    cursor_index: usize,
-    focused: bool,
-) WrappedInputResult {
-    return drawWrappedInputPieces(frame, ctx, prefix_first, prefix_cont, &.{value}, cursor_index, focused);
-}
-
-fn drawWrappedInputPieces(
-    frame: *Frame,
-    ctx: *RenderCtx,
-    prefix_first: []const u8,
-    prefix_cont: []const u8,
-    pieces: []const []const u8,
-    cursor_index: usize,
-    focused: bool,
-) WrappedInputResult {
-    if (ctx.rows_left == 0) return .{ .rows_consumed = 0, .cursor = null };
-
-    const cols: usize = ctx.cols;
-    const start_row: usize = ctx.row;
-    const max_rows: usize = ctx.rows_left;
-
-    var row: usize = start_row;
-    var col: usize = 0;
-    var rows_used: usize = 1;
-    var line_idx: usize = 0;
-
-    var logical_idx: usize = 0;
-    var cursor: ?CursorPos = null;
-
-    var p_idx: usize = 0;
-    var p_off: usize = 0;
-
-    while (true) {
-        if (rows_used > max_rows) break;
-
-        // Ensure prefix is drawn at the start of each visual line.
-        if (col == 0) {
-            const prefix = if (line_idx == 0) prefix_first else prefix_cont;
-            const prefix_chunk = if (cols == 0 or prefix.len <= cols) prefix else prefix[0..cols];
-            frame.putText(row, 0, prefix_chunk);
-            col = prefix_chunk.len;
-
-            if (focused and cursor == null and cursor_index == logical_idx) {
-                cursor = clampCursor(row, col, cols);
-            }
-        }
-
-        if (p_idx >= pieces.len) break;
-        const p = pieces[p_idx];
-        if (p_off >= p.len) {
-            p_idx += 1;
-            p_off = 0;
-            continue;
-        }
-
-        if (p[p_off] == '\n') {
-            // Input values shouldn't contain '\n' for tracer 8, but treat it as a forced break anyway.
-            if (rows_used == max_rows) break;
-            p_off += 1;
-            row += 1;
-            col = 0;
-            rows_used += 1;
-            line_idx += 1;
-            continue;
-        }
-
-        if (cols != 0 and col == cols) {
-            if (rows_used == max_rows) break;
-            row += 1;
-            col = 0;
-            rows_used += 1;
-            line_idx += 1;
-            continue;
-        }
-
-        const remaining_cols: usize = if (cols == 0) (p.len - p_off) else (cols - col);
-        if (remaining_cols == 0) continue;
-
-        const remaining_p: []const u8 = p[p_off..];
-        const want: usize = @min(remaining_cols, remaining_p.len);
-        const scan = remaining_p[0..want];
-        const n = if (std.mem.indexOfScalar(u8, scan, '\n')) |nl| nl else scan.len;
-
-        if (n == 0) continue;
-
-        if (focused and cursor == null and cursor_index >= logical_idx and cursor_index <= logical_idx + n) {
-            const rel = cursor_index - logical_idx;
-            cursor = clampCursor(row, col + rel, cols);
-        }
-
-        frame.putText(row, col, remaining_p[0..n]);
-        col += n;
-        p_off += n;
-        logical_idx += n;
-    }
-
-    if (focused and cursor == null and cursor_index == logical_idx) {
-        cursor = clampCursor(row, col, cols);
-    }
-
-    if (focused and cursor == null) {
-        // Cursor index ended up off-screen due to vertical clipping: clamp to the last visible cell.
-        const last_row: usize = start_row + (max_rows - 1);
-        const last_col0: usize = if (cols == 0) 0 else (cols - 1);
-        cursor = clampCursor(last_row, last_col0, cols);
-    }
-
-    const consumed: usize = @min(rows_used, max_rows);
-    ctx.row += consumed;
-    ctx.rows_left -= consumed;
-    return .{ .rows_consumed = consumed, .cursor = cursor };
-}
-
-fn clampCursor(row0: usize, col0: usize, cols: usize) CursorPos {
-    const row: usize = row0 + 1;
-    const col_unclamped: usize = col0 + 1;
-    if (cols == 0) return .{ .row = row, .col = 1 };
-    const col: usize = @min(@max(@as(usize, 1), col_unclamped), cols);
-    return .{ .row = row, .col = col };
 }

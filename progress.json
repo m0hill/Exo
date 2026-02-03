@@ -132,16 +132,33 @@
     "slice": 8,
     "name": "tracer-slice",
     "status": "completed",
-    "description": "Multiline layout: hard newlines + soft wrap, and correct input cursor row/col after wrapping",
+    "description": "Multiline layout for text: hard newlines + soft wrap (inputs later switch to horizontal scroll in slice 9)",
     "deliverables": [
-      "src/lib/render.zig: wrapped text/input rendering with \\n support and cursor mapping from layout",
+      "src/lib/render.zig: wrapped text rendering with \\n support and soft wrap",
       "src/bin/backend_demo.zig: multiline hint text (explicit newline + long wrap line)",
-      "src/test/tests.zig: wrap + newline test and cursor-after-wrap test"
+      "src/test/tests.zig: wrap + newline render test"
     ],
     "boundaries_hit": [
       "Renderer traversal no longer assumes one node = one line",
-      "Cursor placement derived from actual wrapped layout",
-      "Soft-wrap behavior for both text and input"
+      "Soft-wrap behavior for text nodes"
+    ],
+    "timestamp": "2026-02-03"
+  },
+  {
+    "slice": 9,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Input UX basics: single-line inputs with horizontal scrolling, cursor always visible, and word jumps",
+    "deliverables": [
+      "src/bin/tui_runtime.zig: key decoder (arrows/home/end/delete/alt-b/alt-f) + per-input scroll_x state",
+      "src/lib/render.zig: input rendering as single-line viewport using scroll_x (text nodes remain multiline/wrapped)",
+      "src/lib/input.zig: delete_at_cursor, ensure_cursor_visible, and word_left/word_right helpers",
+      "src/test/tests.zig: viewport + cursor tests and input UX helper tests"
+    ],
+    "boundaries_hit": [
+      "Single-line input viewport with horizontal scroll",
+      "Local navigation/edit keys decoded from terminal sequences",
+      "Word-jump semantics with ASCII word chars"
     ],
     "timestamp": "2026-02-03"
   }

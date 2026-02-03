@@ -58,12 +58,21 @@ Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrup
 1. `zig build demo`
 2. Make the terminal narrow (e.g. ~40 cols)
 3. Confirm the hint text respects an explicit newline and also soft-wraps the long line
-4. Focus an input and type a long string (e.g. 60 chars)
-5. Confirm:
-   - input text wraps to multiple terminal rows (continuation lines use two-space prefix)
-   - cursor follows onto the next row correctly
-   - backspace works across line boundaries
-6. Exit with `x`
+4. Note: input wrapping was superseded by slice 9 (single-line + horizontal scroll)
+5. Exit with `x`
+
+## Manual repro (slice 9)
+
+1. `zig build demo`
+2. Focus an input
+3. Type a long string that exceeds terminal width (e.g. 80 chars)
+4. Confirm text scrolls horizontally and the cursor stays visible
+5. Hold Left/Right: cursor moves and viewport scrolls appropriately
+6. Home/End jump to start/end (viewport updates)
+7. Backspace and Delete work (middle + edges)
+8. Alt-b / Alt-f word jumps work
+9. Backend continues ticking/morphing and input stays responsive
+10. Exit with `x`
 
 ## Automated tests
 
