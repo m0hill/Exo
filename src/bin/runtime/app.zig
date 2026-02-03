@@ -169,6 +169,7 @@ pub fn run() !void {
         var requested_reason: ?RenderReason = null;
         var resize_changed_this_iter: bool = false;
         var handled_input_this_iter: bool = false;
+        var exit_now: bool = false;
 
         const now_ns = timing.monotonicNowNs();
         const resize_timeout_ms = timing.pollTimeoutMsForPendingResize(pending_resize, last_resize_tx_ns);
@@ -237,45 +238,75 @@ pub fn run() !void {
             }
 
             if ((fds[fd_stdin].revents & std.posix.POLL.IN) != 0) {
-                const first = try term.readByte();
-                const decoded = try key_decode.decodeKeyWithUtf8(&term, &utf8_pending, &csi_pending, first) orelse continue;
+                const max_stdin_events_per_iter: usize = 256;
+                var processed: usize = 0;
+                var pending_input_event: bool = false;
+                var need_backend_flush: bool = false;
 
-                if (decoded == .mouse and current_root != null) {
-                    const rows: usize = @as(usize, last_term_size.rows);
-                    const cols: usize = @as(usize, last_term_size.cols);
-                    const changed = try ui.handleMouseEvent(
-                        allocator,
-                        &log_sink,
-                        child_in,
-                        &widgets,
-                        &focused_id_buf,
-                        &focused_id,
-                        current_root.?,
-                        rows,
-                        cols,
-                        decoded.mouse,
-                    );
-                    if (changed) requested_reason = .input;
-                    handled_input_this_iter = true;
-                }
-
-                const key_now_ns = timing.monotonicNowNs();
-                if (emergency_last_ns != 0 and key_now_ns > emergency_last_ns + emergency_window_ns) {
-                    emergency_last_ns = 0;
-                }
-
-                if (!handled_input_this_iter and (decoded == .tab or decoded == .shift_tab)) {
-                    if (current_root != null) {
-                        const next_focus = try ui.cycleFocusInTree(allocator, current_root.?, focused_id);
-                        try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
-                    } else {
-                        try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
+                const focused_kind: ?ui.FocusKind = blk: {
+                    const fid = focused_id orelse break :blk null;
+                    for (widgets.items) |w| {
+                        if (!std.mem.eql(u8, w.id.items, fid)) continue;
+                        break :blk switch (w.state) {
+                            .input => .input,
+                            .list => .list,
+                        };
                     }
-                    log.logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
-                    try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
-                    try child_in.flush();
-                    requested_reason = .input;
-                } else if (!handled_input_this_iter) {
+                    break :blk null;
+                };
+                const focused_is_input = focused_kind != null and focused_kind.? == .input;
+
+                while (processed < max_stdin_events_per_iter) : (processed += 1) {
+                    if (processed != 0) {
+                        var p = [_]std.posix.pollfd{
+                            .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
+                        };
+                        const rc2 = try std.posix.poll(p[0..], 0);
+                        if (rc2 == 0 or (p[0].revents & std.posix.POLL.IN) == 0) break;
+                    }
+
+                    const first = try term.readByte();
+                    const decoded = try key_decode.decodeKeyWithUtf8(&term, &utf8_pending, &csi_pending, first) orelse continue;
+
+                    if (decoded == .mouse and current_root != null) {
+                        const rows: usize = @as(usize, last_term_size.rows);
+                        const cols: usize = @as(usize, last_term_size.cols);
+                        const changed = try ui.handleMouseEvent(
+                            allocator,
+                            &log_sink,
+                            child_in,
+                            &widgets,
+                            &focused_id_buf,
+                            &focused_id,
+                            current_root.?,
+                            rows,
+                            cols,
+                            decoded.mouse,
+                        );
+                        if (changed) requested_reason = .input;
+                        handled_input_this_iter = true;
+                        continue;
+                    }
+
+                    const key_now_ns = timing.monotonicNowNs();
+                    if (emergency_last_ns != 0 and key_now_ns > emergency_last_ns + emergency_window_ns) {
+                        emergency_last_ns = 0;
+                    }
+
+                    if (!handled_input_this_iter and (decoded == .tab or decoded == .shift_tab)) {
+                        if (current_root != null) {
+                            const next_focus = try ui.cycleFocusInTree(allocator, current_root.?, focused_id);
+                            try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
+                        } else {
+                            try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
+                        }
+                        log.logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
+                        try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
+                        need_backend_flush = true;
+                        requested_reason = .input;
+                        continue;
+                    }
+
                     if (decoded == .byte and decoded.byte == 7) {
                         if (emergency_last_ns != 0 and key_now_ns <= emergency_last_ns + emergency_window_ns) {
                             log.logPrint(&log_sink, "EMERGENCY_EXIT chord=ctrl-g ctrl-g\n", .{});
@@ -289,23 +320,28 @@ pub fn run() !void {
                     if (decoded == .byte and decoded.byte == 3) {
                         log.logPrint(&log_sink, "EVENT_TX name=key key=ctrl-c\n", .{});
                         try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
-                        try child_in.flush();
+                        need_backend_flush = true;
                         wait_child = false;
+                        exit_now = true;
                         break;
                     }
-                    if (decoded == .byte and decoded.byte == 'x') {
+                    if (decoded == .byte and decoded.byte == 'x' and !focused_is_input) {
                         log.logPrint(&log_sink, "EVENT_TX name=key key=x\n", .{});
                         try protocol.writeKeyEventJsonl(child_in, "x");
-                        try child_in.flush();
+                        need_backend_flush = true;
                         wait_child = false;
+                        exit_now = true;
                         break;
                     }
 
-                    if (decoded == .byte and decoded.byte == 'q') {
+                    if (decoded == .byte and decoded.byte == 'q' and !focused_is_input) {
                         log.logPrint(&log_sink, "EVENT_TX name=key key=q\n", .{});
                         try protocol.writeKeyEventJsonl(child_in, "q");
-                        try child_in.flush();
-                    } else if (current_root != null and focused_id != null) {
+                        need_backend_flush = true;
+                        continue;
+                    }
+
+                    if (current_root != null and focused_id != null) {
                         const fk = try ui.focusedKindInTree(allocator, current_root.?, focused_id.?);
                         if (fk) |kind| switch (kind) {
                             .list => {
@@ -321,12 +357,12 @@ pub fn run() !void {
                                         delta,
                                     );
                                     if (changed) {
-                                        try child_in.flush();
+                                        need_backend_flush = true;
                                         requested_reason = .input;
                                     }
                                 } else if (decoded == .byte and (decoded.byte == '\r' or decoded.byte == '\n')) {
                                     try ui.activateListForId(&log_sink, child_in, widgets.items, focused_id.?);
-                                    try child_in.flush();
+                                    need_backend_flush = true;
                                 }
                             },
                             .input => {
@@ -348,15 +384,22 @@ pub fn run() !void {
                                     break :blk false;
                                 };
                                 if (changed) {
-                                    try ui.emitInputEventForId(&log_sink, child_in, widgets.items, focused_id.?);
-                                    try child_in.flush();
+                                    pending_input_event = true;
                                     requested_reason = .input;
                                 }
                             },
                         };
                     }
                 }
+
+                if (pending_input_event and focused_id != null) {
+                    try ui.emitInputEventForId(&log_sink, child_in, widgets.items, focused_id.?);
+                    need_backend_flush = true;
+                }
+                if (need_backend_flush) try child_in.flush();
             }
+
+            if (exit_now) break;
 
             if (requested_reason == null and backend_events != 0 and (fds[fd_backend_out].revents & std.posix.POLL.IN) != 0) {
                 const n = patch_lr.readMore() catch |e| {

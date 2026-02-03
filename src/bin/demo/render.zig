@@ -12,12 +12,13 @@ pub fn emitInitialFull(
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
+    md_stream_text: []const u8,
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"root\":");
-    try writeRootNode(allocator, writer, tick_text, status_text, inputs, lists, false, list_height);
+    try writeRootNode(allocator, writer, tick_text, status_text, md_stream_text, inputs, lists, false, list_height);
     try writer.writeAll("}\n");
 }
 
@@ -26,13 +27,14 @@ pub fn emitRootMorphPatch(
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
+    md_stream_text: []const u8,
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     layout_alt: bool,
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
-    try writeRootNode(allocator, writer, tick_text, status_text, inputs, lists, layout_alt, list_height);
+    try writeRootNode(allocator, writer, tick_text, status_text, md_stream_text, inputs, lists, layout_alt, list_height);
     try writer.writeAll("}\n");
 }
 
@@ -189,6 +191,33 @@ pub fn emitListMorphPatch(writer: anytype, list_id: []const u8, items: []const u
     try writer.writeAll("}\n");
 }
 
+pub fn emitMarkdownMorphPatch(
+    allocator: std.mem.Allocator,
+    writer: anytype,
+    target: []const u8,
+    md: []const u8,
+) !void {
+    var node = try markdown.compileLeaky(allocator, md, .{
+        .id = target,
+        .id_prefix = target,
+        .own_text = false,
+    });
+    // Preserve the host layout contract: keep the streamed subtree flexible and clipped.
+    switch (node) {
+        .vbox => |*v| {
+            v.flex = 1;
+            v.clip = true;
+        },
+        else => {},
+    }
+
+    try writer.writeAll("{\"type\":\"patch\",\"target\":");
+    try protocol.writeJsonString(writer, target);
+    try writer.writeAll(",\"mode\":\"morph\",\"node\":");
+    try protocol.writeNodeJson(writer, node);
+    try writer.writeAll("}\n");
+}
+
 pub fn emitTextPatchById(writer: anytype, target: []const u8, text: []const u8) !void {
     return emitTextPatchByIdStyled(writer, target, text, null);
 }
@@ -250,6 +279,7 @@ fn writeRootNode(
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
+    md_stream_text: []const u8,
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     layout_alt: bool,
@@ -304,7 +334,56 @@ fn writeRootNode(
     });
     try writer.writeByte(',');
 
-    try writer.writeAll("{\"type\":\"hbox\",\"id\":\"body\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
+    // Placeholder container for Tracer 18 (backend-streamed markdown).
+    // Use flex so the streaming output gets real vertical space.
+    try writer.writeAll("{\"type\":\"vbox\",\"id\":\"md-stream-wrap\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
+    try writeTextNodeLayoutStyled(writer, "md-stream-title", "Streaming Markdown (Tracer 18)", null, 1, 0, "{\"bold\":true}");
+    try writer.writeByte(',');
+    try writeTextNodeLayout(
+        writer,
+        "md-stream-hint",
+        "Type markdown into the prompt input, then start.\nClick an action in md-actions (click selected row to activate), or Tab to md-actions and press Enter.",
+        null,
+        1,
+        0,
+    );
+    try writer.writeByte(',');
+    try writeInputNodeLayoutStyled(
+        writer,
+        "md-prompt",
+        "Type markdown here (single line)…",
+        null,
+        1,
+        0,
+        "{\"fg\":\"#f9fafb\"}",
+        "{\"fg\":\"gray\",\"dim\":true}",
+    );
+    try writer.writeByte(',');
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-actions\",\"height\":3,\"children\":[");
+    try writeTextNode(writer, "md-actions-start", "Start streaming");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "md-actions-pause", "Pause / resume");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "md-actions-reset", "Reset");
+    try writer.writeAll("]}");
+    try writer.writeByte(',');
+    var md_stream_node = try markdown.compileLeaky(
+        allocator,
+        md_stream_text,
+        .{ .id = "md-stream", .id_prefix = "md-stream", .own_text = false },
+    );
+    switch (md_stream_node) {
+        .vbox => |*v| {
+            v.flex = 1;
+            v.clip = true;
+        },
+        else => {},
+    }
+    try protocol.writeNodeJson(writer, md_stream_node);
+    try writer.writeAll("]}");
+    try writer.writeByte(',');
+
+    try writer.writeAll("{\"type\":\"hbox\",\"id\":\"body\",\"flex\":2,\"pad\":1,\"clip\":true,\"children\":[");
     if (!layout_alt) {
         try writePanelNode(
             writer,

@@ -3,6 +3,7 @@ const std = @import("std");
 pub const InputSlot = struct {
     id: []const u8,
     last: std.ArrayList(u8) = .empty,
+    last_len: usize = 0,
 };
 
 pub const ListSlot = struct {
@@ -34,8 +35,19 @@ pub fn buildStatusText(
         try w.print(" | Focus: {s}", .{focus});
     }
     for (inputs) |in| {
+        if (in.last_len == 0 and in.last.items.len == 0) continue;
+        if (std.mem.eql(u8, in.id, "md-prompt")) {
+            try w.print(" | {s} len={d}", .{ in.id, in.last_len });
+            continue;
+        }
         if (in.last.items.len > 0) {
-            try w.print(" | {s}: {s}", .{ in.id, in.last.items });
+            if (in.last_len > in.last.items.len) {
+                try w.print(" | {s}: {s}… (len={d})", .{ in.id, in.last.items, in.last_len });
+            } else {
+                try w.print(" | {s}: {s}", .{ in.id, in.last.items });
+            }
+        } else {
+            try w.print(" | {s} len={d}", .{ in.id, in.last_len });
         }
     }
     for (lists) |ls| {

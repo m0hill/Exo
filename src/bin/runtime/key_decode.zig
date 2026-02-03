@@ -88,6 +88,22 @@ pub const CsiPending = struct {
                 self.reset();
                 return out;
             },
+            '2' => {
+                // Bracketed paste wrappers (ESC[200~ ... ESC[201~).
+                // Consume and ignore the wrapper bytes so they don't get inserted into inputs.
+                if (seq.len < 4) return null;
+                if (seq[3] != '~') {
+                    self.reset();
+                    return null;
+                }
+                // "200~" / "201~"
+                if (seq[1] == '0' and (seq[2] == '0' or seq[2] == '1')) {
+                    self.reset();
+                    return null;
+                }
+                self.reset();
+                return null;
+            },
             else => {
                 self.reset();
                 return null;

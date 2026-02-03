@@ -464,5 +464,29 @@
       "Make the terminal narrow: list/quote continuation lines should align under the body (hanging indent)",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 18,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Streaming markdown (approach #1): backend accumulates markdown, recompiles full doc per chunk, and sends morph patches for stable incremental updates",
+    "deliverables": [
+      "src/bin/demo/render.zig: emitMarkdownMorphPatch compiles markdown and emits a mode=morph patch targeting a stable node id",
+      "src/bin/demo/main.zig: demo streams a markdown script by appending chunks to a buffer and patching md-stream",
+      "src/bin/demo/render.zig: root UI includes a fixed-height clipped md-stream container for the streaming output",
+      "src/test/tests.zig: id-stability test to ensure block ids remain stable under append (enables morph reuse)"
+    ],
+    "boundaries_hit": [
+      "Markdown prefix instability handled by full recompile (simple, robust) instead of incremental parsing",
+      "Morph reuse depends on stable generated ids; appending preserves earlier ids",
+      "No runtime/protocol changes required (pure backend behavior)"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Observe the 'Streaming Markdown (Tracer 18)' panel filling in over time",
+      "Make the terminal narrow: wrapped list/quote lines remain aligned under their body (hbox prefixes)",
+      "Press 'x' to exit"
+    ]
   }
 ]

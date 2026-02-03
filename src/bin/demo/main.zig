@@ -8,6 +8,13 @@ const args_mod = @import("args.zig");
 const render = @import("render.zig");
 const state = @import("state.zig");
 
+const MD_STREAM_ID: []const u8 = "md-stream";
+const MD_PROMPT_ID: []const u8 = "md-prompt";
+const MD_ACTIONS_ID: []const u8 = "md-actions";
+const MD_ACTION_START: []const u8 = "md-actions-start";
+const MD_ACTION_PAUSE: []const u8 = "md-actions-pause";
+const MD_ACTION_RESET: []const u8 = "md-actions-reset";
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -27,6 +34,7 @@ pub fn main() !void {
     var inputs = [_]state.InputSlot{
         .{ .id = "query-a" },
         .{ .id = "query-b" },
+        .{ .id = MD_PROMPT_ID },
     };
     defer {
         for (&inputs) |*s| s.last.deinit(allocator);
@@ -46,6 +54,23 @@ pub fn main() !void {
 
     var status_buf: std.ArrayList(u8) = .empty;
     defer status_buf.deinit(allocator);
+
+    var md_buf: std.ArrayList(u8) = .empty;
+    defer md_buf.deinit(allocator);
+    var md_source: std.ArrayList(u8) = .empty;
+    defer md_source.deinit(allocator);
+    var md_cursor: usize = 0;
+    var md_active: bool = false;
+    var md_paused: bool = false;
+
+    const md_default =
+        "# Streaming markdown demo\n" ++
+        "\n" ++
+        "Backend appends chunks to a buffer, recompiles the whole document, and sends a `mode=morph` patch.\n" ++
+        "\n" ++
+        "- **Bold** and *italic* work once delimiters close\n" ++
+        "- Inline `code` stays literal inside backticks\n" ++
+        "> This is how Claude/Codex-style TUIs can render streaming responses.\n";
 
     var term_rows: ?usize = null;
     var term_cols: ?usize = null;
@@ -73,7 +98,16 @@ pub fn main() !void {
             term_cols,
         );
         _ = arena_tx.reset(.retain_capacity);
-        try render.emitInitialFull(arena_tx.allocator(), out, tick_text, status_text, inputs[0..], lists[0..], list_height);
+        try render.emitInitialFull(
+            arena_tx.allocator(),
+            out,
+            tick_text,
+            status_text,
+            md_buf.items,
+            inputs[0..],
+            lists[0..],
+            list_height,
+        );
     }
     try out.flush();
 
@@ -145,6 +179,7 @@ pub fn main() !void {
                     out,
                     tick_text,
                     status_text,
+                    md_buf.items,
                     inputs[0..],
                     lists[0..],
                     layout_alt,
@@ -154,6 +189,22 @@ pub fn main() !void {
 
             if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=status\n", .{});
             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+
+            if (md_active and !md_paused and md_cursor < md_source.items.len) {
+                const chunk_len: usize = 24;
+                const next = @min(md_source.items.len, md_cursor + chunk_len);
+                if (next > md_cursor) {
+                    try md_buf.appendSlice(allocator, md_source.items[md_cursor..next]);
+                    md_cursor = next;
+                    _ = arena_tx.reset(.retain_capacity);
+                    if (!cfg.quiet_tx) std.debug.print(
+                        "PATCH_TX target={s} mode=morph bytes={d}\n",
+                        .{ MD_STREAM_ID, md_buf.items.len },
+                    );
+                    try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                }
+                if (md_cursor >= md_source.items.len) md_active = false;
+            }
 
             try out.flush();
             continue;
@@ -226,7 +277,21 @@ pub fn main() !void {
                         );
                         if (state.findInputSlot(inputs[0..], inp.id)) |slot| {
                             slot.last.clearRetainingCapacity();
-                            try slot.last.appendSlice(allocator, inp.value);
+                            slot.last_len = inp.value.len;
+                            const cap: usize = if (std.mem.eql(u8, inp.id, MD_PROMPT_ID)) 32 * 1024 else 256;
+                            const n = @min(inp.value.len, cap);
+
+                            // Keep status output single-line and bounded.
+                            if (!std.mem.eql(u8, inp.id, MD_PROMPT_ID)) {
+                                var i: usize = 0;
+                                while (i < n) : (i += 1) {
+                                    const b = inp.value[i];
+                                    const out_b: u8 = if (b < 0x20 or b == 0x7f) ' ' else b;
+                                    try slot.last.append(allocator, out_b);
+                                }
+                            } else {
+                                try slot.last.appendSlice(allocator, inp.value[0..n]);
+                            }
                         }
 
                         const status_text = try state.buildStatusText(
@@ -265,6 +330,49 @@ pub fn main() !void {
                     },
                     .activate => |a| {
                         std.debug.print("EVENT_RX name=activate id={s} item={s}\n", .{ a.id, a.item });
+                        if (std.mem.eql(u8, a.id, MD_ACTIONS_ID)) {
+                            if (std.mem.eql(u8, a.item, MD_ACTION_START)) {
+                                md_buf.clearRetainingCapacity();
+                                md_source.clearRetainingCapacity();
+                                md_cursor = 0;
+                                md_active = true;
+                                md_paused = false;
+
+                                const prompt = if (state.findInputSlot(inputs[0..], MD_PROMPT_ID)) |slot|
+                                    slot.last.items
+                                else
+                                    "";
+                                if (prompt.len > 0) {
+                                    try md_source.appendSlice(allocator, prompt);
+                                } else {
+                                    try md_source.appendSlice(allocator, md_default);
+                                }
+
+                                const chunk_len: usize = 24;
+                                const next = @min(md_source.items.len, md_cursor + chunk_len);
+                                if (next > md_cursor) {
+                                    try md_buf.appendSlice(allocator, md_source.items[md_cursor..next]);
+                                    md_cursor = next;
+                                }
+                                _ = arena_tx.reset(.retain_capacity);
+                                try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                                try out.flush();
+                                continue;
+                            } else if (std.mem.eql(u8, a.item, MD_ACTION_PAUSE)) {
+                                if (md_active or md_cursor < md_source.items.len) md_paused = !md_paused;
+                                continue;
+                            } else if (std.mem.eql(u8, a.item, MD_ACTION_RESET)) {
+                                md_buf.clearRetainingCapacity();
+                                md_source.clearRetainingCapacity();
+                                md_cursor = 0;
+                                md_active = false;
+                                md_paused = false;
+                                _ = arena_tx.reset(.retain_capacity);
+                                try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                                try out.flush();
+                                continue;
+                            }
+                        }
                         if (state.findListSlot(lists[0..], a.id)) |slot| {
                             slot.activated.clearRetainingCapacity();
                             if (a.item.len > 0) try slot.activated.appendSlice(allocator, a.item);

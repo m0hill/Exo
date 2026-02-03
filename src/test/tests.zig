@@ -283,6 +283,48 @@ test "markdown: span cap falls back to plain" {
     try std.testing.expectEqualStrings(md, spans[0].text);
 }
 
+test "markdown: ids are stable under append (streaming approach #1)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const a = "- first\n\npara";
+    const b = a ++ "\nmore";
+
+    const na = try markdown.compileLeaky(arena.allocator(), a, .{ .id = "md", .id_prefix = "md", .pretty_prefixes = false });
+    const nb = try markdown.compileLeaky(arena.allocator(), b, .{ .id = "md", .id_prefix = "md", .pretty_prefixes = false });
+
+    const va = switch (na) {
+        .vbox => |v| v,
+        else => return error.TestUnexpectedResult,
+    };
+    const vb = switch (nb) {
+        .vbox => |v| v,
+        else => return error.TestUnexpectedResult,
+    };
+
+    const li_a = switch (va.children[0]) {
+        .hbox => |h| h,
+        else => return error.TestUnexpectedResult,
+    };
+    const li_b = switch (vb.children[0]) {
+        .hbox => |h| h,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("md-li-0", li_a.id);
+    try std.testing.expectEqualStrings("md-li-0", li_b.id);
+
+    const para_a = switch (va.children[2]) {
+        .styled_text => |t| t,
+        else => return error.TestUnexpectedResult,
+    };
+    const para_b = switch (vb.children[2]) {
+        .styled_text => |t| t,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("md-p-0", para_a.id);
+    try std.testing.expectEqualStrings("md-p-0", para_b.id);
+}
+
 test "markdown: blocks compile to vbox + hbox prefixes" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

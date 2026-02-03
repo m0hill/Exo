@@ -554,6 +554,12 @@ fn handleMouseDownLeft(
                 try protocol.writeSelectEventJsonl(backend_in, id, next_id);
                 need_flush = true;
                 changed = true;
+            } else {
+                // Clicking an already-selected row acts as activation (helps "button-like" lists).
+                log.logPrint(log_sink, "EVENT_TX name=activate id={s} item={s}\n", .{ id, next_id });
+                try protocol.writeActivateEventJsonl(backend_in, id, next_id);
+                need_flush = true;
+                changed = true;
             }
 
             const selected_index = findSelectedIndexInList(l, st.selected_id.items);
@@ -853,6 +859,7 @@ pub fn handleFocusedInputKey(
     key: key_decode.DecodedKey,
     visible_cols: usize,
 ) !bool {
+    const max_input_bytes: usize = 16 * 1024;
     const idx = try ensureWidgetKind(allocator, widgets, input_id, .input);
     var st = &widgets.items[idx].state.input;
 
@@ -862,8 +869,15 @@ pub fn handleFocusedInputKey(
 
     var changed: bool = false;
     switch (key) {
-        .byte => |b| changed = try input.handleInputByte(allocator, &st.value, &st.cursor, b),
-        .utf8 => |u| changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, u.slice()),
+        .byte => |b| {
+            if (b >= 0x20 and b < 0x80 and st.value.items.len >= max_input_bytes) return false;
+            changed = try input.handleInputByte(allocator, &st.value, &st.cursor, b);
+        },
+        .utf8 => |u| {
+            const bytes = u.slice();
+            if (bytes.len != 0 and st.value.items.len + bytes.len > max_input_bytes) return false;
+            changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, bytes);
+        },
         .left => {
             const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
             if (next != st.cursor) {
