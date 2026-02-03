@@ -11,6 +11,7 @@ const terminal = tui.terminal;
 const cmd = @import("cmd.zig");
 const key_decode = @import("key_decode.zig");
 const log = @import("log.zig");
+const sigexit = @import("sigexit.zig");
 const sigwinch = @import("sigwinch.zig");
 const timing = @import("timing.zig");
 const ui = @import("ui.zig");
@@ -51,7 +52,8 @@ pub fn run() !void {
         }
         return e;
     };
-    defer term.deinit();
+    var term_restored: bool = false;
+    defer if (!term_restored) term.deinit();
 
     var log_sink = try log.initLogSink(allocator);
     defer log_sink.deinit();
@@ -70,8 +72,13 @@ pub fn run() !void {
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     try child.spawn();
+    var wait_child: bool = true;
     defer {
-        _ = child.wait() catch {};
+        if (wait_child) {
+            _ = child.wait() catch {};
+        } else {
+            _ = child.kill() catch {};
+        }
     }
 
     const child_in_file = child.stdin orelse return error.Unexpected;
@@ -124,17 +131,39 @@ pub fn run() !void {
     defer sigwinch.winch_w_fd = -1;
     sigwinch.installSigwinchHandler();
 
+    const sig_pipe = try std.posix.pipe();
+    const sig_r_fd: std.posix.fd_t = sig_pipe[0];
+    const sig_w_local: std.posix.fd_t = sig_pipe[1];
+    defer {
+        std.posix.close(sig_r_fd);
+        std.posix.close(sig_w_local);
+    }
+    sigwinch.setFdNonBlocking(sig_r_fd);
+    sigwinch.setFdNonBlocking(sig_w_local);
+    sigexit.sig_w_fd = sig_w_local;
+    defer sigexit.sig_w_fd = -1;
+    sigexit.installSigintSigtermHandlers();
+
     var last_term_size: terminal.Size = ui.effectiveTermSize(term.getSize() catch .{ .rows = 0, .cols = 0 });
     var pending_resize: ?terminal.Size = null;
     var last_resize_tx_ns: u64 = 0;
     var utf8_pending: key_decode.Utf8Pending = .{};
     var csi_pending: key_decode.CsiPending = .{};
+    var emergency_last_ns: u64 = 0;
+    const emergency_window_ns: u64 = 900 * std.time.ns_per_ms;
 
     const RenderReason = enum {
         input,
         resize,
         frame,
     };
+
+    const ExitReason = union(enum) {
+        normal,
+        backend_closed,
+        signal: sigexit.ExitSignal,
+    };
+    var exit_reason: ExitReason = .normal;
 
     while (true) {
         var requested_reason: ?RenderReason = null;
@@ -147,22 +176,43 @@ pub fn run() !void {
 
         const backend_events: i16 = if (frame_timeout_ms > 0 and sched.hasPending()) 0 else std.posix.POLL.IN;
 
+        const fd_backend_out: usize = 0;
+        const fd_backend_err: usize = 1;
+        const fd_stdin: usize = 2;
+        const fd_winch: usize = 3;
+        const fd_sig: usize = 4;
+
         var fds = [_]std.posix.pollfd{
             .{ .fd = backend_out_fd, .events = backend_events, .revents = 0 },
             .{ .fd = backend_err_fd, .events = std.posix.POLL.IN, .revents = 0 },
             .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
             .{ .fd = winch_r_fd, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = sig_r_fd, .events = std.posix.POLL.IN, .revents = 0 },
         };
 
         const rc = try std.posix.poll(fds[0..], poll_timeout_ms);
         if (rc == 0) {
             try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
         } else {
-            if ((fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
+            if ((fds[fd_backend_out].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
+                exit_reason = .backend_closed;
+                wait_child = false;
                 break;
             }
 
-            if ((fds[3].revents & std.posix.POLL.IN) != 0) {
+            if ((fds[fd_sig].revents & std.posix.POLL.IN) != 0) {
+                if (sigexit.drainPipe(sig_r_fd)) |sig| {
+                    log.logPrint(&log_sink, "SIGNAL_RX name={s}\n", .{switch (sig) {
+                        .sigint => "sigint",
+                        .sigterm => "sigterm",
+                    }});
+                    exit_reason = .{ .signal = sig };
+                    wait_child = false;
+                    break;
+                }
+            }
+
+            if ((fds[fd_winch].revents & std.posix.POLL.IN) != 0) {
                 sigwinch.drainPipe(winch_r_fd);
                 const next_size_raw = term.getSize() catch last_term_size;
                 const next_size = ui.effectiveTermSize(next_size_raw);
@@ -179,13 +229,13 @@ pub fn run() !void {
                 }
             }
 
-            if ((fds[1].revents & std.posix.POLL.IN) != 0) {
+            if ((fds[fd_backend_err].revents & std.posix.POLL.IN) != 0) {
                 var buf: [4096]u8 = undefined;
                 const n = std.posix.read(backend_err_fd, &buf) catch 0;
                 if (n > 0) log.logWriteAll(&log_sink, buf[0..n]);
             }
 
-            if ((fds[2].revents & std.posix.POLL.IN) != 0) {
+            if ((fds[fd_stdin].revents & std.posix.POLL.IN) != 0) {
                 const first = try term.readByte();
                 const decoded = try key_decode.decodeKeyWithUtf8(&term, &utf8_pending, &csi_pending, first) orelse continue;
 
@@ -208,6 +258,11 @@ pub fn run() !void {
                     continue;
                 }
 
+                const key_now_ns = timing.monotonicNowNs();
+                if (emergency_last_ns != 0 and key_now_ns > emergency_last_ns + emergency_window_ns) {
+                    emergency_last_ns = 0;
+                }
+
                 if (decoded == .tab or decoded == .shift_tab) {
                     if (current_root != null) {
                         const next_focus = try ui.cycleFocusInTree(allocator, current_root.?, focused_id);
@@ -220,16 +275,28 @@ pub fn run() !void {
                     try child_in.flush();
                     requested_reason = .input;
                 } else {
+                    if (decoded == .byte and decoded.byte == 7) {
+                        if (emergency_last_ns != 0 and key_now_ns <= emergency_last_ns + emergency_window_ns) {
+                            log.logPrint(&log_sink, "EMERGENCY_EXIT chord=ctrl-g ctrl-g\n", .{});
+                            _ = child.kill() catch {};
+                            terminal.emergencyExit(0);
+                        }
+                        emergency_last_ns = key_now_ns;
+                        continue;
+                    }
+
                     if (decoded == .byte and decoded.byte == 3) {
                         log.logPrint(&log_sink, "EVENT_TX name=key key=ctrl-c\n", .{});
                         try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
                         try child_in.flush();
+                        wait_child = false;
                         break;
                     }
                     if (decoded == .byte and decoded.byte == 'x') {
                         log.logPrint(&log_sink, "EVENT_TX name=key key=x\n", .{});
                         try protocol.writeKeyEventJsonl(child_in, "x");
                         try child_in.flush();
+                        wait_child = false;
                         break;
                     }
 
@@ -290,7 +357,7 @@ pub fn run() !void {
                 }
             }
 
-            if (requested_reason == null and backend_events != 0 and (fds[0].revents & std.posix.POLL.IN) != 0) {
+            if (requested_reason == null and backend_events != 0 and (fds[fd_backend_out].revents & std.posix.POLL.IN) != 0) {
                 const n = patch_lr.readMore() catch |e| {
                     if (e == error.LineTooLong) {
                         log.logPrint(&log_sink, "PATCH_ERR reason=line_too_long\n", .{});
@@ -431,5 +498,19 @@ pub fn run() !void {
                 );
             }
         }
+    }
+
+    if (!term_restored) {
+        term.deinit();
+        term_restored = true;
+    }
+
+    switch (exit_reason) {
+        .signal => |sig| log.logPrint(&log_sink, "EXIT reason=signal name={s}\n", .{switch (sig) {
+            .sigint => "sigint",
+            .sigterm => "sigterm",
+        }}),
+        .backend_closed => log.logPrint(&log_sink, "EXIT reason=backend_closed\n", .{}),
+        .normal => {},
     }
 }

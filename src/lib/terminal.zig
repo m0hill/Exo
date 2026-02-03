@@ -2,6 +2,75 @@ const std = @import("std");
 
 pub const Size = @import("term_size.zig").Size;
 
+pub const CrashRestoreState = struct {
+    stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO,
+    stdout_fd: std.posix.fd_t = std.posix.STDOUT_FILENO,
+    orig_termios: std.posix.termios = undefined,
+    have_orig_termios: bool = false,
+    raw_enabled: bool = false,
+    screen_enabled: bool = false,
+    mouse_enabled: bool = false,
+};
+
+var crash_state: CrashRestoreState = .{};
+var crash_state_active: bool = false;
+var crash_restore_in_progress: bool = false;
+
+fn writeAllBestEffort(fd: std.posix.fd_t, bytes: []const u8) void {
+    var off: usize = 0;
+    while (off < bytes.len) {
+        const rc = std.posix.system.write(fd, bytes[off..].ptr, bytes.len - off);
+        if (rc <= 0) break;
+        off += @as(usize, @intCast(rc));
+    }
+}
+
+fn updateCrashStateFromTerminal(term: *const Terminal) void {
+    crash_state = .{
+        .stdin_fd = term.stdin_fd,
+        .stdout_fd = term.stdout_fd,
+        .orig_termios = term.orig_termios,
+        .have_orig_termios = true,
+        .raw_enabled = term.raw_enabled,
+        .screen_enabled = term.screen_enabled,
+        .mouse_enabled = term.mouse_enabled,
+    };
+    crash_state_active = true;
+}
+
+fn clearCrashState() void {
+    crash_state_active = false;
+}
+
+/// Best-effort terminal restore for crash/panic paths.
+///
+/// - Idempotent: safe to call multiple times.
+/// - Allocation-free and avoids std.io (writes escape codes via `write(2)`).
+/// - Restores termios only if we previously captured it from `Terminal.init`.
+pub fn restoreBestEffort() void {
+    if (crash_restore_in_progress) return;
+    crash_restore_in_progress = true;
+    defer crash_restore_in_progress = false;
+
+    const st: CrashRestoreState = if (crash_state_active) crash_state else .{};
+
+    // Try to leave the terminal in a reasonable state even if we don't know
+    // what was enabled.
+    writeAllBestEffort(st.stdout_fd, "\x1b[?1006l"); // disable SGR mouse
+    writeAllBestEffort(st.stdout_fd, "\x1b[?1000l"); // disable mouse
+    writeAllBestEffort(st.stdout_fd, "\x1b[?25h"); // show cursor
+    writeAllBestEffort(st.stdout_fd, "\x1b[?1049l"); // leave alt screen
+
+    if (st.have_orig_termios) {
+        std.posix.tcsetattr(st.stdin_fd, .FLUSH, st.orig_termios) catch {};
+    }
+}
+
+pub fn emergencyExit(code: u8) noreturn {
+    restoreBestEffort();
+    std.process.exit(code);
+}
+
 pub const Terminal = struct {
     stdin_fd: std.posix.fd_t,
     stdout_fd: std.posix.fd_t,
@@ -23,6 +92,7 @@ pub const Terminal = struct {
             .orig_termios = try std.posix.tcgetattr(stdin_fd),
         };
         errdefer t.deinit();
+        updateCrashStateFromTerminal(&t);
 
         var raw = t.orig_termios;
 
@@ -58,6 +128,7 @@ pub const Terminal = struct {
 
         try std.posix.tcsetattr(stdin_fd, .FLUSH, raw);
         t.raw_enabled = true;
+        updateCrashStateFromTerminal(&t);
 
         try t.writeAll("\x1b[?1049h"); // alt screen
         try t.writeAll("\x1b[?25l"); // hide cursor
@@ -66,6 +137,7 @@ pub const Terminal = struct {
         try t.writeAll("\x1b[?1006h"); // SGR extended coordinates
         t.screen_enabled = true;
         t.mouse_enabled = true;
+        updateCrashStateFromTerminal(&t);
         return t;
     }
 
@@ -84,6 +156,7 @@ pub const Terminal = struct {
             std.posix.tcsetattr(self.stdin_fd, .FLUSH, self.orig_termios) catch {};
             self.raw_enabled = false;
         }
+        clearCrashState();
     }
 
     pub fn getSize(self: *Terminal) !Size {

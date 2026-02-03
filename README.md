@@ -22,7 +22,7 @@ zig build demo        # Run the interactive demo
 zig build test        # Run all unit tests
 ```
 
-Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrupting the TUI (set `TUI_LOG_STDERR=1` or use `2>trace.log` if you prefer stderr). If terminal is broken, run `reset`.
+Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrupting the TUI (set `TUI_LOG_STDERR=1` or use `2>trace.log` if you prefer stderr). If terminal is broken, run `reset`. Emergency exit chord: `Ctrl-G` then `Ctrl-G` (restores terminal and exits immediately).
 
 ## Automated tests
 

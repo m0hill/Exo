@@ -358,5 +358,31 @@
       "While flooding, click/scroll: mouse stays responsive; list scroll and focus changes apply immediately",
       "Exit with 'x' (or Ctrl-C)"
     ]
+  },
+  {
+    "slice": 14,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Robust terminal lifecycle & crash safety: best-effort restore on panic/signal, SIGINT/SIGTERM self-pipe wakeups, and an emergency exit chord",
+    "deliverables": [
+      "src/lib/terminal.zig: CrashRestoreState + restoreBestEffort + emergencyExit (idempotent)",
+      "src/bin/runtime/sigexit.zig: SIGINT/SIGTERM self-pipe handler and pipe drain helper",
+      "src/bin/runtime/app.zig: signal pipe integrated into poll loop; restore terminal before waiting on backend",
+      "src/bin/runtime/main.zig: custom panic namespace that restores terminal before default panic",
+      "src/bin/demo/render.zig: hint text includes emergency exit chord"
+    ],
+    "boundaries_hit": [
+      "Panic paths do not run defers, so terminal restore must be explicit",
+      "SIGINT/SIGTERM delivery while poll() blocks (self-pipe wakeup)",
+      "Idempotent restore to avoid double-cleanup edge cases",
+      "Emergency exit that bypasses backend coordination"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Press Ctrl-G, then Ctrl-G again within ~1s: program exits immediately and terminal is restored",
+      "In another shell, find the tui_runtime pid and send SIGTERM (kill -TERM <pid>): program exits and terminal is restored",
+      "Rerun and exit normally with 'x' or Ctrl-C: terminal is restored and /tmp/tui_trace.log includes SIGNAL_RX/EXIT (when applicable)"
+    ]
   }
 ]
