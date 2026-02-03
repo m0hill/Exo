@@ -108,5 +108,24 @@
       "Cursor visibility/placement preserved under partial updates"
     ],
     "timestamp": "2026-02-02"
+  },
+  {
+    "slice": 7,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Resize-driven reflow: runtime redraws immediately on SIGWINCH, clamps local state, and sends debounced resize events",
+    "deliverables": [
+      "src/lib/protocol.zig: add resize event (rows/cols) + writeResizeEventJsonl",
+      "src/bin/tui_runtime.zig: SIGWINCH self-pipe to wake poll loop; immediate redraw + debounced resize event emission",
+      "src/bin/backend_demo.zig: handle resize event and patch status with rows x cols",
+      "src/lib/state.zig: pure scroll clamping helper for keeping selection visible",
+      "src/test/tests.zig: renderer resize repaint + cursor clamp tests; state scroll clamp test"
+    ],
+    "boundaries_hit": [
+      "SIGWINCH delivery while poll() blocks (self-pipe wakeup)",
+      "Immediate redraw on resize without waiting for backend patches",
+      "Debounced resize event storm protection (~100ms)"
+    ],
+    "timestamp": "2026-02-02"
   }
 ]

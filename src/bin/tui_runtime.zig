@@ -7,7 +7,42 @@ const render = tui.render;
 const renderer_mod = tui.renderer;
 const terminal = tui.terminal;
 const input = tui.input;
+const state = tui.state;
 const tree = tui.tree;
+
+var winch_w_fd: std.posix.fd_t = -1;
+
+fn sigwinchHandler(_: c_int) callconv(.c) void {
+    if (winch_w_fd < 0) return;
+    const b: [1]u8 = .{0};
+    _ = std.posix.system.write(winch_w_fd, &b, 1);
+}
+
+fn setFdNonBlocking(fd: std.posix.fd_t) void {
+    var fl_flags = std.posix.fcntl(fd, std.posix.F.GETFL, 0) catch return;
+    fl_flags |= 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
+    _ = std.posix.fcntl(fd, std.posix.F.SETFL, fl_flags) catch return;
+}
+
+fn installSigwinchHandler() void {
+    var sa: std.posix.Sigaction = .{
+        .handler = .{ .handler = sigwinchHandler },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.WINCH, &sa, null);
+}
+
+fn drainPipe(fd: std.posix.fd_t) void {
+    var buf: [64]u8 = undefined;
+    while (true) {
+        const n = std.posix.read(fd, &buf) catch |e| switch (e) {
+            error.WouldBlock => break,
+            else => break,
+        };
+        if (n == 0) break;
+    }
+}
 
 const LogSink = struct {
     file: ?std.fs.File = null,
@@ -74,9 +109,114 @@ fn logWriteAll(sink: *LogSink, bytes: []const u8) void {
 fn logRender(sink: *LogSink, m: renderer_mod.DrawMetrics) void {
     logPrint(
         sink,
-        "RENDER full={s} bytes={d} changed_cells={d} cursor_moves={d}\n",
+        "RENDER full={s} reason=unknown bytes={d} changed_cells={d} cursor_moves={d}\n",
         .{ if (m.full) "true" else "false", m.bytes, m.changed_cells, m.cursor_moves },
     );
+}
+
+fn logRenderReason(sink: *LogSink, reason: []const u8, m: renderer_mod.DrawMetrics) void {
+    logPrint(
+        sink,
+        "RENDER full={s} reason={s} bytes={d} changed_cells={d} cursor_moves={d}\n",
+        .{ if (m.full) "true" else "false", reason, m.bytes, m.changed_cells, m.cursor_moves },
+    );
+}
+
+fn monotonicNowNs() u64 {
+    const t = std.time.nanoTimestamp();
+    if (t <= 0) return 0;
+    return @as(u64, @intCast(t));
+}
+
+const resize_debounce_ns: u64 = 100 * std.time.ns_per_ms;
+
+fn pollTimeoutMsForPendingResize(pending_resize: ?terminal.Size, last_resize_tx_ns: u64) i32 {
+    if (pending_resize == null) return -1;
+    const now_ns = monotonicNowNs();
+    if (last_resize_tx_ns == 0) return 0;
+    const deadline = last_resize_tx_ns + resize_debounce_ns;
+    if (now_ns >= deadline) return 0;
+    const remaining_ns: u64 = deadline - now_ns;
+    const ms: u64 = (remaining_ns + (std.time.ns_per_ms - 1)) / std.time.ns_per_ms;
+    const max_i32: u64 = @as(u64, @intCast(std.math.maxInt(i32)));
+    return @as(i32, @intCast(if (ms > max_i32) max_i32 else ms));
+}
+
+fn maybeSendPendingResizeEvent(
+    log_sink: *LogSink,
+    backend_in: anytype,
+    pending_resize: *?terminal.Size,
+    last_resize_tx_ns: *u64,
+) !void {
+    const sz = pending_resize.* orelse return;
+    const now_ns = monotonicNowNs();
+    if (last_resize_tx_ns.* != 0 and now_ns < last_resize_tx_ns.* + resize_debounce_ns) return;
+
+    const rows: usize = @as(usize, sz.rows);
+    const cols: usize = @as(usize, sz.cols);
+    logPrint(log_sink, "EVENT_TX name=resize rows={d} cols={d}\n", .{ rows, cols });
+    try protocol.writeResizeEventJsonl(backend_in, rows, cols);
+    try backend_in.flush();
+    last_resize_tx_ns.* = now_ns;
+    pending_resize.* = null;
+}
+
+fn effectiveTermSize(sz: terminal.Size) terminal.Size {
+    var rows = sz.rows;
+    var cols = sz.cols;
+    if (rows == 0) rows = 24;
+    if (cols == 0) cols = 80;
+    return .{ .rows = rows, .cols = cols };
+}
+
+fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, size: terminal.Size) void {
+    // Ensure cursors remain valid even if state came from elsewhere.
+    for (widgets.items) |*e| {
+        switch (e.state) {
+            .input => |*s| s.cursor = @min(s.cursor, s.value.items.len),
+            .list => {},
+        }
+    }
+
+    var rows_left: usize = @as(usize, effectiveTermSize(size).rows);
+    clampNodeForResize(widgets, root, &rows_left);
+}
+
+fn clampNodeForResize(widgets: *std.ArrayList(WidgetEntry), node: protocol.Node, rows_left: *usize) void {
+    if (rows_left.* == 0) return;
+    switch (node) {
+        .text => rows_left.* -= 1,
+        .input => rows_left.* -= 1,
+        .vbox => |v| {
+            for (v.children) |child| {
+                if (rows_left.* == 0) break;
+                clampNodeForResize(widgets, child, rows_left);
+            }
+        },
+        .list => |l| {
+            const desired_height: usize = l.height orelse rows_left.*;
+            const height: usize = @min(desired_height, rows_left.*);
+            clampListScrollForNode(widgets, l, height);
+            rows_left.* -= height;
+        },
+    }
+}
+
+fn clampListScrollForNode(widgets: *std.ArrayList(WidgetEntry), l: protocol.ListNode, visible_height: usize) void {
+    const idx = findWidgetIndex(widgets.items, l.id) orelse return;
+    var st = &widgets.items[idx].state.list;
+
+    var selected_index: ?usize = null;
+    if (st.selected_id.items.len > 0) {
+        for (l.children, 0..) |child, child_idx| {
+            if (std.mem.eql(u8, nodeId(child), st.selected_id.items)) {
+                selected_index = child_idx;
+                break;
+            }
+        }
+    }
+
+    st.scroll = state.clampListScroll(st.scroll, selected_index, visible_height, l.children.len);
 }
 
 pub fn main() !void {
@@ -151,17 +291,63 @@ pub fn main() !void {
     const backend_err_fd = child_err_file.handle;
     const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
 
+    const winch_pipe = try std.posix.pipe();
+    const winch_r_fd: std.posix.fd_t = winch_pipe[0];
+    const winch_w_local: std.posix.fd_t = winch_pipe[1];
+    defer {
+        std.posix.close(winch_r_fd);
+        std.posix.close(winch_w_local);
+    }
+    setFdNonBlocking(winch_r_fd);
+    setFdNonBlocking(winch_w_local);
+    winch_w_fd = winch_w_local;
+    defer winch_w_fd = -1;
+    installSigwinchHandler();
+
+    var last_term_size: terminal.Size = effectiveTermSize(term.getSize() catch .{ .rows = 0, .cols = 0 });
+    var pending_resize: ?terminal.Size = null;
+    var last_resize_tx_ns: u64 = 0;
+
     while (true) {
         var fds = [_]std.posix.pollfd{
             .{ .fd = backend_out_fd, .events = std.posix.POLL.IN, .revents = 0 },
             .{ .fd = backend_err_fd, .events = std.posix.POLL.IN, .revents = 0 },
             .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = winch_r_fd, .events = std.posix.POLL.IN, .revents = 0 },
         };
 
-        _ = try std.posix.poll(fds[0..], -1);
+        const rc = try std.posix.poll(fds[0..], pollTimeoutMsForPendingResize(pending_resize, last_resize_tx_ns));
+        if (rc == 0) {
+            try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
+            continue;
+        }
 
         if ((fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
             break;
+        }
+
+        if ((fds[3].revents & std.posix.POLL.IN) != 0) {
+            drainPipe(winch_r_fd);
+            const next_size_raw = term.getSize() catch last_term_size;
+            const next_size = effectiveTermSize(next_size_raw);
+            if (next_size.rows != last_term_size.rows or next_size.cols != last_term_size.cols) {
+                last_term_size = next_size;
+                logPrint(
+                    &log_sink,
+                    "RESIZE rows={d} cols={d}\n",
+                    .{ @as(usize, next_size.rows), @as(usize, next_size.cols) },
+                );
+
+                if (current_root != null) {
+                    clampLocalStateForResize(&widgets, current_root.?, next_size);
+                    const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
+                    try renderer.draw(&term, current_root.?, rs);
+                    logRenderReason(&log_sink, "resize", renderer.last_metrics);
+                }
+
+                pending_resize = next_size;
+                try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
+            }
         }
 
         if ((fds[1].revents & std.posix.POLL.IN) != 0) {
@@ -222,7 +408,7 @@ pub fn main() !void {
 
                                 const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
                                 try renderer.draw(&term, current_root.?, rs);
-                                logRender(&log_sink, renderer.last_metrics);
+                                logRenderReason(&log_sink, "patch", renderer.last_metrics);
                             },
                             .target => |t| {
                                 if (current_root == null) {
@@ -296,7 +482,7 @@ pub fn main() !void {
 
                                 const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
                                 try renderer.draw(&term, current_root.?, rs);
-                                logRender(&log_sink, renderer.last_metrics);
+                                logRenderReason(&log_sink, "patch", renderer.last_metrics);
                             },
                         }
                     },
@@ -330,7 +516,7 @@ pub fn main() !void {
                     );
                     const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
                     try renderer.draw(&term, current_root.?, rs);
-                    logRender(&log_sink, renderer.last_metrics);
+                    logRenderReason(&log_sink, "focus", renderer.last_metrics);
                 }
                 try child_in.flush();
                 continue;
@@ -378,7 +564,7 @@ pub fn main() !void {
                             try child_in.flush();
                             const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
                             try renderer.draw(&term, current_root.?, rs);
-                            logRender(&log_sink, renderer.last_metrics);
+                            logRenderReason(&log_sink, "list", renderer.last_metrics);
                         }
                         continue;
                     }
@@ -400,7 +586,7 @@ pub fn main() !void {
 
                     const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
                     try renderer.draw(&term, current_root.?, rs);
-                    logRender(&log_sink, renderer.last_metrics);
+                    logRenderReason(&log_sink, "input", renderer.last_metrics);
                     continue;
                 },
             }

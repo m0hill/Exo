@@ -38,6 +38,10 @@ pub fn main() !void {
     var status_buf: std.ArrayList(u8) = .empty;
     defer status_buf.deinit(allocator);
 
+    var term_rows: ?usize = null;
+    var term_cols: ?usize = null;
+    const list_height: usize = 8;
+
     try initItems(allocator, &lists[0].items, 1, 20);
     try initItems(allocator, &lists[1].items, 1001, 1020);
 
@@ -46,8 +50,17 @@ pub fn main() !void {
     {
         var tick_buf: [64]u8 = undefined;
         const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
-        const status_text = try buildStatusText(allocator, &status_buf, state_on, inputs[0..], lists[0..], focus_id.items);
-        try emitInitialFull(out, tick_text, status_text, inputs[0..], lists[0..]);
+        const status_text = try buildStatusText(
+            allocator,
+            &status_buf,
+            state_on,
+            inputs[0..],
+            lists[0..],
+            focus_id.items,
+            term_rows,
+            term_cols,
+        );
+        try emitInitialFull(out, tick_text, status_text, inputs[0..], lists[0..], list_height);
     }
     try out.flush();
 
@@ -81,20 +94,29 @@ pub fn main() !void {
                 "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
                 .{ lists[0].id, lists[0].items.items.len, tick },
             );
-            try emitListMorphPatch(out, lists[0].id, lists[0].items.items, 8);
+            try emitListMorphPatch(out, lists[0].id, lists[0].items.items, list_height);
 
             std.debug.print(
                 "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
                 .{ lists[1].id, lists[1].items.items.len, tick },
             );
-            try emitListMorphPatch(out, lists[1].id, lists[1].items.items, 8);
+            try emitListMorphPatch(out, lists[1].id, lists[1].items.items, list_height);
 
-            const status_text = try buildStatusText(allocator, &status_buf, state_on, inputs[0..], lists[0..], focus_id.items);
+            const status_text = try buildStatusText(
+                allocator,
+                &status_buf,
+                state_on,
+                inputs[0..],
+                lists[0..],
+                focus_id.items,
+                term_rows,
+                term_cols,
+            );
 
             if ((tick % 4) == 0) {
                 std.debug.print("PATCH_TX target=root mode=morph tick={d}\n", .{tick});
                 const layout_alt = (tick % 2) == 1;
-                try emitRootMorphPatch(out, tick_text, status_text, inputs[0..], lists[0..], layout_alt);
+                try emitRootMorphPatch(out, tick_text, status_text, inputs[0..], lists[0..], layout_alt, list_height);
             }
 
             // Keep status fresh so selection/activation changes show up even while idle.
@@ -137,6 +159,8 @@ pub fn main() !void {
                                 inputs[0..],
                                 lists[0..],
                                 focus_id.items,
+                                term_rows,
+                                term_cols,
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try emitTextPatchById(out, "status", status_text);
@@ -156,6 +180,8 @@ pub fn main() !void {
                             inputs[0..],
                             lists[0..],
                             focus_id.items,
+                            term_rows,
+                            term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -178,6 +204,8 @@ pub fn main() !void {
                             inputs[0..],
                             lists[0..],
                             focus_id.items,
+                            term_rows,
+                            term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -196,6 +224,8 @@ pub fn main() !void {
                             inputs[0..],
                             lists[0..],
                             focus_id.items,
+                            term_rows,
+                            term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
@@ -214,9 +244,31 @@ pub fn main() !void {
                             inputs[0..],
                             lists[0..],
                             focus_id.items,
+                            term_rows,
+                            term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try emitTextPatchById(out, "status", status_text);
+                        try out.flush();
+                    },
+                    .resize => |r| {
+                        std.debug.print("EVENT_RX name=resize rows={d} cols={d}\n", .{ r.rows, r.cols });
+                        term_rows = r.rows;
+                        term_cols = r.cols;
+
+                        const status_text = try buildStatusText(
+                            allocator,
+                            &status_buf,
+                            state_on,
+                            inputs[0..],
+                            lists[0..],
+                            focus_id.items,
+                            term_rows,
+                            term_cols,
+                        );
+                        std.debug.print("PATCH_TX target=status\n", .{});
+                        try emitTextPatchById(out, "status", status_text);
+
                         try out.flush();
                     },
                 },
@@ -245,9 +297,10 @@ fn emitInitialFull(
     status_text: []const u8,
     inputs: []const InputSlot,
     lists: []const ListSlot,
+    list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"root\":");
-    try writeRootNode(writer, tick_text, status_text, inputs, lists, false);
+    try writeRootNode(writer, tick_text, status_text, inputs, lists, false, list_height);
     try writer.writeAll("}\n");
 }
 
@@ -258,9 +311,10 @@ fn emitRootMorphPatch(
     inputs: []const InputSlot,
     lists: []const ListSlot,
     layout_alt: bool,
+    list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
-    try writeRootNode(writer, tick_text, status_text, inputs, lists, layout_alt);
+    try writeRootNode(writer, tick_text, status_text, inputs, lists, layout_alt, list_height);
     try writer.writeAll("}\n");
 }
 
@@ -305,11 +359,16 @@ fn buildStatusText(
     inputs: []const InputSlot,
     lists: []const ListSlot,
     focus: []const u8,
+    term_rows: ?usize,
+    term_cols: ?usize,
 ) ![]const u8 {
     buf.clearRetainingCapacity();
     const w = buf.writer(allocator);
     const state_str = if (state_on) "ON" else "OFF";
     try w.print("State: {s}", .{state_str});
+    if (term_rows != null and term_cols != null) {
+        try w.print(" | Size: {d}x{d}", .{ term_rows.?, term_cols.? });
+    }
     if (focus.len > 0) {
         try w.print(" | Focus: {s}", .{focus});
     }
@@ -384,6 +443,7 @@ fn writeRootNode(
     inputs: []const InputSlot,
     lists: []const ListSlot,
     layout_alt: bool,
+    list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
     try writeTextNode(writer, "title", "Tracer Demo");
@@ -394,13 +454,13 @@ fn writeRootNode(
     try writer.writeByte(',');
 
     if (!layout_alt) {
-        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, 8);
+        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, list_height);
         try writer.writeByte(',');
-        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, 8);
+        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, list_height);
     } else {
-        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, 8);
+        try writePanelNode(writer, "panel-b", "Panel B", inputs[1].id, lists[1].id, lists[1].items.items, list_height);
         try writer.writeByte(',');
-        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, 8);
+        try writePanelNode(writer, "panel-a", "Panel A", inputs[0].id, lists[0].id, lists[0].items.items, list_height);
     }
 
     try writer.writeByte(',');

@@ -40,6 +40,19 @@ Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrup
 3. Type while patches keep arriving; cursor and selection should remain stable
 4. Check `/tmp/tui_trace.log` for `RENDER full=true ...` on the first draw and `RENDER full=false ...` on subsequent draws (set `TUI_LOG_STDERR=1` to force stderr logging)
 
+## Manual repro (slice 7)
+
+1. `zig build demo`
+2. Focus an input, type `hello`
+3. Focus a list, move selection down a few items (`j`/`k`)
+4. Resize the terminal narrower/shorter while the backend is still ticking/morphing
+5. Confirm immediately:
+   - UI redraws to the new size (no stale screen)
+   - input still contains `hello` (cursor placement remains sensible)
+   - list selection stays on the same item id and remains visible (scroll is clamped)
+   - status shows `Size: <rows>x<cols>` (from the backend reacting to `resize`)
+6. Exit with `x`
+
 ## Automated tests
 
 Run:
@@ -54,7 +67,7 @@ What’s covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.3)
+## Protocol (v0.4)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -108,6 +121,12 @@ List item activated:
 
 ```json
 {"type":"event","name":"activate","id":"results","item":"item-2"}
+```
+
+Resize (runtime-generated):
+
+```json
+{"type":"event","name":"resize","rows":40,"cols":120}
 ```
 
 ### Nodes

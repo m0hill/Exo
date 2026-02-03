@@ -21,6 +21,7 @@ pub const EventMsg = union(enum) {
     input: struct { id: []const u8, value: []const u8, cursor: usize },
     select: struct { id: []const u8, item: []const u8 },
     activate: struct { id: []const u8, item: []const u8 },
+    resize: struct { rows: usize, cols: usize },
 };
 
 pub const Node = union(enum) {
@@ -112,6 +113,10 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
             return .{ .event = .{ .activate = .{ .id = id, .item = item } } };
+        } else if (std.mem.eql(u8, name, "resize")) {
+            const rows = try getRequiredUsize(obj, "rows");
+            const cols = try getRequiredUsize(obj, "cols");
+            return .{ .event = .{ .resize = .{ .rows = rows, .cols = cols } } };
         } else {
             return error.UnknownEventName;
         }
@@ -192,6 +197,14 @@ fn getRequiredString(obj: std.json.ObjectMap, field: []const u8) ParseMsgError![
     };
 }
 
+fn getRequiredUsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!usize {
+    const v = try getRequired(obj, field);
+    return switch (v) {
+        .integer => |n| if (n < 0) return error.WrongType else @as(usize, @intCast(n)),
+        else => error.WrongType,
+    };
+}
+
 fn getOptionalString(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?[]const u8 {
     const v = obj.get(field) orelse return null;
     return switch (v) {
@@ -267,4 +280,8 @@ pub fn writeActivateEventJsonl(writer: anytype, id: []const u8, item: []const u8
     try writer.writeAll(",\"item\":");
     try writeJsonString(writer, item);
     try writer.writeAll("}\n");
+}
+
+pub fn writeResizeEventJsonl(writer: anytype, rows: usize, cols: usize) !void {
+    try writer.print("{{\"type\":\"event\",\"name\":\"resize\",\"rows\":{d},\"cols\":{d}}}\n", .{ rows, cols });
 }

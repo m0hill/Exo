@@ -5,6 +5,7 @@ const protocol = tui.protocol;
 const renderer_mod = tui.renderer;
 const testing_terminal = @import("testing_terminal.zig");
 const input = tui.input;
+const state = tui.state;
 const tree = tui.tree;
 
 test "render: focused input shows cursor + placeholder" {
@@ -129,6 +130,66 @@ test "renderer: second draw is incremental" {
     try std.testing.expect(std.mem.indexOf(u8, out2, "Tracer Demo") == null);
 }
 
+test "renderer: resize forces full repaint" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
+        .{ .text = .{ .id = "clock", .text = "Tick: 0" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type here" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    try renderer.draw(&term, root, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
+    });
+    try std.testing.expect(renderer.last_metrics.full);
+
+    term.reset();
+    term.size = .{ .rows = 8, .cols = 80 };
+
+    try renderer.draw(&term, root, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
+    });
+    try std.testing.expect(renderer.last_metrics.full);
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2J") != null);
+}
+
+test "render: cursor column clamped after resize" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 5, .cols = 80 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "Tracer Demo" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type here" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    try renderer.draw(&term, root, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
+    });
+    term.reset();
+
+    term.size = .{ .rows = 5, .cols = 3 };
+    try renderer.draw(&term, root, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
+    });
+
+    // Cursor row is 2 (title, then input). Cursor col would be 8, but clamps to cols=3.
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2;3H") != null);
+}
+
 test "input: insert and backspace edit buffer" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
@@ -142,6 +203,14 @@ test "input: insert and backspace edit buffer" {
     try std.testing.expect(try input.handleInputByte(std.testing.allocator, &buf, &cursor, 127));
     try std.testing.expectEqualStrings("h", buf.items);
     try std.testing.expectEqual(@as(usize, 1), cursor);
+}
+
+test "state: clamp list scroll keeps selection visible" {
+    try std.testing.expectEqual(@as(usize, 0), state.clampListScroll(0, null, 5, 20));
+    try std.testing.expectEqual(@as(usize, 8), state.clampListScroll(0, 12, 5, 20));
+    try std.testing.expectEqual(@as(usize, 12), state.clampListScroll(15, 12, 5, 20));
+    try std.testing.expectEqual(@as(usize, 15), state.clampListScroll(999, 19, 5, 20));
+    try std.testing.expectEqual(@as(usize, 0), state.clampListScroll(3, 0, 5, 20));
 }
 
 test "tree: patch-by-id replaces matching node" {
