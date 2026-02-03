@@ -10,3 +10,4 @@ pub const input = @import("input.zig");
 pub const unicode = @import("unicode.zig");
 pub const tree = @import("tree.zig");
 pub const state = @import("state.zig");
+pub const scheduler = @import("scheduler.zig");

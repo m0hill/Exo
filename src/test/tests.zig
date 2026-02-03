@@ -10,6 +10,7 @@ const input = tui.input;
 const unicode = tui.unicode;
 const state = tui.state;
 const tree = tui.tree;
+const scheduler_mod = tui.scheduler;
 
 fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     const c = frame.rowSlice(row)[col];
@@ -470,4 +471,88 @@ test "render: cursor column uses display width not bytes" {
 
     // Line 3, col = 1 + prefix(2) + (a=1, 漢=2) = 6.
     try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[3;6H") != null);
+}
+
+test "scheduler: coalesces targets (latest wins)" {
+    var sched = scheduler_mod.Scheduler.init(std.testing.allocator, 8);
+    defer sched.deinit();
+
+    var current_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer current_arena.deinit();
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "clock", .text = "Tick: 0" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+    var current_root: ?protocol.Node = root;
+
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        _ = try sched.putTargetLeaky(&a, "clock", .{ .text = .{ .id = "clock", .text = "Tick: 1" } }, .replace);
+    }
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        _ = try sched.putTargetLeaky(&a, "clock", .{ .text = .{ .id = "clock", .text = "Tick: 2" } }, .replace);
+    }
+
+    const c = sched.counts();
+    try std.testing.expectEqual(@as(usize, 1), c.pending_targets);
+    try std.testing.expectEqual(@as(u64, 1), c.coalesced_targets);
+
+    const res = try sched.flushApplyLeaky(std.testing.allocator, &current_arena, &current_root);
+    try std.testing.expectEqual(@as(usize, 1), res.targets_applied);
+    try std.testing.expectEqual(@as(usize, 1), res.targets_found);
+
+    const v = current_root.?.vbox;
+    try std.testing.expectEqualStrings("Tick: 2", v.children[0].text.text);
+}
+
+test "scheduler: full patch supersedes earlier targets and flush applies full then targets" {
+    var sched = scheduler_mod.Scheduler.init(std.testing.allocator, 8);
+    defer sched.deinit();
+
+    var current_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer current_arena.deinit();
+
+    var old_children = [_]protocol.Node{
+        .{ .text = .{ .id = "clock", .text = "Tick: old" } },
+    };
+    var current_root: ?protocol.Node = .{ .vbox = .{ .id = "root", .children = old_children[0..] } };
+
+    // Target patch that should be dropped by the full snapshot.
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        _ = try sched.putTargetLeaky(&a, "clock", .{ .text = .{ .id = "clock", .text = "Tick: stale" } }, .replace);
+    }
+
+    // Full snapshot replaces root.
+    var full_children = [_]protocol.Node{
+        .{ .text = .{ .id = "clock", .text = "Tick: full" } },
+    };
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        try sched.putFullLeaky(&a, .{ .vbox = .{ .id = "root", .children = full_children[0..] } });
+    }
+
+    const after_full = sched.counts();
+    try std.testing.expect(after_full.pending_full);
+    try std.testing.expectEqual(@as(usize, 0), after_full.pending_targets);
+
+    // Target patch after full should win.
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        _ = try sched.putTargetLeaky(&a, "clock", .{ .text = .{ .id = "clock", .text = "Tick: after" } }, .replace);
+    }
+
+    const res = try sched.flushApplyLeaky(std.testing.allocator, &current_arena, &current_root);
+    try std.testing.expect(res.full_applied);
+    try std.testing.expectEqual(@as(usize, 1), res.targets_applied);
+
+    const v = current_root.?.vbox;
+    try std.testing.expectEqualStrings("Tick: after", v.children[0].text.text);
 }

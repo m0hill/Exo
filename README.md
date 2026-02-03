@@ -93,6 +93,18 @@ Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrup
    - the input placeholder contains Unicode and the cursor remains aligned while typing/moving
 4. Exit with `x`
 
+## Manual repro (slice 12)
+
+1. `zig build demo -- --flood`
+2. Type into an input while patches are flooding:
+   - input stays responsive (cursor and edits feel immediate)
+   - UI updates keep happening, but terminal does not feel “busy”
+3. Resize the terminal while flood is on:
+   - redraw happens immediately (no stale layout)
+4. Check `/tmp/tui_trace.log` for:
+   - `SCHED_PENDING ...` coalescing summaries
+   - `RENDER reason=frame ...` bounded render cadence even under patch floods
+
 ## Automated tests
 
 Run:

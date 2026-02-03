@@ -200,5 +200,24 @@
       "Frame diff no longer assumes 1 byte = 1 cell"
     ],
     "timestamp": "2026-02-03"
+  },
+  {
+    "slice": 12,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Patch scheduler: coalesce backend patches, prioritize input/resize, and pace rendering under patch floods",
+    "deliverables": [
+      "src/lib/scheduler.zig: pending_full + pending_targets coalescing and bounded flushApply",
+      "src/bin/tui_runtime.zig: frame-paced render loop, bounded backend drain, and resize/input priority",
+      "src/bin/backend_demo.zig: --flood (10ms tick, burst=10) to generate patch floods",
+      "src/test/tests.zig: scheduler coalescing + flush ordering unit tests"
+    ],
+    "boundaries_hit": [
+      "Coalescing latest-wins patches per target",
+      "Frame pacing (~30 FPS) for backend-driven updates",
+      "Preventing resize debounce starvation under backend floods",
+      "Bounded pending map to avoid unbounded allocations"
+    ],
+    "timestamp": "2026-02-03"
   }
 ]

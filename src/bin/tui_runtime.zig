@@ -5,6 +5,7 @@ const jsonl = tui.jsonl;
 const protocol = tui.protocol;
 const render = tui.render;
 const renderer_mod = tui.renderer;
+const scheduler_mod = tui.scheduler;
 const terminal = tui.terminal;
 const input = tui.input;
 const unicode = tui.unicode;
@@ -130,6 +131,26 @@ fn monotonicNowNs() u64 {
 }
 
 const resize_debounce_ns: u64 = 100 * std.time.ns_per_ms;
+const backend_frame_interval_ns: u64 = 33 * std.time.ns_per_ms;
+const max_pending_targets: usize = 256;
+const max_backend_lines_per_iter: usize = 128;
+
+fn minTimeoutMs(a: i32, b: i32) i32 {
+    if (a < 0) return b;
+    if (b < 0) return a;
+    return if (a < b) a else b;
+}
+
+fn pollTimeoutMsForPendingFrame(now_ns: u64, last_render_ns: u64, has_pending: bool) i32 {
+    if (!has_pending) return -1;
+    if (last_render_ns == 0) return 0;
+    const deadline = last_render_ns + backend_frame_interval_ns;
+    if (now_ns >= deadline) return 0;
+    const remaining_ns: u64 = deadline - now_ns;
+    const ms: u64 = (remaining_ns + (std.time.ns_per_ms - 1)) / std.time.ns_per_ms;
+    const max_i32: u64 = @as(u64, @intCast(std.math.maxInt(i32)));
+    return @as(i32, @intCast(if (ms > max_i32) max_i32 else ms));
+}
 
 fn pollTimeoutMsForPendingResize(pending_resize: ?terminal.Size, last_resize_tx_ns: u64) i32 {
     if (pending_resize == null) return -1;
@@ -293,6 +314,11 @@ pub fn main() !void {
     defer current_arena.deinit();
     var current_root: ?protocol.Node = null;
 
+    var sched = scheduler_mod.Scheduler.init(allocator, max_pending_targets);
+    defer sched.deinit();
+    var last_render_ns: u64 = 0;
+    var last_sched_counts: scheduler_mod.Counts = sched.counts();
+
     var focused_id_buf: std.ArrayList(u8) = .empty;
     defer focused_id_buf.deinit(allocator);
     var focused_id: ?[]const u8 = null;
@@ -326,72 +352,180 @@ pub fn main() !void {
     var last_resize_tx_ns: u64 = 0;
     var utf8_pending: Utf8Pending = .{};
 
+    const RenderReason = enum {
+        input,
+        resize,
+        frame,
+    };
+
     while (true) {
+        var requested_reason: ?RenderReason = null;
+        var resize_changed_this_iter: bool = false;
+
+        const now_ns = monotonicNowNs();
+        const resize_timeout_ms = pollTimeoutMsForPendingResize(pending_resize, last_resize_tx_ns);
+        const frame_timeout_ms = pollTimeoutMsForPendingFrame(now_ns, last_render_ns, sched.hasPending());
+        const poll_timeout_ms = minTimeoutMs(resize_timeout_ms, frame_timeout_ms);
+
+        const backend_events: i16 = if (frame_timeout_ms > 0 and sched.hasPending()) 0 else std.posix.POLL.IN;
+
         var fds = [_]std.posix.pollfd{
-            .{ .fd = backend_out_fd, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = backend_out_fd, .events = backend_events, .revents = 0 },
             .{ .fd = backend_err_fd, .events = std.posix.POLL.IN, .revents = 0 },
             .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
             .{ .fd = winch_r_fd, .events = std.posix.POLL.IN, .revents = 0 },
         };
 
-        const rc = try std.posix.poll(fds[0..], pollTimeoutMsForPendingResize(pending_resize, last_resize_tx_ns));
+        const rc = try std.posix.poll(fds[0..], poll_timeout_ms);
         if (rc == 0) {
+            // Debounced resize event and/or frame tick.
             try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
-            continue;
-        }
+        } else {
+            if ((fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
+                break;
+            }
 
-        if ((fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
-            break;
-        }
-
-        if ((fds[3].revents & std.posix.POLL.IN) != 0) {
-            drainPipe(winch_r_fd);
-            const next_size_raw = term.getSize() catch last_term_size;
-            const next_size = effectiveTermSize(next_size_raw);
-            if (next_size.rows != last_term_size.rows or next_size.cols != last_term_size.cols) {
-                last_term_size = next_size;
-                logPrint(
-                    &log_sink,
-                    "RESIZE rows={d} cols={d}\n",
-                    .{ @as(usize, next_size.rows), @as(usize, next_size.cols) },
-                );
-
-                if (current_root != null) {
-                    clampLocalStateForResize(&widgets, current_root.?, next_size);
-                    const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                    try renderer.draw(&term, current_root.?, rs);
-                    logRenderReason(&log_sink, "resize", renderer.last_metrics);
+            if ((fds[3].revents & std.posix.POLL.IN) != 0) {
+                drainPipe(winch_r_fd);
+                const next_size_raw = term.getSize() catch last_term_size;
+                const next_size = effectiveTermSize(next_size_raw);
+                if (next_size.rows != last_term_size.rows or next_size.cols != last_term_size.cols) {
+                    last_term_size = next_size;
+                    logPrint(
+                        &log_sink,
+                        "RESIZE rows={d} cols={d}\n",
+                        .{ @as(usize, next_size.rows), @as(usize, next_size.cols) },
+                    );
+                    pending_resize = next_size;
+                    resize_changed_this_iter = true;
+                    requested_reason = .resize;
                 }
+            }
 
-                pending_resize = next_size;
-                try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
+            if ((fds[1].revents & std.posix.POLL.IN) != 0) {
+                var buf: [4096]u8 = undefined;
+                const n = std.posix.read(backend_err_fd, &buf) catch 0;
+                if (n > 0) logWriteAll(&log_sink, buf[0..n]);
+            }
+
+            if ((fds[2].revents & std.posix.POLL.IN) != 0) {
+                const first = try term.readByte();
+                const decoded = try decodeKeyWithUtf8(&term, &utf8_pending, first) orelse continue;
+
+                if (decoded == .tab or decoded == .shift_tab) {
+                    if (current_root != null) {
+                        const next_focus = try cycleFocusInTree(allocator, current_root.?, focused_id);
+                        try setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
+                    } else {
+                        try setFocusId(allocator, &focused_id_buf, &focused_id, null);
+                    }
+                    logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
+                    try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
+                    try child_in.flush();
+                    requested_reason = .input;
+                } else {
+                    // Always allow exit keys.
+                    if (decoded == .byte and decoded.byte == 3) {
+                        logPrint(&log_sink, "EVENT_TX name=key key=ctrl-c\n", .{});
+                        try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
+                        try child_in.flush();
+                        break;
+                    }
+                    if (decoded == .byte and decoded.byte == 'x') {
+                        logPrint(&log_sink, "EVENT_TX name=key key=x\n", .{});
+                        try protocol.writeKeyEventJsonl(child_in, "x");
+                        try child_in.flush();
+                        break;
+                    }
+
+                    if (decoded == .byte and decoded.byte == 'q') {
+                        logPrint(&log_sink, "EVENT_TX name=key key=q\n", .{});
+                        try protocol.writeKeyEventJsonl(child_in, "q");
+                        try child_in.flush();
+                    } else if (current_root != null and focused_id != null) {
+                        const fk = try focusedKindInTree(allocator, current_root.?, focused_id.?);
+                        if (fk) |kind| switch (kind) {
+                            .list => {
+                                if (decoded == .byte and (decoded.byte == 'j' or decoded.byte == 'k')) {
+                                    const delta: isize = if (decoded.byte == 'j') 1 else -1;
+                                    const changed = try moveListSelectionForId(
+                                        allocator,
+                                        &log_sink,
+                                        child_in,
+                                        &widgets,
+                                        current_root.?,
+                                        focused_id.?,
+                                        delta,
+                                    );
+                                    if (changed) {
+                                        try child_in.flush();
+                                        requested_reason = .input;
+                                    }
+                                } else if (decoded == .byte and (decoded.byte == '\r' or decoded.byte == '\n')) {
+                                    try activateListForId(&log_sink, child_in, widgets.items, focused_id.?);
+                                    try child_in.flush();
+                                }
+                            },
+                            .input => {
+                                const rows: usize = @as(usize, last_term_size.rows);
+                                const cols: usize = @as(usize, last_term_size.cols);
+                                var visible_cols: usize = inputVisibleCols(cols);
+                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                    visible_cols = inputVisibleCols(r.w);
+                                }
+
+                                const changed = handleFocusedInputKey(
+                                    allocator,
+                                    &widgets,
+                                    focused_id.?,
+                                    decoded,
+                                    visible_cols,
+                                ) catch |e| blk: {
+                                    logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
+                                    break :blk false;
+                                };
+                                if (changed) {
+                                    try emitInputEventForId(&log_sink, child_in, widgets.items, focused_id.?);
+                                    try child_in.flush();
+                                    requested_reason = .input;
+                                }
+                            },
+                        };
+                    }
+                }
+            }
+
+            if (requested_reason == null and backend_events != 0 and (fds[0].revents & std.posix.POLL.IN) != 0) {
+                const n = patch_lr.readMore() catch |e| {
+                    if (e == error.LineTooLong) {
+                        logPrint(&log_sink, "PATCH_ERR reason=line_too_long\n", .{});
+                        continue;
+                    }
+                    return e;
+                };
+                if (n == 0) break;
+                logPrint(&log_sink, "PATCH_RX bytes={d}\n", .{n});
             }
         }
 
-        if ((fds[1].revents & std.posix.POLL.IN) != 0) {
-            var buf: [4096]u8 = undefined;
-            const n = std.posix.read(backend_err_fd, &buf) catch 0;
-            if (n > 0) logWriteAll(&log_sink, buf[0..n]);
-        }
+        // Ensure debounced resize events aren't starved by backend floods.
+        try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
 
-        if ((fds[0].revents & std.posix.POLL.IN) != 0) {
-            const n = patch_lr.readMore() catch |e| {
-                if (e == error.LineTooLong) {
-                    logPrint(&log_sink, "PATCH_ERR reason=line_too_long\n", .{});
-                    continue;
-                }
-                return e;
-            };
-            if (n == 0) break;
-            logPrint(&log_sink, "PATCH_RX bytes={d}\n", .{n});
+        // Drain backend lines into scheduler (bounded), but don't let patch floods delay input/resize renders.
+        if (requested_reason == null) {
+            var sched_changed = false;
+            var drained: usize = 0;
+            while (drained < max_backend_lines_per_iter) {
+                const line = patch_lr.nextLine() orelse break;
+                drained += 1;
 
-            while (patch_lr.nextLine()) |line| {
                 var next_arena = std.heap.ArenaAllocator.init(allocator);
-                var accepted = false;
-                defer if (!accepted) next_arena.deinit();
+                defer next_arena.deinit();
 
-                // Copy line into arena so parsed strings reference owned memory
-                const line_owned = try next_arena.allocator().dupe(u8, line);
+                const line_owned = next_arena.allocator().dupe(u8, line) catch |e| {
+                    logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
+                    continue;
+                };
 
                 const msg = protocol.parseMsgLeaky(next_arena.allocator(), line_owned) catch |e| {
                     if (e == error.UnknownPatchMode) {
@@ -403,219 +537,105 @@ pub fn main() !void {
                 };
 
                 switch (msg) {
-                    .patch => |p| {
-                        switch (p) {
-                            .full => |f| {
-                                current_arena.deinit();
-                                current_arena = next_arena;
-                                current_root = f.root;
-                                accepted = true;
-                                logPrint(&log_sink, "PATCH_OK kind=full\n", .{});
-
-                                try syncUiAfterPatch(
-                                    allocator,
+                    .patch => |p| switch (p) {
+                        .full => |f| {
+                            try sched.putFullLeaky(&next_arena, f.root);
+                            sched_changed = true;
+                        },
+                        .target => |t| {
+                            if (current_root == null and !sched.hasPendingFull()) {
+                                logPrint(
                                     &log_sink,
-                                    child_in,
-                                    &widgets,
-                                    &focused_id_buf,
-                                    &focused_id,
-                                    &auto_focus_done,
-                                    current_root.?,
+                                    "SCHED_DROP reason=no_root target={s}\n",
+                                    .{t.target},
                                 );
-                                try child_in.flush();
+                                continue;
+                            }
 
-                                const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                                try renderer.draw(&term, current_root.?, rs);
-                                logRenderReason(&log_sink, "patch", renderer.last_metrics);
-                            },
-                            .target => |t| {
-                                if (current_root == null) {
+                            const r = try sched.putTargetLeaky(&next_arena, t.target, t.node, t.mode);
+                            switch (r) {
+                                .dropped_overflow => {
                                     logPrint(
                                         &log_sink,
-                                        "PATCH_WARN kind=target id={s} found=false reason=no_root\n",
+                                        "SCHED_DROP reason=too_many_targets target={s}\n",
                                         .{t.target},
                                     );
-                                    continue;
-                                }
-
-                                const cloned = try cloneNodeLeaky(current_arena.allocator(), t.node);
-                                var found: bool = false;
-                                switch (t.mode) {
-                                    .replace => {
-                                        found = tree.applyPatchById(&current_root.?, t.target, cloned);
-                                        logPrint(
-                                            &log_sink,
-                                            "PATCH_{s} kind=target mode=replace id={s} found={s}\n",
-                                            .{ if (found) "OK" else "WARN", t.target, if (found) "true" else "false" },
-                                        );
-                                    },
-                                    .morph => {
-                                        var stats: tree.MorphStats = .{};
-                                        found = tree.morphPatchByIdLeaky(
-                                            current_arena.allocator(),
-                                            &current_root.?,
-                                            t.target,
-                                            cloned,
-                                            &stats,
-                                        ) catch |e| {
-                                            logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
-                                            continue;
-                                        };
-
-                                        logPrint(
-                                            &log_sink,
-                                            "PATCH_{s} kind=target mode=morph id={s} found={s} reused={d} inserted={d} removed={d}\n",
-                                            .{
-                                                if (found) "OK" else "WARN",
-                                                t.target,
-                                                if (found) "true" else "false",
-                                                stats.reused,
-                                                stats.inserted,
-                                                stats.removed,
-                                            },
-                                        );
-                                        if (stats.type_mismatch > 0) {
-                                            logPrint(
-                                                &log_sink,
-                                                "MORPH_WARN type_mismatch replaced=true count={d}\n",
-                                                .{stats.type_mismatch},
-                                            );
-                                        }
-                                    },
-                                }
-
-                                if (!found) continue;
-
-                                try syncUiAfterPatch(
-                                    allocator,
-                                    &log_sink,
-                                    child_in,
-                                    &widgets,
-                                    &focused_id_buf,
-                                    &focused_id,
-                                    &auto_focus_done,
-                                    current_root.?,
-                                );
-                                try child_in.flush();
-
-                                const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                                try renderer.draw(&term, current_root.?, rs);
-                                logRenderReason(&log_sink, "patch", renderer.last_metrics);
-                            },
-                        }
+                                },
+                                else => sched_changed = true,
+                            }
+                        },
                     },
                     else => {},
                 }
             }
+
+            if (sched_changed) {
+                const c = sched.counts();
+                if (!std.meta.eql(c, last_sched_counts)) {
+                    logPrint(
+                        &log_sink,
+                        "SCHED_PENDING full={s} targets={d} coalesced_full={d} coalesced_targets={d} dropped={d}\n",
+                        .{
+                            if (c.pending_full) "true" else "false",
+                            c.pending_targets,
+                            c.coalesced_full,
+                            c.coalesced_targets,
+                            c.dropped_targets,
+                        },
+                    );
+                    last_sched_counts = c;
+                }
+            }
         }
 
-        if ((fds[2].revents & std.posix.POLL.IN) != 0) {
-            const first = try term.readByte();
-            const decoded = try decodeKeyWithUtf8(&term, &utf8_pending, first) orelse continue;
-            if (decoded == .tab or decoded == .shift_tab) {
-                if (current_root != null) {
-                    const next_focus = try cycleFocusInTree(allocator, current_root.?, focused_id);
-                    try setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
-                } else {
-                    try setFocusId(allocator, &focused_id_buf, &focused_id, null);
+        const now_after = monotonicNowNs();
+        if (requested_reason == null and pollTimeoutMsForPendingFrame(now_after, last_render_ns, sched.hasPending()) == 0) {
+            requested_reason = .frame;
+        }
+
+        if (requested_reason) |reason| {
+            const flush_res = if (sched.hasPending())
+                try sched.flushApplyLeaky(allocator, &current_arena, &current_root)
+            else
+                scheduler_mod.FlushResult{ .dropped_targets = sched.counts().dropped_targets };
+
+            if (current_root != null) {
+                try syncUiAfterPatch(
+                    allocator,
+                    &log_sink,
+                    child_in,
+                    &widgets,
+                    &focused_id_buf,
+                    &focused_id,
+                    &auto_focus_done,
+                    current_root.?,
+                );
+                try child_in.flush();
+
+                if (resize_changed_this_iter) {
+                    clampLocalStateForResize(&widgets, current_root.?, last_term_size);
                 }
-                logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
-                try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
 
-                if (current_root != null) {
-                    try syncUiAfterPatch(
-                        allocator,
-                        &log_sink,
-                        child_in,
-                        &widgets,
-                        &focused_id_buf,
-                        &focused_id,
-                        &auto_focus_done,
-                        current_root.?,
-                    );
-                    const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                    try renderer.draw(&term, current_root.?, rs);
-                    logRenderReason(&log_sink, "focus", renderer.last_metrics);
-                }
-                try child_in.flush();
-                continue;
-            }
+                const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
+                try renderer.draw(&term, current_root.?, rs);
+                last_render_ns = monotonicNowNs();
 
-            // Always allow exit keys.
-            if (decoded == .byte and decoded.byte == 3) {
-                logPrint(&log_sink, "EVENT_TX name=key key=ctrl-c\n", .{});
-                try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
-                try child_in.flush();
-                break;
-            }
-            if (decoded == .byte and decoded.byte == 'x') {
-                logPrint(&log_sink, "EVENT_TX name=key key=x\n", .{});
-                try protocol.writeKeyEventJsonl(child_in, "x");
-                try child_in.flush();
-                break;
-            }
-
-            if (decoded == .byte and decoded.byte == 'q') {
-                logPrint(&log_sink, "EVENT_TX name=key key=q\n", .{});
-                try protocol.writeKeyEventJsonl(child_in, "q");
-                try child_in.flush();
-                continue;
-            }
-
-            if (current_root == null or focused_id == null) continue;
-            const fk = try focusedKindInTree(allocator, current_root.?, focused_id.?);
-            if (fk == null) continue;
-
-            switch (fk.?) {
-                .list => {
-                    if (decoded == .byte and (decoded.byte == 'j' or decoded.byte == 'k')) {
-                        const delta: isize = if (decoded.byte == 'j') 1 else -1;
-                        const changed = try moveListSelectionForId(
-                            allocator,
-                            &log_sink,
-                            child_in,
-                            &widgets,
-                            current_root.?,
-                            focused_id.?,
-                            delta,
-                        );
-                        if (changed) {
-                            try child_in.flush();
-                            const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                            try renderer.draw(&term, current_root.?, rs);
-                            logRenderReason(&log_sink, "list", renderer.last_metrics);
-                        }
-                        continue;
-                    }
-
-                    if (decoded == .byte and (decoded.byte == '\r' or decoded.byte == '\n')) {
-                        try activateListForId(&log_sink, child_in, widgets.items, focused_id.?);
-                        try child_in.flush();
-                        continue;
-                    }
-                },
-                .input => {
-                    const rows: usize = @as(usize, last_term_size.rows);
-                    const cols: usize = @as(usize, last_term_size.cols);
-                    var visible_cols: usize = inputVisibleCols(cols);
-                    if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
-                        visible_cols = inputVisibleCols(r.w);
-                    }
-
-                    const changed = handleFocusedInputKey(allocator, &widgets, focused_id.?, decoded, visible_cols) catch |e| blk: {
-                        logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
-                        break :blk false;
-                    };
-                    if (!changed) continue;
-
-                    const rs = try buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
-                    try renderer.draw(&term, current_root.?, rs);
-                    logRenderReason(&log_sink, "input", renderer.last_metrics);
-
-                    try emitInputEventForId(&log_sink, child_in, widgets.items, focused_id.?);
-                    try child_in.flush();
-                    continue;
-                },
+                logPrint(
+                    &log_sink,
+                    "RENDER reason={s} targets_applied={d} dropped={d} bytes={d} changed_cells={d} cursor_moves={d}\n",
+                    .{
+                        switch (reason) {
+                            .input => "input",
+                            .resize => "resize",
+                            .frame => "frame",
+                        },
+                        flush_res.targets_applied,
+                        flush_res.dropped_targets,
+                        renderer.last_metrics.bytes,
+                        renderer.last_metrics.changed_cells,
+                        renderer.last_metrics.cursor_moves,
+                    },
+                );
             }
         }
     }

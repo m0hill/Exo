@@ -8,6 +8,10 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+    const cfg = try parseArgs(args);
+
     var stdout_buf: [4096]u8 = undefined;
     var stdout_w = std.fs.File.stdout().writerStreaming(&stdout_buf);
     const out = &stdout_w.interface;
@@ -79,28 +83,38 @@ pub fn main() !void {
             .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
         };
 
-        const rc = try std.posix.poll(fds[0..], 250);
+        const rc = try std.posix.poll(fds[0..], cfg.tick_interval_ms);
         if (rc == 0) {
-            tick += 1;
-            std.debug.print("PATCH_TX target=clock tick={d}\n", .{tick});
             var tick_buf: [64]u8 = undefined;
-            const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
-            try emitTextPatchById(out, "clock", tick_text);
+            var tick_text: []const u8 = "";
+            {
+                var i: usize = 0;
+                while (i < cfg.flood_burst) : (i += 1) {
+                    tick += 1;
+                    if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=clock tick={d}\n", .{tick});
+                    tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+                    try emitTextPatchById(out, "clock", tick_text);
 
-            updateItems(allocator, &lists[0], tick);
-            updateItems(allocator, &lists[1], tick + 2);
+                    updateItems(allocator, &lists[0], tick);
+                    updateItems(allocator, &lists[1], tick + 2);
 
-            std.debug.print(
-                "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
-                .{ lists[0].id, lists[0].items.items.len, tick },
-            );
-            try emitListMorphPatch(out, lists[0].id, lists[0].items.items, list_height);
+                    if (!cfg.quiet_tx) {
+                        std.debug.print(
+                            "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
+                            .{ lists[0].id, lists[0].items.items.len, tick },
+                        );
+                    }
+                    try emitListMorphPatch(out, lists[0].id, lists[0].items.items, list_height);
 
-            std.debug.print(
-                "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
-                .{ lists[1].id, lists[1].items.items.len, tick },
-            );
-            try emitListMorphPatch(out, lists[1].id, lists[1].items.items, list_height);
+                    if (!cfg.quiet_tx) {
+                        std.debug.print(
+                            "PATCH_TX target={s} mode=morph items={d} tick={d}\n",
+                            .{ lists[1].id, lists[1].items.items.len, tick },
+                        );
+                    }
+                    try emitListMorphPatch(out, lists[1].id, lists[1].items.items, list_height);
+                }
+            }
 
             const status_text = try buildStatusText(
                 allocator,
@@ -114,13 +128,13 @@ pub fn main() !void {
             );
 
             if ((tick % 4) == 0) {
-                std.debug.print("PATCH_TX target=root mode=morph tick={d}\n", .{tick});
+                if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=root mode=morph tick={d}\n", .{tick});
                 const layout_alt = (tick % 2) == 1;
                 try emitRootMorphPatch(out, tick_text, status_text, inputs[0..], lists[0..], layout_alt, list_height);
             }
 
             // Keep status fresh so selection/activation changes show up even while idle.
-            std.debug.print("PATCH_TX target=status\n", .{});
+            if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=status\n", .{});
             try emitTextPatchById(out, "status", status_text);
 
             try out.flush();
@@ -276,6 +290,52 @@ pub fn main() !void {
             }
         }
     }
+}
+
+const Config = struct {
+    tick_interval_ms: i32 = 250,
+    flood_burst: usize = 1,
+    quiet_tx: bool = false,
+};
+
+fn parseArgs(args: []const []const u8) !Config {
+    var cfg: Config = .{};
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--help") or std.mem.eql(u8, args[i], "-h")) {
+            std.debug.print(
+                "backend_demo usage:\n  --flood (10ms tick, burst=10)\n  --tick-ms <ms>\n  --burst <n>\n  --quiet-tx (suppress PATCH_TX logs)\n",
+                .{},
+            );
+            return cfg;
+        }
+        if (std.mem.eql(u8, args[i], "--flood")) {
+            cfg.tick_interval_ms = 10;
+            cfg.flood_burst = 10;
+            cfg.quiet_tx = true;
+            continue;
+        }
+        if (std.mem.eql(u8, args[i], "--tick-ms")) {
+            if (i + 1 >= args.len) return error.InvalidArgs;
+            i += 1;
+            cfg.tick_interval_ms = try std.fmt.parseInt(i32, args[i], 10);
+            continue;
+        }
+        if (std.mem.eql(u8, args[i], "--burst")) {
+            if (i + 1 >= args.len) return error.InvalidArgs;
+            i += 1;
+            const n = try std.fmt.parseInt(usize, args[i], 10);
+            cfg.flood_burst = if (n == 0) 1 else n;
+            continue;
+        }
+        if (std.mem.eql(u8, args[i], "--quiet-tx")) {
+            cfg.quiet_tx = true;
+            continue;
+        }
+    }
+
+    if (cfg.tick_interval_ms < 0) cfg.tick_interval_ms = 0;
+    return cfg;
 }
 
 const InputSlot = struct {
