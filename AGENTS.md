@@ -31,6 +31,7 @@ zig build test -- <filter>
 - Extract specific modules: `const protocol = tui.protocol;`
 
 ### Formatting
+- zig fmt .
 - No external formatter; Zig compiler enforces style
 - 4-space indentation (no tabs)
 - Max line length: ~100 chars (soft limit)

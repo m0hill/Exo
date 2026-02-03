@@ -127,5 +127,22 @@
       "Debounced resize event storm protection (~100ms)"
     ],
     "timestamp": "2026-02-02"
+  },
+  {
+    "slice": 8,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Multiline layout: hard newlines + soft wrap, and correct input cursor row/col after wrapping",
+    "deliverables": [
+      "src/lib/render.zig: wrapped text/input rendering with \\n support and cursor mapping from layout",
+      "src/bin/backend_demo.zig: multiline hint text (explicit newline + long wrap line)",
+      "src/test/tests.zig: wrap + newline test and cursor-after-wrap test"
+    ],
+    "boundaries_hit": [
+      "Renderer traversal no longer assumes one node = one line",
+      "Cursor placement derived from actual wrapped layout",
+      "Soft-wrap behavior for both text and input"
+    ],
+    "timestamp": "2026-02-03"
   }
 ]

@@ -53,6 +53,18 @@ Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrup
    - status shows `Size: <rows>x<cols>` (from the backend reacting to `resize`)
 6. Exit with `x`
 
+## Manual repro (slice 8)
+
+1. `zig build demo`
+2. Make the terminal narrow (e.g. ~40 cols)
+3. Confirm the hint text respects an explicit newline and also soft-wraps the long line
+4. Focus an input and type a long string (e.g. 60 chars)
+5. Confirm:
+   - input text wraps to multiple terminal rows (continuation lines use two-space prefix)
+   - cursor follows onto the next row correctly
+   - backspace works across line boundaries
+6. Exit with `x`
+
 ## Automated tests
 
 Run:

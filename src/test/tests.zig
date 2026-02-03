@@ -186,8 +186,47 @@ test "render: cursor column clamped after resize" {
         .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5 }},
     });
 
-    // Cursor row is 2 (title, then input). Cursor col would be 8, but clamps to cols=3.
-    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2;3H") != null);
+    // With wrapping (cols=3), the input becomes multi-row and the cursor is clamped to the last visible cell.
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[5;3H") != null);
+}
+
+test "render: text wraps and respects hard newlines" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 6, .cols = 10 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    const root = protocol.Node{ .text = .{ .id = "t", .text = "Hello\nWorldWorldWorld" } };
+
+    try renderer.draw(&term, root, .{});
+
+    const out = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[K\r\nWorld") != null);
+}
+
+test "render: input cursor row/col maps after wrap" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 6, .cols = 8 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "T" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    try renderer.draw(&term, root, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = "abcdefghi", .cursor = 7 }},
+    });
+
+    const out = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out, "> abcdef") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "  ghi") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[3;4H") != null);
 }
 
 test "input: insert and backspace edit buffer" {

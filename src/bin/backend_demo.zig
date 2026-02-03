@@ -448,7 +448,11 @@ fn writeRootNode(
     try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
     try writeTextNode(writer, "title", "Tracer Demo");
     try writer.writeByte(',');
-    try writeTextNode(writer, "hint", "Tab cycles focus by tree order. j/k moves list. Enter activates. q toggles. x exits.");
+    try writeTextNode(
+        writer,
+        "hint",
+        "Tab cycles focus by tree order. j/k moves list. Enter activates. q toggles. x exits.\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
+    );
     try writer.writeByte(',');
     try writeTextNode(writer, "clock", tick_text);
     try writer.writeByte(',');
