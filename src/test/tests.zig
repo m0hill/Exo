@@ -121,6 +121,44 @@ test "style: inheritance applies fg to text cells" {
     try std.testing.expectEqual(@as(u24, 0xff0000), cell.style.fg);
 }
 
+test "protocol: parse styled_text spans" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"patch\",\"root\":{\"type\":\"styled_text\",\"id\":\"t\",\"spans\":[" ++ "{\"text\":\"A\"}," ++ "{\"text\":\"B\",\"style\":{\"fg\":\"#00ff00\"}}," ++ "{\"text\":\"C\",\"style\":{\"fg\":null}}" ++ "]}}";
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const st = switch (root) {
+        .styled_text => |t| t,
+        else => return error.TestUnexpectedResult,
+    };
+
+    try std.testing.expectEqualStrings("t", st.id);
+    try std.testing.expectEqual(@as(usize, 3), st.spans.len);
+    try std.testing.expectEqualStrings("A", st.spans[0].text);
+
+    const b_style = st.spans[1].style orelse return error.TestUnexpectedResult;
+    const b_rgb = switch (b_style.fg) {
+        .rgb => |c| c,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(u8, 0), b_rgb.r);
+    try std.testing.expectEqual(@as(u8, 255), b_rgb.g);
+    try std.testing.expectEqual(@as(u8, 0), b_rgb.b);
+
+    const c_style = st.spans[2].style orelse return error.TestUnexpectedResult;
+    try std.testing.expect(c_style.fg == .clear);
+}
+
 test "style: bg fill makes row_max nonzero" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
@@ -355,6 +393,25 @@ test "render: text wraps and respects hard newlines" {
     try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[K\r\nWorld") != null);
 }
 
+test "render: styled_text wraps and respects hard newlines" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 6, .cols = 10 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    var spans = [_]protocol.Span{
+        .{ .text = "Hello\nWorld" },
+        .{ .text = "WorldWorld" },
+    };
+    const root = protocol.Node{ .styled_text = .{ .id = "t", .spans = spans[0..] } };
+
+    try renderer.draw(&term, root, .{});
+
+    const out = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[K\r\nWorld") != null);
+}
+
 test "input: insert and backspace edit buffer" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
@@ -527,6 +584,60 @@ test "unicode: cjk is width 2 and does not render into 1 col" {
     try std.testing.expect(std.mem.indexOf(u8, term.out.items, "漢") == null);
 }
 
+test "style: styled_text span overrides fg on subset" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 2);
+    frame.clear(' ');
+
+    const red: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } };
+    const green: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 0, .g = 255, .b = 0 } } };
+
+    var spans = [_]protocol.Span{
+        .{ .text = "A" },
+        .{ .text = "B", .style = green },
+    };
+    var children = [_]protocol.Node{
+        .{ .styled_text = .{ .id = "st", .spans = spans[0..] } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .style = red, .children = children[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    const a = frame.rowSlice(0)[0];
+    try std.testing.expectEqual(@as(u1, 1), a.style.has_fg);
+    try std.testing.expectEqual(@as(u24, 0xff0000), a.style.fg);
+
+    const b = frame.rowSlice(0)[1];
+    try std.testing.expectEqual(@as(u1, 1), b.style.has_fg);
+    try std.testing.expectEqual(@as(u24, 0x00ff00), b.style.fg);
+}
+
+test "style: wide styled_text span applies to both cells" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 2);
+    frame.clear(' ');
+
+    const green: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 0, .g = 255, .b = 0 } } };
+    var spans = [_]protocol.Span{
+        .{ .text = "漢", .style = green },
+    };
+    const root = protocol.Node{ .styled_text = .{ .id = "t", .spans = spans[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    const left = frame.rowSlice(0)[0];
+    const right = frame.rowSlice(0)[1];
+    try std.testing.expectEqual(@as(u2, 2), left.width);
+    try std.testing.expect(!left.continuation);
+    try std.testing.expect(right.continuation);
+    try std.testing.expectEqual(@as(u1, 1), left.style.has_fg);
+    try std.testing.expectEqual(@as(u1, 1), right.style.has_fg);
+    try std.testing.expectEqual(@as(u24, 0x00ff00), left.style.fg);
+    try std.testing.expectEqual(@as(u24, 0x00ff00), right.style.fg);
+}
+
 test "unicode: flag cluster treated as one grapheme width 2" {
     const flag = "🇯🇵";
     const g = unicode.nextGrapheme(flag, 0);
@@ -558,6 +669,30 @@ test "render: cursor column uses display width not bytes" {
 
     // Line 3, col = 1 + prefix(2) + (a=1, 漢=2) = 6.
     try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[3;6H") != null);
+}
+
+test "renderer: styled_text emits SGR changes across spans" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 1, .cols = 10 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.initWithMode(std.testing.allocator, .truecolor);
+    defer renderer.deinit();
+
+    const red: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } };
+    const green: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 0, .g = 255, .b = 0 } } };
+    var spans = [_]protocol.Span{
+        .{ .text = "A", .style = red },
+        .{ .text = "B", .style = green },
+    };
+    const root = protocol.Node{ .styled_text = .{ .id = "t", .spans = spans[0..] } };
+
+    try renderer.draw(&term, root, .{});
+
+    const out = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[0;38;2;255;0;0m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[0;38;2;0;255;0m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "A") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "B") != null);
 }
 
 test "scheduler: coalesces targets (latest wins)" {

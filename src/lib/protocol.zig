@@ -29,6 +29,7 @@ pub const Node = union(enum) {
     vbox: VBoxNode,
     hbox: HBoxNode,
     text: TextNode,
+    styled_text: StyledTextNode,
     input: InputNode,
     list: ListNode,
 };
@@ -62,6 +63,20 @@ pub const TextNode = struct {
     flex: usize = 0,
     style: ?style.StyleOverride = null,
     text: []const u8,
+};
+
+pub const Span = struct {
+    text: []const u8,
+    style: ?style.StyleOverride = null,
+};
+
+pub const StyledTextNode = struct {
+    id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
+    style: ?style.StyleOverride = null,
+    spans: []Span,
 };
 
 pub const InputNode = struct {
@@ -210,6 +225,19 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const st = try getOptionalStyleOverride(obj, "style");
         const text = try getRequiredString(obj, "text");
         return .{ .text = .{ .id = id, .w = w, .h = h, .flex = flex, .style = st, .text = text } };
+    } else if (std.mem.eql(u8, type_str, "styled_text")) {
+        const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const st = try getOptionalStyleOverride(obj, "style");
+        const spans_val = try getRequired(obj, "spans");
+        const spans_arr = try asArray(spans_val);
+        var spans_out = try allocator.alloc(Span, spans_arr.items.len);
+        for (spans_arr.items, 0..) |span_val, i| {
+            spans_out[i] = try parseSpanLeaky(allocator, span_val);
+        }
+        return .{ .styled_text = .{ .id = id, .w = w, .h = h, .flex = flex, .style = st, .spans = spans_out } };
     } else if (std.mem.eql(u8, type_str, "input")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
@@ -236,6 +264,14 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
     } else {
         return error.UnknownNodeType;
     }
+}
+
+fn parseSpanLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Span {
+    _ = allocator;
+    const obj = try asObject(v);
+    const text = try getRequiredString(obj, "text");
+    const st = try getOptionalStyleOverride(obj, "style");
+    return .{ .text = text, .style = st };
 }
 
 fn asObject(v: std.json.Value) ParseMsgError!std.json.ObjectMap {

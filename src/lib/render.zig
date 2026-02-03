@@ -71,6 +71,7 @@ fn nodeId(node: protocol.Node) []const u8 {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
         .text => |t| t.id,
+        .styled_text => |t| t.id,
         .input => |i| i.id,
         .list => |l| l.id,
     };
@@ -81,6 +82,7 @@ fn nodeHintW(node: protocol.Node) ?usize {
         .vbox => |v| v.w,
         .hbox => |h| h.w,
         .text => |t| t.w,
+        .styled_text => |t| t.w,
         .input => |i| i.w,
         .list => |l| l.w,
     };
@@ -91,6 +93,7 @@ fn nodeHintH(node: protocol.Node) ?usize {
         .vbox => |v| v.h,
         .hbox => |h| h.h,
         .text => |t| t.h,
+        .styled_text => |t| t.h,
         .input => |i| i.h,
         .list => |l| l.h,
     };
@@ -101,6 +104,7 @@ fn nodeFlex(node: protocol.Node) usize {
         .vbox => |v| v.flex,
         .hbox => |h| h.flex,
         .text => |t| t.flex,
+        .styled_text => |t| t.flex,
         .input => |i| i.flex,
         .list => |l| l.flex,
     };
@@ -152,10 +156,45 @@ fn countWrappedLines(text: []const u8, cols: usize) usize {
     return lines;
 }
 
+fn countWrappedLinesSpans(spans: []const protocol.Span, cols: usize) usize {
+    var lines: usize = 1;
+    var col: usize = 0;
+
+    for (spans) |sp| {
+        const text = sp.text;
+        var i: usize = 0;
+        while (i < text.len) {
+            if (text[i] == '\n') {
+                lines += 1;
+                col = 0;
+                i += 1;
+                continue;
+            }
+
+            const g = unicode.nextGrapheme(text, i);
+            if (g.end <= i) break;
+
+            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+                lines += 1;
+                col = 0;
+                continue;
+            }
+
+            if (g.width <= cols or cols == 0) {
+                col += g.width;
+            }
+            i = g.end;
+        }
+    }
+
+    return lines;
+}
+
 fn measureHeight(node: protocol.Node, avail_w: usize) usize {
     if (nodeHintH(node)) |h| return h;
     switch (node) {
         .text => |t| return countWrappedLines(t.text, avail_w),
+        .styled_text => |t| return countWrappedLinesSpans(t.spans, avail_w),
         .input => return 1,
         .list => |l| return l.height orelse l.children.len,
         .vbox => |v| {
@@ -256,6 +295,107 @@ fn drawWrappedTextInRect(frame: *Frame, rect: Rect, clip: Rect, text: []const u8
     }
 }
 
+fn drawWrappedStyledSpansInRect(
+    frame: *Frame,
+    rect: Rect,
+    clip: Rect,
+    spans: []const protocol.Span,
+    base: style.Style,
+    attrs_or: u8,
+) void {
+    if (rect.w == 0 or rect.h == 0) return;
+
+    const max_rows: usize = rect.y + rect.h;
+    const cols: usize = rect.w;
+
+    var row: usize = rect.y;
+    var col: usize = 0;
+
+    for (spans) |sp| {
+        if (row >= max_rows) break;
+
+        const span_style = style.merge(base, sp.style);
+        var span_packed = style.pack(span_style);
+        span_packed.attrs |= attrs_or;
+
+        const text = sp.text;
+        var i: usize = 0;
+        while (i < text.len and row < max_rows) {
+            if (text[i] == '\n') {
+                row += 1;
+                col = 0;
+                i += 1;
+                continue;
+            }
+
+            const g = unicode.nextGrapheme(text, i);
+            if (g.end <= i) break;
+
+            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+                row += 1;
+                col = 0;
+                continue;
+            }
+
+            if (g.width > 0 and cols != 0 and g.width > cols) {
+                i = g.end;
+                continue;
+            }
+
+            if (g.width > 0) {
+                const abs_col = rect.x + col;
+                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
+                col += g.width;
+            }
+            i = g.end;
+        }
+    }
+}
+
+fn drawInlineStyledSpansInRect(
+    frame: *Frame,
+    row: usize,
+    rect: Rect,
+    clip: Rect,
+    spans: []const protocol.Span,
+    base: style.Style,
+    start_col: usize,
+    attrs_or: u8,
+) void {
+    if (rect.w == 0) return;
+    if (row < rect.y or row >= rect.y + rect.h) return;
+
+    var used: usize = start_col;
+    for (spans) |sp| {
+        if (used >= rect.w) break;
+
+        const span_style = style.merge(base, sp.style);
+        var span_packed = style.pack(span_style);
+        span_packed.attrs |= attrs_or;
+
+        const text = sp.text;
+        var i: usize = 0;
+        while (i < text.len and used < rect.w) {
+            if (text[i] == '\n') return;
+
+            const g = unicode.nextGrapheme(text, i);
+            if (g.end <= i) break;
+            if (g.width > 0 and used + g.width > rect.w) return;
+            if (g.width > 0 and rect.w != 0 and g.width > rect.w) {
+                i = g.end;
+                continue;
+            }
+
+            if (g.width > 0) {
+                const abs_col = rect.x + used;
+                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
+                used += g.width;
+            }
+            i = g.end;
+        }
+    }
+}
+
 fn renderLinePiecesInRectStyled(
     frame: *Frame,
     row: usize,
@@ -300,6 +440,7 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
         .vbox => |v| v.style,
         .hbox => |h| h.style,
         .text => |t| t.style,
+        .styled_text => |t| t.style,
         .input => |i| i.style,
         .list => |l| l.style,
     };
@@ -433,18 +574,32 @@ fn paintList(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, l: proto
         var row_packed = style.pack(item_style);
         if (is_selected) row_packed.attrs |= style.ATTR_INVERSE;
 
-        const label = switch (item) {
-            .text => |t| t.text,
-            else => "",
-        };
-
         const row: usize = rect.y + row_idx;
         if (row >= rect.y + rect.h) break;
         const row_rect: Rect = .{ .x = rect.x, .y = row, .w = rect.w, .h = 1 };
         if (!packedEq(row_packed, list_packed) and row_packed.affectsBlank()) {
             fillRectStyle(frame, row_rect, clip, row_packed);
         }
-        renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{ prefix, label }, &.{ row_packed, row_packed });
+
+        const prefix_cols: usize = unicode.displayWidth(prefix);
+
+        switch (item) {
+            .text => |t| renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{ prefix, t.text }, &.{ row_packed, row_packed }),
+            .styled_text => |t| {
+                renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{prefix}, &.{row_packed});
+                drawInlineStyledSpansInRect(
+                    frame,
+                    row,
+                    row_rect,
+                    clip,
+                    t.spans,
+                    item_style,
+                    prefix_cols,
+                    if (is_selected) style.ATTR_INVERSE else 0,
+                );
+            },
+            else => {},
+        }
     }
 }
 
@@ -566,6 +721,7 @@ fn paintNode(
 
     switch (node) {
         .text => |t| drawWrappedTextInRect(frame, rect, node_clip, t.text, resolved_packed),
+        .styled_text => |t| drawWrappedStyledSpansInRect(frame, rect, node_clip, t.spans, resolved, 0),
         .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i, resolved),
         .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved),

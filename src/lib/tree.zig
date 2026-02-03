@@ -6,6 +6,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
         .text => |t| t.id,
+        .styled_text => |t| t.id,
         .input => |i| i.id,
         .list => |l| l.id,
     };
@@ -129,6 +130,14 @@ fn morphNodeLeaky(
             t.flex = inc.flex;
             t.style = inc.style;
             t.text = inc.text;
+        },
+        .styled_text => |*t| {
+            const inc = incoming.styled_text;
+            t.w = inc.w;
+            t.h = inc.h;
+            t.flex = inc.flex;
+            t.style = inc.style;
+            t.spans = inc.spans;
         },
         .input => |*i| {
             const inc = incoming.input;

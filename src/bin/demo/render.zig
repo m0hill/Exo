@@ -40,6 +40,47 @@ fn writeTextNode(writer: anytype, id: []const u8, text: []const u8) !void {
     try writer.writeByte('}');
 }
 
+const SpanSpec = struct {
+    text: []const u8,
+    style_json: ?[]const u8 = null,
+};
+
+fn writeSpan(writer: anytype, sp: SpanSpec) !void {
+    try writer.writeAll("{\"text\":");
+    try protocol.writeJsonString(writer, sp.text);
+    if (sp.style_json) |sj| {
+        try writer.writeAll(",\"style\":");
+        try writer.writeAll(sj);
+    }
+    try writer.writeByte('}');
+}
+
+fn writeStyledTextNodeLayoutStyled(
+    writer: anytype,
+    id: []const u8,
+    spans: []const SpanSpec,
+    w: ?usize,
+    h: ?usize,
+    flex: usize,
+    style_json: ?[]const u8,
+) !void {
+    try writer.writeAll("{\"type\":\"styled_text\",\"id\":");
+    try protocol.writeJsonString(writer, id);
+    if (w) |vw| try writer.print(",\"w\":{d}", .{vw});
+    if (h) |vh| try writer.print(",\"h\":{d}", .{vh});
+    if (flex != 0) try writer.print(",\"flex\":{d}", .{flex});
+    if (style_json) |sj| {
+        try writer.writeAll(",\"style\":");
+        try writer.writeAll(sj);
+    }
+    try writer.writeAll(",\"spans\":[");
+    for (spans, 0..) |sp, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        try writeSpan(writer, sp);
+    }
+    try writer.writeAll("]}");
+}
+
 fn writeTextNodeLayout(
     writer: anytype,
     id: []const u8,
@@ -222,6 +263,18 @@ fn writeRootNode(
     );
     try writer.writeByte(',');
     try writeTextNodeLayoutStyled(writer, "clock", tick_text, null, 1, 0, "{\"fg\":\"#22c55e\",\"bold\":true}");
+    try writer.writeByte(',');
+    {
+        const spans = [_]SpanSpec{
+            .{ .text = "Status: " },
+            .{ .text = "Connected", .style_json = "{\"fg\":\"#22c55e\",\"bold\":true}" },
+            .{ .text = "  (", .style_json = "{\"dim\":true}" },
+            .{ .text = "42ms", .style_json = "{\"fg\":\"#fbbf24\"}" },
+            .{ .text = ")", .style_json = "{\"dim\":true}" },
+            .{ .text = "  — inline spans wrap across style boundaries when narrow" },
+        };
+        try writeStyledTextNodeLayoutStyled(writer, "rich", spans[0..], null, 1, 0, "{\"fg\":\"#e5e7eb\"}");
+    }
     try writer.writeByte(',');
 
     try writer.writeAll("{\"type\":\"hbox\",\"id\":\"body\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");

@@ -105,6 +105,7 @@ Resize (runtime-generated):
 - `vbox`: `{ "type":"vbox", "id":"...", "children":[ ... ] }`
 - `hbox`: `{ "type":"hbox", "id":"...", "children":[ ... ] }`
 - `text`: `{ "type":"text", "id":"...", "text":"..." }`
+- `styled_text`: `{ "type":"styled_text", "id":"...", "spans":[ {"text":"...","style":{...}} ] }`
 - `input`: `{ "type":"input", "id":"...", "placeholder":"..." }`
 - `list`: `{ "type":"list", "id":"...", "height":3, "children":[ ... ] }`
 

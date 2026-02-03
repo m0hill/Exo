@@ -412,5 +412,32 @@
       "Try forcing modes: NO_COLOR=1 zig build demo; TUI_COLOR_MODE=16 zig build demo; TUI_COLOR_MODE=256 zig build demo; TUI_COLOR_MODE=truecolor zig build demo",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 16,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Styled text spans (rich text v1): inline styling within a single logical text node, with wrapping across span boundaries",
+    "deliverables": [
+      "src/lib/protocol.zig: styled_text node type + spans parsing",
+      "src/lib/render.zig: span-aware wrapping + per-span style painting; list item support",
+      "src/lib/tree.zig: morph support for styled_text nodes",
+      "src/lib/scheduler.zig: clone support for styled_text nodes",
+      "src/bin/runtime/ui.zig: clone/id/focus traversal supports styled_text nodes",
+      "src/bin/demo/render.zig: demo includes a styled_text example line",
+      "src/test/tests.zig: protocol parse + wrapping + unicode + SGR tests for spans"
+    ],
+    "boundaries_hit": [
+      "Per-grapheme style changes without per-grapheme allocations",
+      "Wrap correctness across span boundaries and explicit newlines",
+      "Wide graphemes keep style across both cells"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm the 'Status: Connected (42ms) — ...' line renders with inline color/bold/dim spans",
+      "Make the terminal narrow and confirm the rich line soft-wraps correctly across span boundaries",
+      "Exit with 'x'"
+    ]
   }
 ]

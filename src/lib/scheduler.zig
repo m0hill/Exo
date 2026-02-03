@@ -258,6 +258,23 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .style = t.style,
             .text = try allocator.dupe(u8, t.text),
         } },
+        .styled_text => |t| blk: {
+            var spans = try allocator.alloc(protocol.Span, t.spans.len);
+            for (t.spans, 0..) |sp, idx| {
+                spans[idx] = .{
+                    .text = try allocator.dupe(u8, sp.text),
+                    .style = sp.style,
+                };
+            }
+            break :blk .{ .styled_text = .{
+                .id = try allocator.dupe(u8, t.id),
+                .w = t.w,
+                .h = t.h,
+                .flex = t.flex,
+                .style = t.style,
+                .spans = spans,
+            } };
+        },
         .input => |i| .{ .input = .{
             .id = try allocator.dupe(u8, i.id),
             .w = i.w,
