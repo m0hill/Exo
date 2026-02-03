@@ -22,12 +22,14 @@ pub const EventMsg = union(enum) {
     input: struct { id: []const u8, value: []const u8, cursor: usize },
     select: struct { id: []const u8, item: []const u8 },
     activate: struct { id: []const u8, item: []const u8 },
+    scroll: struct { id: []const u8, scroll_y: usize },
     resize: struct { rows: usize, cols: usize },
 };
 
 pub const Node = union(enum) {
     vbox: VBoxNode,
     hbox: HBoxNode,
+    scroll: ScrollNode,
     text: TextNode,
     styled_text: StyledTextNode,
     input: InputNode,
@@ -54,6 +56,18 @@ pub const HBoxNode = struct {
     clip: bool = false,
     style: ?style.StyleOverride = null,
     children: []Node,
+};
+
+pub const ScrollNode = struct {
+    id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
+    pad: usize = 0,
+    /// Defaults to true; backends may omit `clip` entirely.
+    clip: bool = true,
+    style: ?style.StyleOverride = null,
+    child: *Node,
 };
 
 pub const TextNode = struct {
@@ -161,6 +175,10 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
             return .{ .event = .{ .activate = .{ .id = id, .item = item } } };
+        } else if (std.mem.eql(u8, name, "scroll")) {
+            const id = try getRequiredString(obj, "id");
+            const scroll_y = try getRequiredUsize(obj, "scroll_y");
+            return .{ .event = .{ .scroll = .{ .id = id, .scroll_y = scroll_y } } };
         } else if (std.mem.eql(u8, name, "resize")) {
             const rows = try getRequiredUsize(obj, "rows");
             const cols = try getRequiredUsize(obj, "cols");
@@ -217,6 +235,19 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
         return .{ .hbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .children = out } };
+    } else if (std.mem.eql(u8, type_str, "scroll")) {
+        const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const pad = try getOptionalUsize(obj, "pad") orelse 0;
+        const clip = try getOptionalBool(obj, "clip") orelse true;
+        const st = try getOptionalStyleOverride(obj, "style");
+        const child_val = try getRequired(obj, "child");
+        const child_node = try parseNodeLeaky(allocator, child_val);
+        const child = try allocator.create(Node);
+        child.* = child_node;
+        return .{ .scroll = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .child = child } };
     } else if (std.mem.eql(u8, type_str, "text")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
@@ -442,6 +473,12 @@ pub fn writeActivateEventJsonl(writer: anytype, id: []const u8, item: []const u8
     try writer.writeAll("}\n");
 }
 
+pub fn writeScrollEventJsonl(writer: anytype, id: []const u8, scroll_y: usize) !void {
+    try writer.writeAll("{\"type\":\"event\",\"name\":\"scroll\",\"id\":");
+    try writeJsonString(writer, id);
+    try writer.print(",\"scroll_y\":{d}}}\n", .{scroll_y});
+}
+
 pub fn writeResizeEventJsonl(writer: anytype, rows: usize, cols: usize) !void {
     try writer.print("{{\"type\":\"event\",\"name\":\"resize\",\"rows\":{d},\"cols\":{d}}}\n", .{ rows, cols });
 }
@@ -485,6 +522,22 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                 try writeNodeJson(writer, child);
             }
             try writer.writeAll("]}");
+        },
+        .scroll => |s| {
+            try writer.writeAll("{\"type\":\"scroll\",\"id\":");
+            try writeJsonString(writer, s.id);
+            if (s.w) |w| try writer.print(",\"w\":{d}", .{w});
+            if (s.h) |h| try writer.print(",\"h\":{d}", .{h});
+            if (s.flex != 0) try writer.print(",\"flex\":{d}", .{s.flex});
+            if (s.pad != 0) try writer.print(",\"pad\":{d}", .{s.pad});
+            if (!s.clip) try writer.writeAll(",\"clip\":false");
+            if (s.style) |st| {
+                try writer.writeAll(",\"style\":");
+                try writeStyleOverrideJson(writer, st);
+            }
+            try writer.writeAll(",\"child\":");
+            try writeNodeJson(writer, s.child.*);
+            try writer.writeByte('}');
         },
         .text => |t| {
             try writer.writeAll("{\"type\":\"text\",\"id\":");

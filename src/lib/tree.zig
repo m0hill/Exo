@@ -5,6 +5,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .scroll => |s| s.id,
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
@@ -27,6 +28,7 @@ pub fn treeContainsId(node: protocol.Node, id: []const u8) bool {
             }
             return false;
         },
+        .scroll => |s| treeContainsId(s.child.*, id),
         .list => |l| {
             for (l.children) |child| {
                 if (treeContainsId(child, id)) return true;
@@ -56,6 +58,7 @@ pub fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: pro
             }
             return false;
         },
+        .scroll => |*s| return applyPatchById(s.child, target, replacement),
         .list => |*l| {
             for (l.children) |*child| {
                 if (applyPatchById(child, target, replacement)) return true;
@@ -99,6 +102,7 @@ pub fn morphPatchByIdLeaky(
             }
             return false;
         },
+        .scroll => |*s| return try morphPatchByIdLeaky(allocator, s.child, target, incoming, stats),
         .list => |*l| {
             for (l.children) |*child| {
                 if (try morphPatchByIdLeaky(allocator, child, target, incoming, stats)) return true;
@@ -253,6 +257,23 @@ fn morphNodeLeaky(
 
             stats.removed += existing_children.len - matched;
             h.children = next_children;
+        },
+        .scroll => |*s| {
+            const inc = incoming.scroll;
+            s.w = inc.w;
+            s.h = inc.h;
+            s.flex = inc.flex;
+            s.pad = inc.pad;
+            s.clip = inc.clip;
+            s.style = inc.style;
+
+            if (std.meta.activeTag(s.child.*) == std.meta.activeTag(inc.child.*)) {
+                try morphNodeLeaky(allocator, s.child, inc.child.*, stats);
+            } else {
+                stats.type_mismatch += 1;
+                stats.replaced += 1;
+                s.child = inc.child;
+            }
         },
         .list => |*l| {
             const inc = incoming.list;

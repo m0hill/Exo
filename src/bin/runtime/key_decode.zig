@@ -88,6 +88,20 @@ pub const CsiPending = struct {
                 self.reset();
                 return out;
             },
+            '5', '6' => {
+                if (seq.len < 2) return null;
+                if (seq[1] != '~') {
+                    self.reset();
+                    return null;
+                }
+                const out: DecodedKey = switch (first) {
+                    '5' => .page_up,
+                    '6' => .page_down,
+                    else => unreachable,
+                };
+                self.reset();
+                return out;
+            },
             '2' => {
                 // Bracketed paste wrappers (ESC[200~ ... ESC[201~).
                 // Consume and ignore the wrapper bytes so they don't get inserted into inputs.
@@ -121,6 +135,8 @@ pub const DecodedKey = union(enum) {
     right,
     home,
     end,
+    page_up,
+    page_down,
     delete,
     word_left,
     word_right,

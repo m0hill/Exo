@@ -14,6 +14,11 @@ pub const ListSlot = struct {
     next_item_id: u64,
 };
 
+pub const ScrollInfo = struct {
+    id: []const u8,
+    scroll_y: usize,
+};
+
 pub fn buildStatusText(
     allocator: std.mem.Allocator,
     buf: *std.ArrayList(u8),
@@ -23,6 +28,7 @@ pub fn buildStatusText(
     focus: []const u8,
     term_rows: ?usize,
     term_cols: ?usize,
+    scroll: ?ScrollInfo,
 ) ![]const u8 {
     buf.clearRetainingCapacity();
     const w = buf.writer(allocator);
@@ -56,6 +62,11 @@ pub fn buildStatusText(
         }
         if (ls.activated.items.len > 0) {
             try w.print(" act={s}", .{ls.activated.items});
+        }
+    }
+    if (scroll) |s| {
+        if (s.id.len > 0) {
+            try w.print(" | Scroll: {s} y={d}", .{ s.id, s.scroll_y });
         }
     }
     return buf.items;

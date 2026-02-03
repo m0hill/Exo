@@ -456,12 +456,14 @@ fn writeRootNode(
     var md_stream_node_local = md_stream_node;
     switch (md_stream_node_local) {
         .vbox => |*v| {
-            v.flex = 1;
-            v.clip = true;
+            v.flex = 0;
+            v.clip = false;
         },
         else => {},
     }
+    try writer.writeAll("{\"type\":\"scroll\",\"id\":\"md-scroll\",\"flex\":1,\"child\":");
     try protocol.writeNodeJson(writer, md_stream_node_local);
+    try writer.writeByte('}');
     try writer.writeAll("]}");
     try writer.writeByte(',');
 

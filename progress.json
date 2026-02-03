@@ -516,5 +516,34 @@
       "Use md-speed controls to change cadence and chunk size; confirm streaming remains responsive",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 20,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Generic scroll viewports: add a reusable scroll container with runtime-owned scroll state, wheel + keyboard scrolling, and scroll-into-view on focus changes",
+    "deliverables": [
+      "src/lib/protocol.zig: protocol v0.6 adds `scroll` node + optional `scroll` event",
+      "src/lib/render.zig: render `scroll` with Y offset + clipping; add shared `measureContentHeight` + `findContentYRangeForId` helpers",
+      "src/bin/runtime/ui.zig: local scroll state per viewport id; wheel/key scroll handlers; focus-driven scrollIntoView; emit scroll events",
+      "src/bin/runtime/key_decode.zig: PageUp/PageDown decoding",
+      "src/bin/demo/render.zig: wrap the streaming markdown subtree in a `scroll` viewport (md-scroll)",
+      "src/bin/demo/main.zig + src/bin/demo/state.zig: track scroll events and show scroll position in the status line",
+      "src/test/tests.zig: protocol + render scroll/cursor tests; ensure-visible math via `state.scrollIntoView`"
+    ],
+    "boundaries_hit": [
+      "Protocol extension (new node + optional event) without backend state ownership",
+      "Signed Y layout/rendering for viewport offsets with strict clipping (no offscreen full-buffer render)",
+      "Shared measurement used for scrolling + ensure-visible logic",
+      "Scroll state preserved by stable viewport ids across morph patches"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "In the 'Streaming Markdown' panel, Tab until focus reaches 'md-scroll' (or click inside the markdown output area)",
+      "Use mouse wheel over the markdown output to scroll; or use 'j'/'k' (line), PgUp/PgDn (page), Home/End (jump) when the viewport is focused",
+      "Confirm the status line updates with 'Scroll: md-scroll y=<n>' as you scroll",
+      "Exit with 'x'"
+    ]
   }
 ]

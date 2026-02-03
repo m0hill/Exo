@@ -44,6 +44,7 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 _ = input.ensure_cursor_visible(&s.scroll_x, s.cursor, s.value.items, visible_cols);
             },
             .list => {},
+            .scroll => {},
         }
     }
 
@@ -63,6 +64,9 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 }
 
                 clampListScrollForNode(widgets, l, visible_height);
+            },
+            .scroll => {
+                syncScrollForId(widgets, root, rows, cols, e.id.items);
             },
             else => {},
         }
@@ -154,6 +158,21 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .children = children,
             } };
         },
+        .scroll => |s| .{ .scroll = .{
+            .id = try allocator.dupe(u8, s.id),
+            .w = s.w,
+            .h = s.h,
+            .flex = s.flex,
+            .pad = s.pad,
+            .clip = s.clip,
+            .style = s.style,
+            .child = blk: {
+                const child_node = try cloneNodeLeaky(allocator, s.child.*);
+                const child = try allocator.create(protocol.Node);
+                child.* = child_node;
+                break :blk child;
+            },
+        } },
         .list => |l| blk: {
             var children = try allocator.alloc(protocol.Node, l.children.len);
             for (l.children, 0..) |child, idx| {
@@ -176,6 +195,7 @@ fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .scroll => |s| s.id,
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
@@ -186,6 +206,7 @@ fn nodeId(node: protocol.Node) []const u8 {
 pub const FocusKind = enum {
     input,
     list,
+    scroll,
 };
 
 const Focusable = struct {
@@ -204,9 +225,16 @@ const ListWidgetState = struct {
     scroll: usize = 0,
 };
 
+const ScrollWidgetState = struct {
+    scroll_y: usize = 0,
+    content_h: usize = 0,
+    viewport_h: usize = 0,
+};
+
 const WidgetState = union(enum) {
     input: InputWidgetState,
     list: ListWidgetState,
+    scroll: ScrollWidgetState,
 };
 
 pub const WidgetEntry = struct {
@@ -220,6 +248,7 @@ pub fn deinitWidgetEntries(allocator: std.mem.Allocator, widgets: *std.ArrayList
         switch (e.state) {
             .input => |*s| s.value.deinit(allocator),
             .list => |*s| s.selected_id.deinit(allocator),
+            .scroll => {},
         }
     }
     widgets.deinit(allocator);
@@ -230,10 +259,12 @@ pub fn buildRenderState(
     widgets: []const WidgetEntry,
     render_inputs: *std.ArrayList(render.InputState),
     render_lists: *std.ArrayList(render.ListState),
+    render_scrolls: *std.ArrayList(render.ScrollState),
     focused_id: ?[]const u8,
 ) !render.RenderState {
     render_inputs.clearRetainingCapacity();
     render_lists.clearRetainingCapacity();
+    render_scrolls.clearRetainingCapacity();
 
     for (widgets) |e| {
         switch (e.state) {
@@ -252,6 +283,14 @@ pub fn buildRenderState(
                     .scroll = s.scroll,
                 });
             },
+            .scroll => |s| {
+                try render_scrolls.append(allocator, .{
+                    .id = e.id.items,
+                    .scroll_y = s.scroll_y,
+                    .content_h = s.content_h,
+                    .viewport_h = s.viewport_h,
+                });
+            },
         }
     }
 
@@ -265,11 +304,17 @@ pub fn buildRenderState(
             return std.mem.order(u8, a.id, b.id) == .lt;
         }
     }.lessThan);
+    std.sort.pdq(render.ScrollState, render_scrolls.items, {}, struct {
+        fn lessThan(_: void, a: render.ScrollState, b: render.ScrollState) bool {
+            return std.mem.order(u8, a.id, b.id) == .lt;
+        }
+    }.lessThan);
 
     return .{
         .focused_id = focused_id,
         .inputs = render_inputs.items,
         .lists = render_lists.items,
+        .scrolls = render_scrolls.items,
     };
 }
 
@@ -287,6 +332,11 @@ fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focus
         },
         .list => |l| {
             try out.append(allocator, .{ .id = l.id, .kind = .list });
+        },
+        .scroll => |s| {
+            // Prefer leaf focusables (inputs/lists) under the pointer before the viewport itself.
+            try collectFocusablesInto(allocator, out, s.child.*);
+            try out.append(allocator, .{ .id = s.id, .kind = .scroll });
         },
         .vbox => |v| {
             for (v.children) |child| try collectFocusablesInto(allocator, out, child);
@@ -354,7 +404,11 @@ pub fn syncUiAfterPatch(
     focused_id: *?[]const u8,
     auto_focus_done: *bool,
     root: protocol.Node,
+    rows: usize,
+    cols: usize,
 ) !void {
+    const before_focus = focused_id.*; // pointer-backed slice; compare via optEql below
+
     var focusables = try collectFocusables(allocator, root);
     defer focusables.deinit(allocator);
 
@@ -381,6 +435,17 @@ pub fn syncUiAfterPatch(
         if (f.kind != .list) continue;
         try syncListForId(allocator, log_sink, backend_in, widgets, root, f.id);
     }
+
+    for (focusables.items) |f| {
+        if (f.kind != .scroll) continue;
+        syncScrollForId(widgets, root, rows, cols, f.id);
+    }
+
+    if (!optEql(before_focus, focused_id.*)) {
+        if (focused_id.*) |fid| {
+            _ = try ensureVisibleForFocusImpl(allocator, log_sink, backend_in, widgets, root, rows, cols, fid);
+        }
+    }
 }
 
 fn optEql(a: ?[]const u8, b: ?[]const u8) bool {
@@ -395,6 +460,22 @@ fn rectContains(r: render.Rect, x: usize, y: usize) bool {
     if (x >= r.x + r.w) return false;
     if (y >= r.y + r.h) return false;
     return true;
+}
+
+fn collectRenderScrollStates(allocator: std.mem.Allocator, widgets: []const WidgetEntry) !std.ArrayList(render.ScrollState) {
+    var out: std.ArrayList(render.ScrollState) = .empty;
+    errdefer out.deinit(allocator);
+    for (widgets) |w| {
+        if (w.state != .scroll) continue;
+        const st = w.state.scroll;
+        try out.append(allocator, .{
+            .id = w.id.items,
+            .scroll_y = st.scroll_y,
+            .content_h = st.content_h,
+            .viewport_h = st.viewport_h,
+        });
+    }
+    return out;
 }
 
 fn listVisibleHeight(rect: render.Rect, l: protocol.ListNode) usize {
@@ -439,6 +520,7 @@ pub fn handleMouseEvent(
         .wheel_up => return try handleMouseWheel(
             allocator,
             log_sink,
+            backend_in,
             widgets,
             root,
             rows,
@@ -450,6 +532,7 @@ pub fn handleMouseEvent(
         .wheel_down => return try handleMouseWheel(
             allocator,
             log_sink,
+            backend_in,
             widgets,
             root,
             rows,
@@ -474,11 +557,14 @@ fn handleMouseDownLeft(
     x: usize,
     y: usize,
 ) !bool {
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
+
     var hit_idx: ?usize = null;
     var hit_rect: render.Rect = undefined;
 
     for (widgets.items, 0..) |w, idx| {
-        const r = render.findRectForId(root, rows, cols, w.id.items) orelse continue;
+        const r = render.findRectForIdWithScrolls(root, rows, cols, w.id.items, scroll_states.items) orelse continue;
         if (rectContains(r, x, y)) {
             hit_idx = idx;
             hit_rect = r;
@@ -567,6 +653,7 @@ fn handleMouseDownLeft(
             st.scroll = state.clampListScroll(st.scroll, selected_index, visible_height, l.children.len);
             if (st.scroll != before_scroll) changed = true;
         },
+        .scroll => {},
     }
 
     if (need_flush) try backend_in.flush();
@@ -576,6 +663,7 @@ fn handleMouseDownLeft(
 fn handleMouseWheel(
     allocator: std.mem.Allocator,
     log_sink: *log.LogSink,
+    backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
     root: protocol.Node,
     rows: usize,
@@ -584,14 +672,17 @@ fn handleMouseWheel(
     y: usize,
     delta: isize,
 ) !bool {
-    _ = allocator;
-    _ = log_sink;
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
 
+    // Wheel priority:
+    // 1) Lists (local scroll)
+    // 2) Deepest scroll viewport under pointer
     for (widgets.items) |*w| {
         if (w.state != .list) continue;
         const list_id = w.id.items;
 
-        const r = render.findRectForId(root, rows, cols, list_id) orelse continue;
+        const r = render.findRectForIdWithScrolls(root, rows, cols, list_id, scroll_states.items) orelse continue;
         if (!rectContains(r, x, y)) continue;
 
         const l = findListNodeById(root, list_id) orelse return false;
@@ -613,6 +704,30 @@ fn handleMouseWheel(
         if (next == stw.scroll) return false;
         stw.scroll = next;
         return true;
+    }
+
+    const step: usize = 3;
+    const dir: isize = if (delta > 0) 1 else if (delta < 0) -1 else 0;
+    if (dir == 0) return false;
+
+    for (widgets.items) |*w| {
+        if (w.state != .scroll) continue;
+        const scroll_id = w.id.items;
+
+        const r = render.findRectForIdWithScrolls(root, rows, cols, scroll_id, scroll_states.items) orelse continue;
+        if (!rectContains(r, x, y)) continue;
+
+        return try scrollViewportById(
+            allocator,
+            log_sink,
+            backend_in,
+            widgets,
+            root,
+            rows,
+            cols,
+            scroll_id,
+            dir * @as(isize, @intCast(step)),
+        );
     }
 
     return false;
@@ -638,6 +753,7 @@ fn deinitWidgetEntry(allocator: std.mem.Allocator, e: *WidgetEntry) void {
     switch (e.state) {
         .input => |*s| s.value.deinit(allocator),
         .list => |*s| s.selected_id.deinit(allocator),
+        .scroll => {},
     }
 }
 
@@ -668,6 +784,7 @@ fn ensureWidgetKind(
         switch (widgets.items[idx].state) {
             .input => if (kind == .input) return idx else {},
             .list => if (kind == .list) return idx else {},
+            .scroll => if (kind == .scroll) return idx else {},
         }
         deinitWidgetEntryState(allocator, &widgets.items[idx]);
         widgets.items[idx].state = initWidgetState(kind);
@@ -685,6 +802,7 @@ fn deinitWidgetEntryState(allocator: std.mem.Allocator, e: *WidgetEntry) void {
     switch (e.state) {
         .input => |*s| s.value.deinit(allocator),
         .list => |*s| s.selected_id.deinit(allocator),
+        .scroll => {},
     }
 }
 
@@ -692,6 +810,7 @@ fn initWidgetState(kind: FocusKind) WidgetState {
     return switch (kind) {
         .input => .{ .input = .{} },
         .list => .{ .list = .{} },
+        .scroll => .{ .scroll = .{} },
     };
 }
 
@@ -723,6 +842,7 @@ fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
             }
             break :blk null;
         },
+        .scroll => |s| return findListNodeById(s.child.*, id),
         .list => |l| blk: {
             for (l.children) |child| {
                 if (findListNodeById(child, id)) |ll| break :blk ll;
@@ -731,6 +851,182 @@ fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
         },
         else => null,
     };
+}
+
+fn findScrollNodeById(root: protocol.Node, id: []const u8) ?protocol.ScrollNode {
+    if (std.mem.eql(u8, nodeId(root), id)) {
+        return switch (root) {
+            .scroll => |s| s,
+            else => null,
+        };
+    }
+
+    return switch (root) {
+        .vbox => |v| blk: {
+            for (v.children) |child| {
+                if (findScrollNodeById(child, id)) |s| break :blk s;
+            }
+            break :blk null;
+        },
+        .hbox => |h| blk: {
+            for (h.children) |child| {
+                if (findScrollNodeById(child, id)) |s| break :blk s;
+            }
+            break :blk null;
+        },
+        .scroll => |s| return findScrollNodeById(s.child.*, id),
+        .list => |l| blk: {
+            for (l.children) |child| {
+                if (findScrollNodeById(child, id)) |s| break :blk s;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+fn clampScrollState(st: *ScrollWidgetState) void {
+    st.scroll_y = state.clampScrollY(st.scroll_y, st.viewport_h, st.content_h);
+}
+
+fn syncScrollForId(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, rows: usize, cols: usize, scroll_id: []const u8) void {
+    const s = findScrollNodeById(root, scroll_id) orelse return;
+    const idx = findWidgetIndex(widgets.items, scroll_id) orelse return;
+    var st = &widgets.items[idx].state.scroll;
+
+    const r = render.findRectForIdWithScrolls(root, rows, cols, scroll_id, &.{}) orelse return;
+    const inner_w: usize = if (r.w > s.pad * 2) r.w - s.pad * 2 else 0;
+    const inner_h: usize = if (r.h > s.pad * 2) r.h - s.pad * 2 else 0;
+
+    st.viewport_h = inner_h;
+    st.content_h = render.measureContentHeight(s.child.*, inner_w);
+    clampScrollState(st);
+}
+
+fn scrollViewportById(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    scroll_id: []const u8,
+    delta_rows: isize,
+) !bool {
+    const s = findScrollNodeById(root, scroll_id) orelse return false;
+    const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
+    var st = &widgets.items[idx].state.scroll;
+
+    syncScrollForId(widgets, root, rows, cols, scroll_id);
+
+    const before = st.scroll_y;
+    if (delta_rows > 0) {
+        const add: usize = @as(usize, @intCast(delta_rows));
+        st.scroll_y = st.scroll_y + add;
+    } else if (delta_rows < 0) {
+        const sub: usize = @as(usize, @intCast(-delta_rows));
+        st.scroll_y = if (st.scroll_y > sub) st.scroll_y - sub else 0;
+    }
+    clampScrollState(st);
+
+    if (st.scroll_y == before) return false;
+    log.logPrint(
+        log_sink,
+        "SCROLL_SET id={s} scroll_y={d} content_h={d} viewport_h={d}\n",
+        .{ s.id, st.scroll_y, st.content_h, st.viewport_h },
+    );
+    try protocol.writeScrollEventJsonl(backend_in, s.id, st.scroll_y);
+    return true;
+}
+
+pub fn ensureVisibleForFocusId(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    focus_id: []const u8,
+) !bool {
+    return ensureVisibleForFocusImpl(allocator, log_sink, backend_in, widgets, root, rows, cols, focus_id);
+}
+
+fn ensureVisibleForFocusImpl(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    focus_id: []const u8,
+) !bool {
+    const nearest = findNearestScrollAncestor(root, focus_id) orelse return false;
+    const s = findScrollNodeById(root, nearest) orelse return false;
+    const idx = try ensureWidgetKind(allocator, widgets, nearest, .scroll);
+    var st = &widgets.items[idx].state.scroll;
+
+    syncScrollForId(widgets, root, rows, cols, nearest);
+
+    const r = render.findRectForIdWithScrolls(root, rows, cols, nearest, &.{}) orelse return false;
+    const inner_w: usize = if (r.w > s.pad * 2) r.w - s.pad * 2 else 0;
+    const range = render.findContentYRangeForId(s.child.*, inner_w, focus_id) orelse return false;
+
+    const y0 = range.y;
+    const y1 = range.y + range.h;
+
+    const before = st.scroll_y;
+    st.scroll_y = state.scrollIntoView(st.scroll_y, st.viewport_h, y0, y1, st.content_h);
+
+    if (st.scroll_y == before) return false;
+    log.logPrint(
+        log_sink,
+        "SCROLL_INTO_VIEW viewport={s} focus={s} scroll_y={d} y0={d} y1={d} viewport_h={d}\n",
+        .{ nearest, focus_id, st.scroll_y, y0, y1, st.viewport_h },
+    );
+    try protocol.writeScrollEventJsonl(backend_in, nearest, st.scroll_y);
+    return true;
+}
+
+fn findNearestScrollAncestor(root: protocol.Node, target_id: []const u8) ?[]const u8 {
+    var out: ?[]const u8 = null;
+    _ = findNearestScrollAncestorInto(root, target_id, &out);
+    return out;
+}
+
+fn findNearestScrollAncestorInto(node: protocol.Node, target_id: []const u8, out: *?[]const u8) bool {
+    if (std.mem.eql(u8, nodeId(node), target_id)) return true;
+
+    switch (node) {
+        .scroll => |s| {
+            if (findNearestScrollAncestorInto(s.child.*, target_id, out)) {
+                if (out.* == null) out.* = s.id;
+                return true;
+            }
+            return false;
+        },
+        .vbox => |v| {
+            for (v.children) |child| {
+                if (findNearestScrollAncestorInto(child, target_id, out)) return true;
+            }
+            return false;
+        },
+        .hbox => |h| {
+            for (h.children) |child| {
+                if (findNearestScrollAncestorInto(child, target_id, out)) return true;
+            }
+            return false;
+        },
+        .list => |l| {
+            for (l.children) |child| {
+                if (findNearestScrollAncestorInto(child, target_id, out)) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
 }
 
 fn syncListForId(
@@ -926,6 +1222,77 @@ pub fn handleFocusedInputKey(
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
     const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
     return changed or scroll_changed;
+}
+
+fn setScrollViewportYById(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    scroll_id: []const u8,
+    next_scroll_y: usize,
+) !bool {
+    const s = findScrollNodeById(root, scroll_id) orelse return false;
+    const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
+    var st = &widgets.items[idx].state.scroll;
+
+    syncScrollForId(widgets, root, rows, cols, scroll_id);
+
+    const before = st.scroll_y;
+    st.scroll_y = next_scroll_y;
+    clampScrollState(st);
+
+    if (st.scroll_y == before) return false;
+    log.logPrint(
+        log_sink,
+        "SCROLL_SET id={s} scroll_y={d} content_h={d} viewport_h={d}\n",
+        .{ s.id, st.scroll_y, st.content_h, st.viewport_h },
+    );
+    try protocol.writeScrollEventJsonl(backend_in, s.id, st.scroll_y);
+    return true;
+}
+
+pub fn handleFocusedScrollKey(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    scroll_id: []const u8,
+    key: key_decode.DecodedKey,
+) !bool {
+    const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
+    const st = &widgets.items[idx].state.scroll;
+
+    // Make sure page-scrolling uses the current viewport size.
+    syncScrollForId(widgets, root, rows, cols, scroll_id);
+
+    switch (key) {
+        .byte => |b| {
+            if (b == 'j') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 1);
+            if (b == 'k') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -1);
+            return false;
+        },
+        .page_down => {
+            const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
+            return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, step);
+        },
+        .page_up => {
+            const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
+            return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -step);
+        },
+        .home => return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 0),
+        .end => {
+            const max_scroll: usize = if (st.content_h > st.viewport_h) st.content_h - st.viewport_h else 0;
+            return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, max_scroll);
+        },
+        else => return false,
+    }
 }
 
 pub fn emitInputEventForId(log_sink: *log.LogSink, backend_in: anytype, widgets: []const WidgetEntry, input_id: []const u8) !void {

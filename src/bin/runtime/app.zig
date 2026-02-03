@@ -113,6 +113,8 @@ pub fn run() !void {
     defer render_inputs.deinit(allocator);
     var render_lists: std.ArrayList(render.ListState) = .empty;
     defer render_lists.deinit(allocator);
+    var render_scrolls: std.ArrayList(render.ScrollState) = .empty;
+    defer render_scrolls.deinit(allocator);
 
     const backend_out_fd = child_out_file.handle;
     const backend_err_fd = child_err_file.handle;
@@ -250,6 +252,7 @@ pub fn run() !void {
                         break :blk switch (w.state) {
                             .input => .input,
                             .list => .list,
+                            .scroll => .scroll,
                         };
                     }
                     break :blk null;
@@ -302,6 +305,21 @@ pub fn run() !void {
                         }
                         log.logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
                         try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
+                        if (current_root != null and focused_id != null) {
+                            const rows: usize = @as(usize, last_term_size.rows);
+                            const cols: usize = @as(usize, last_term_size.cols);
+                            const scrolled = try ui.ensureVisibleForFocusId(
+                                allocator,
+                                &log_sink,
+                                child_in,
+                                &widgets,
+                                current_root.?,
+                                rows,
+                                cols,
+                                focused_id.?,
+                            );
+                            if (scrolled) need_backend_flush = true;
+                        }
                         need_backend_flush = true;
                         requested_reason = .input;
                         continue;
@@ -385,6 +403,28 @@ pub fn run() !void {
                                 };
                                 if (changed) {
                                     pending_input_event = true;
+                                    requested_reason = .input;
+                                }
+                            },
+                            .scroll => {
+                                const rows: usize = @as(usize, last_term_size.rows);
+                                const cols: usize = @as(usize, last_term_size.cols);
+                                const changed = ui.handleFocusedScrollKey(
+                                    allocator,
+                                    &log_sink,
+                                    child_in,
+                                    &widgets,
+                                    current_root.?,
+                                    rows,
+                                    cols,
+                                    focused_id.?,
+                                    decoded,
+                                ) catch |e| blk: {
+                                    log.logPrint(&log_sink, "SCROLL_ERR reason={s}\n", .{@errorName(e)});
+                                    break :blk false;
+                                };
+                                if (changed) {
+                                    need_backend_flush = true;
                                     requested_reason = .input;
                                 }
                             },
@@ -513,6 +553,8 @@ pub fn run() !void {
                     &focused_id,
                     &auto_focus_done,
                     current_root.?,
+                    @as(usize, last_term_size.rows),
+                    @as(usize, last_term_size.cols),
                 );
                 try child_in.flush();
 
@@ -520,7 +562,7 @@ pub fn run() !void {
                     ui.clampLocalStateForResize(&widgets, current_root.?, last_term_size);
                 }
 
-                const rs = try ui.buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, focused_id);
+                const rs = try ui.buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, &render_scrolls, focused_id);
                 try renderer.draw(&term, current_root.?, rs);
                 last_render_ns = timing.monotonicNowNs();
 

@@ -316,6 +316,21 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .children = children,
             } };
         },
+        .scroll => |s| .{ .scroll = .{
+            .id = try allocator.dupe(u8, s.id),
+            .w = s.w,
+            .h = s.h,
+            .flex = s.flex,
+            .pad = s.pad,
+            .clip = s.clip,
+            .style = s.style,
+            .child = blk: {
+                const child_node = try cloneNodeLeaky(allocator, s.child.*);
+                const child = try allocator.create(protocol.Node);
+                child.* = child_node;
+                break :blk child;
+            },
+        } },
         .list => |l| blk: {
             var children = try allocator.alloc(protocol.Node, l.children.len);
             for (l.children, 0..) |child, idx| {

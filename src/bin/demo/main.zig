@@ -69,6 +69,7 @@ fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .scroll => |s| s.id,
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
@@ -91,6 +92,10 @@ pub fn main() !void {
 
     var focus_id: std.ArrayList(u8) = .empty;
     defer focus_id.deinit(allocator);
+
+    var scroll_id: std.ArrayList(u8) = .empty;
+    defer scroll_id.deinit(allocator);
+    var scroll_y: usize = 0;
 
     var inputs = [_]state.InputSlot{
         .{ .id = "query-a" },
@@ -165,6 +170,7 @@ pub fn main() !void {
             focus_id.items,
             term_rows,
             term_cols,
+            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
         );
         var title_buf: [128]u8 = undefined;
         var hint_buf: [512]u8 = undefined;
@@ -260,6 +266,7 @@ pub fn main() !void {
                 focus_id.items,
                 term_rows,
                 term_cols,
+                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
             );
 
             if ((tick % 4) == 0) {
@@ -428,6 +435,7 @@ pub fn main() !void {
                                 focus_id.items,
                                 term_rows,
                                 term_cols,
+                                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -449,6 +457,7 @@ pub fn main() !void {
                             focus_id.items,
                             term_rows,
                             term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -487,6 +496,7 @@ pub fn main() !void {
                             focus_id.items,
                             term_rows,
                             term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -507,6 +517,27 @@ pub fn main() !void {
                             focus_id.items,
                             term_rows,
                             term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                        );
+                        std.debug.print("PATCH_TX target=status\n", .{});
+                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                        try out.flush();
+                    },
+                    .scroll => |s| {
+                        std.debug.print("EVENT_RX name=scroll id={s} scroll_y={d}\n", .{ s.id, s.scroll_y });
+                        scroll_id.clearRetainingCapacity();
+                        if (s.id.len > 0) try scroll_id.appendSlice(allocator, s.id);
+                        scroll_y = s.scroll_y;
+                        const status_text = try state.buildStatusText(
+                            allocator,
+                            &status_buf,
+                            state_on,
+                            inputs[0..],
+                            lists[0..],
+                            focus_id.items,
+                            term_rows,
+                            term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -676,6 +707,7 @@ pub fn main() !void {
                             focus_id.items,
                             term_rows,
                             term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -695,6 +727,7 @@ pub fn main() !void {
                             focus_id.items,
                             term_rows,
                             term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");

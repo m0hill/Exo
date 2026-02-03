@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.5)
+## Protocol (v0.6)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -94,6 +94,12 @@ List item activated:
 {"type":"event","name":"activate","id":"results","item":"item-2"}
 ```
 
+Scroll viewport moved (optional):
+
+```json
+{"type":"event","name":"scroll","id":"md-scroll","scroll_y":42}
+```
+
 Resize (runtime-generated):
 
 ```json
@@ -104,6 +110,7 @@ Resize (runtime-generated):
 
 - `vbox`: `{ "type":"vbox", "id":"...", "children":[ ... ] }`
 - `hbox`: `{ "type":"hbox", "id":"...", "children":[ ... ] }`
+- `scroll`: `{ "type":"scroll", "id":"...", "child": { ... } }`
 - `text`: `{ "type":"text", "id":"...", "text":"..." }`
 - `styled_text`: `{ "type":"styled_text", "id":"...", "spans":[ {"text":"...","style":{...}} ] }`
 - `input`: `{ "type":"input", "id":"...", "placeholder":"..." }`

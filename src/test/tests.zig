@@ -160,6 +160,117 @@ test "protocol: parse styled_text spans" {
     try std.testing.expect(c_style.fg == .clear);
 }
 
+test "protocol: parse scroll node + scroll event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"patch\",\"root\":{\"type\":\"scroll\",\"id\":\"sv\",\"child\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"hi\"}}}";
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const sv = switch (root) {
+        .scroll => |s| s,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("sv", sv.id);
+    try std.testing.expect(sv.clip);
+    const child = sv.child.*;
+    try std.testing.expectEqualStrings("t", child.text.id);
+    try std.testing.expectEqualStrings("hi", child.text.text);
+
+    const ev_line = "{\"type\":\"event\",\"name\":\"scroll\",\"id\":\"sv\",\"scroll_y\":42}";
+    const ev_msg = try protocol.parseMsgLeaky(arena.allocator(), ev_line);
+    switch (ev_msg) {
+        .event => |ev| switch (ev) {
+            .scroll => |s| {
+                try std.testing.expectEqualStrings("sv", s.id);
+                try std.testing.expectEqual(@as(usize, 42), s.scroll_y);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "render: scroll viewport shifts visible content" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 2, 4);
+    frame.clear(' ');
+
+    var child_children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .text = "A" } },
+        .{ .text = .{ .id = "b", .text = "B" } },
+        .{ .text = .{ .id = "c", .text = "C" } },
+        .{ .text = .{ .id = "d", .text = "D" } },
+    };
+    var child = protocol.Node{ .vbox = .{ .id = "child", .children = child_children[0..] } };
+    const root = protocol.Node{ .scroll = .{ .id = "sv", .child = &child } };
+
+    render.renderToFrame(root, .{
+        .scrolls = &.{.{ .id = "sv", .scroll_y = 0, .content_h = 4, .viewport_h = 2 }},
+    }, &frame);
+    try std.testing.expectEqual(@as(u8, 'A'), cellByte(&frame, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'B'), cellByte(&frame, 1, 0));
+
+    frame.clear(' ');
+    render.renderToFrame(root, .{
+        .scrolls = &.{.{ .id = "sv", .scroll_y = 2, .content_h = 4, .viewport_h = 2 }},
+    }, &frame);
+    try std.testing.expectEqual(@as(u8, 'C'), cellByte(&frame, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'D'), cellByte(&frame, 1, 0));
+}
+
+test "render: cursor respects scroll_y for focused input" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 2, 10);
+    frame.clear(' ');
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "t0", .text = "A" } },
+        .{ .input = .{ .id = "i", .placeholder = "p" } },
+        .{ .text = .{ .id = "t2", .text = "C" } },
+    };
+    var child = protocol.Node{ .vbox = .{ .id = "child", .children = children[0..] } };
+    const root = protocol.Node{ .scroll = .{ .id = "sv", .child = &child } };
+
+    render.renderToFrame(root, .{
+        .focused_id = "i",
+        .inputs = &.{.{ .id = "i", .value = "", .cursor = 0, .scroll_x = 0 }},
+        .scrolls = &.{.{ .id = "sv", .scroll_y = 1, .content_h = 3, .viewport_h = 2 }},
+    }, &frame);
+
+    const cur = frame.cursor orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), cur.row);
+    try std.testing.expectEqual(@as(usize, 3), cur.col);
+}
+
+test "state: scrollIntoView brings offscreen node into viewport" {
+    var child_children: [10]protocol.Node = undefined;
+    for (0..9) |i| {
+        child_children[i] = .{ .text = .{ .id = "t", .text = "x" } };
+    }
+    child_children[9] = .{ .input = .{ .id = "deep", .placeholder = "p" } };
+
+    const child = protocol.Node{ .vbox = .{ .id = "child", .children = child_children[0..] } };
+
+    const viewport_h: usize = 2;
+    const width: usize = 10;
+    const content_h: usize = render.measureContentHeight(child, width);
+    const range = render.findContentYRangeForId(child, width, "deep") orelse return error.TestUnexpectedResult;
+    const next = state.scrollIntoView(0, viewport_h, range.y, range.y + range.h, content_h);
+    try std.testing.expectEqual(@as(usize, 8), next);
+}
+
 test "style: bg fill makes row_max nonzero" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
