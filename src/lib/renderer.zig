@@ -3,6 +3,8 @@ const std = @import("std");
 const frame_mod = @import("frame.zig");
 const protocol = @import("protocol.zig");
 const render = @import("render.zig");
+const color = @import("color.zig");
+const style = @import("style.zig");
 const Size = @import("term_size.zig").Size;
 
 const Frame = frame_mod.Frame;
@@ -18,13 +20,18 @@ pub const DrawMetrics = struct {
 
 pub const Renderer = struct {
     allocator: std.mem.Allocator,
+    color_mode: color.ColorMode,
     prev: Frame = .{},
     next: Frame = .{},
     has_prev: bool = false,
     last_metrics: DrawMetrics = .{},
 
     pub fn init(allocator: std.mem.Allocator) Renderer {
-        return .{ .allocator = allocator };
+        return initWithMode(allocator, color.detectColorMode());
+    }
+
+    pub fn initWithMode(allocator: std.mem.Allocator, mode: color.ColorMode) Renderer {
+        return .{ .allocator = allocator, .color_mode = mode };
     }
 
     pub fn deinit(self: *Renderer) void {
@@ -49,13 +56,18 @@ pub const Renderer = struct {
         self.next.recomputeRowMax();
 
         var metrics: DrawMetrics = .{};
+        var cur_style: style.PackedStyle = .{};
+
+        // Start from a known SGR state; cursor moves don't reset style.
+        try termWriteAll(term, &metrics, "\x1b[0m");
+
         if (!self.has_prev) {
             metrics.full = true;
-            try fullPaint(term, &metrics, &self.next);
+            try fullPaint(term, &metrics, &cur_style, self.color_mode, &self.next);
             self.has_prev = true;
         } else {
             metrics.full = false;
-            try diffAndFlush(term, &metrics, &self.prev, &self.next);
+            try diffAndFlush(term, &metrics, &cur_style, self.color_mode, &self.prev, &self.next);
         }
 
         try applyCursor(term, &metrics, self.next.cursor);
@@ -85,7 +97,66 @@ fn emitCursorMove(term: anytype, metrics: *DrawMetrics, row: usize, col: usize) 
     metrics.cursor_moves += 1;
 }
 
-fn fullPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
+fn applyStyle(term: anytype, metrics: *DrawMetrics, cur: *style.PackedStyle, mode: color.ColorMode, next: style.PackedStyle) !void {
+    if (@as(u64, @bitCast(cur.*)) == @as(u64, @bitCast(next))) return;
+
+    var buf: [128]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const w = fbs.writer();
+
+    try w.writeAll("\x1b[0");
+
+    const attrs = next.attrs;
+    if ((attrs & style.ATTR_BOLD) != 0) try w.writeAll(";1");
+    if ((attrs & style.ATTR_DIM) != 0) try w.writeAll(";2");
+    if ((attrs & style.ATTR_ITALIC) != 0) try w.writeAll(";3");
+    if ((attrs & style.ATTR_UNDERLINE) != 0) try w.writeAll(";4");
+    if ((attrs & style.ATTR_BLINK) != 0) try w.writeAll(";5");
+    if ((attrs & style.ATTR_INVERSE) != 0) try w.writeAll(";7");
+    if ((attrs & style.ATTR_HIDDEN) != 0) try w.writeAll(";8");
+    if ((attrs & style.ATTR_STRIKETHROUGH) != 0) try w.writeAll(";9");
+
+    if (mode != .mono) {
+        if (next.has_fg == 1) {
+            const rgb = color.u24ToRgb(next.fg);
+            switch (mode) {
+                .truecolor => try w.print(";38;2;{d};{d};{d}", .{ rgb.r, rgb.g, rgb.b }),
+                .ansi256 => try w.print(";38;5;{d}", .{color.rgbToXterm256(rgb)}),
+                .ansi16 => {
+                    const idx: u4 = color.rgbToAnsi16(rgb);
+                    const code: u8 = if (idx < 8) (30 + @as(u8, idx)) else (90 + (@as(u8, idx) - 8));
+                    try w.print(";{d}", .{code});
+                },
+                .mono => {},
+            }
+        }
+        if (next.has_bg == 1) {
+            const rgb = color.u24ToRgb(next.bg);
+            switch (mode) {
+                .truecolor => try w.print(";48;2;{d};{d};{d}", .{ rgb.r, rgb.g, rgb.b }),
+                .ansi256 => try w.print(";48;5;{d}", .{color.rgbToXterm256(rgb)}),
+                .ansi16 => {
+                    const idx: u4 = color.rgbToAnsi16(rgb);
+                    const code: u8 = if (idx < 8) (40 + @as(u8, idx)) else (100 + (@as(u8, idx) - 8));
+                    try w.print(";{d}", .{code});
+                },
+                .mono => {},
+            }
+        }
+    }
+
+    try w.writeByte('m');
+    try termWriteAll(term, metrics, fbs.getWritten());
+    cur.* = next;
+}
+
+fn fullPaint(
+    term: anytype,
+    metrics: *DrawMetrics,
+    cur_style: *style.PackedStyle,
+    mode: color.ColorMode,
+    next: *const Frame,
+) !void {
     try termWriteAll(term, metrics, "\x1b[2J\x1b[H");
 
     const rows: usize = @as(usize, next.rows);
@@ -100,6 +171,7 @@ fn fullPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
             while (c < max) : (c += 1) {
                 const cell = row[c];
                 if (cell.continuation) continue;
+                try applyStyle(term, metrics, cur_style, mode, cell.style);
                 if (cell.len == 0) {
                     try termWriteAll(term, metrics, " ");
                 } else {
@@ -107,6 +179,7 @@ fn fullPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
                 }
             }
         }
+        try applyStyle(term, metrics, cur_style, mode, .{});
         try termWriteAll(term, metrics, "\x1b[K");
         if (r + 1 < rows) {
             try termWriteAll(term, metrics, "\r\n");
@@ -118,10 +191,18 @@ fn cellsEqual(a: Cell, b: Cell) bool {
     if (a.continuation != b.continuation) return false;
     if (a.width != b.width) return false;
     if (a.len != b.len) return false;
+    if (@as(u64, @bitCast(a.style)) != @as(u64, @bitCast(b.style))) return false;
     return std.mem.eql(u8, a.slice(), b.slice());
 }
 
-fn diffAndFlush(term: anytype, metrics: *DrawMetrics, prev: *const Frame, next: *const Frame) !void {
+fn diffAndFlush(
+    term: anytype,
+    metrics: *DrawMetrics,
+    cur_style: *style.PackedStyle,
+    mode: color.ColorMode,
+    prev: *const Frame,
+    next: *const Frame,
+) !void {
     const rows: usize = @as(usize, next.rows);
     _ = @as(usize, next.cols);
 
@@ -154,6 +235,7 @@ fn diffAndFlush(term: anytype, metrics: *DrawMetrics, prev: *const Frame, next: 
                 while (col < c) : (col += 1) {
                     const cell = next_row[col];
                     if (cell.continuation) continue;
+                    try applyStyle(term, metrics, cur_style, mode, cell.style);
                     if (cell.len == 0) {
                         try termWriteAll(term, metrics, " ");
                     } else {
@@ -167,6 +249,7 @@ fn diffAndFlush(term: anytype, metrics: *DrawMetrics, prev: *const Frame, next: 
         if (next_max < prev_max) {
             const erase_col = next_max + 1;
             try emitCursorMove(term, metrics, r + 1, erase_col);
+            try applyStyle(term, metrics, cur_style, mode, .{});
             try termWriteAll(term, metrics, "\x1b[K");
             metrics.changed_cells += prev_max - next_max;
         }

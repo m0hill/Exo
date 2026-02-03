@@ -12,6 +12,7 @@ const state = tui.state;
 const tree = tui.tree;
 const scheduler_mod = tui.scheduler;
 const mouse = tui.mouse;
+const style = tui.style;
 
 fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     const c = frame.rowSlice(row)[col];
@@ -99,6 +100,91 @@ test "render: focused input shows cursor + placeholder" {
     try std.testing.expect(std.mem.indexOf(u8, out, "> Type here") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[?25h") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[4;3H") != null);
+}
+
+test "style: inheritance applies fg to text cells" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 5);
+    frame.clear(' ');
+
+    const red: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } };
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "t", .text = "X" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .style = red, .children = children[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    const cell = frame.rowSlice(0)[0];
+    try std.testing.expectEqual(@as(u1, 1), cell.style.has_fg);
+    try std.testing.expectEqual(@as(u24, 0xff0000), cell.style.fg);
+}
+
+test "style: bg fill makes row_max nonzero" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 5);
+    frame.clear(' ');
+
+    const bg: style.StyleOverride = .{ .bg = .{ .rgb = .{ .r = 0, .g = 0, .b = 255 } } };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .style = bg, .children = &.{} } };
+
+    render.renderToFrame(root, .{}, &frame);
+    frame.recomputeRowMax();
+
+    try std.testing.expectEqual(@as(u16, 5), frame.row_max[0]);
+    const cell = frame.rowSlice(0)[4];
+    try std.testing.expectEqual(@as(u1, 1), cell.style.has_bg);
+}
+
+test "renderer: emits truecolor SGR for styled text" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 3, .cols = 20 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.initWithMode(std.testing.allocator, .truecolor);
+    defer renderer.deinit();
+
+    const red: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } };
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "t", .style = red, .text = "X" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    try renderer.draw(&term, root, .{});
+
+    const out = term.out.items;
+    try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[0;38;2;255;0;0m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "X") != null);
+}
+
+test "scheduler: target patch preserves style fields" {
+    var sched = scheduler_mod.Scheduler.init(std.testing.allocator, 32);
+    defer sched.deinit();
+
+    var current_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer current_arena.deinit();
+
+    var root_children = [_]protocol.Node{
+        .{ .text = .{ .id = "t", .text = "old" } },
+    };
+    var current_root: ?protocol.Node = .{ .vbox = .{ .id = "root", .children = root_children[0..] } };
+
+    var next_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer next_arena.deinit();
+
+    const red: style.StyleOverride = .{ .fg = .{ .rgb = .{ .r = 255, .g = 0, .b = 0 } } };
+    const patched: protocol.Node = .{ .text = .{ .id = "t", .h = 1, .style = red, .text = "new" } };
+
+    _ = try sched.putTargetLeaky(&next_arena, "t", patched, .replace);
+    _ = try sched.flushApplyLeaky(std.testing.allocator, &current_arena, &current_root);
+
+    const root = current_root orelse return error.TestUnexpectedResult;
+    const child = root.vbox.children[0].text;
+    try std.testing.expectEqualStrings("new", child.text);
+    try std.testing.expect(child.style != null);
+    const st = child.style.?;
+    try std.testing.expect(st.fg == .rgb);
 }
 
 test "render: unfocused input hides cursor and brackets placeholder" {

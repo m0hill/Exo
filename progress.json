@@ -384,5 +384,33 @@
       "In another shell, find the tui_runtime pid and send SIGTERM (kill -TERM <pid>): program exits and terminal is restored",
       "Rerun and exit normally with 'x' or Ctrl-C: terminal is restored and /tmp/tui_trace.log includes SIGNAL_RX/EXIT (when applicable)"
     ]
+  },
+  {
+    "slice": 15,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Styling engine v1: node-level style + inheritance, terminal capability detection, and diff-aware ANSI SGR emission",
+    "deliverables": [
+      "src/lib/style.zig: StyleOverride (tri-state) + merge logic + packed per-cell style",
+      "src/lib/color.zig: hex + basic CSS name parsing, RGB→256/16 degradation, and env-based color mode detection",
+      "src/lib/protocol.zig: optional style + placeholder_style fields (JSON parsing + validation)",
+      "src/lib/frame.zig: style stored per cell + row_max considers styled blank cells",
+      "src/lib/render.zig: style inheritance during paint + list selection overlay via inverse",
+      "src/lib/renderer.zig: diff-aware SGR emission (only when cell style differs)",
+      "src/bin/demo/render.zig: demo emits styled nodes"
+    ],
+    "boundaries_hit": [
+      "ANSI SGR correctness across cursor moves and line erases",
+      "Style-aware row_max so backgrounds render past last glyph",
+      "Environment-driven mode selection (NO_COLOR, TUI_COLOR_MODE, COLORTERM, TERM)"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm panels render with background color, and titles/clock/status use colored/bold text (depending on terminal capability)",
+      "Select a list row (click or j/k): selected row uses an inverse/high-contrast overlay",
+      "Try forcing modes: NO_COLOR=1 zig build demo; TUI_COLOR_MODE=16 zig build demo; TUI_COLOR_MODE=256 zig build demo; TUI_COLOR_MODE=truecolor zig build demo",
+      "Exit with 'x'"
+    ]
   }
 ]

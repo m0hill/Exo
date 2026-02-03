@@ -127,6 +127,7 @@ fn morphNodeLeaky(
             t.w = inc.w;
             t.h = inc.h;
             t.flex = inc.flex;
+            t.style = inc.style;
             t.text = inc.text;
         },
         .input => |*i| {
@@ -134,6 +135,8 @@ fn morphNodeLeaky(
             i.w = inc.w;
             i.h = inc.h;
             i.flex = inc.flex;
+            i.style = inc.style;
+            i.placeholder_style = inc.placeholder_style;
             i.placeholder = inc.placeholder;
         },
         .vbox => |*v| {
@@ -145,6 +148,7 @@ fn morphNodeLeaky(
             v.flex = inc.flex;
             v.pad = inc.pad;
             v.clip = inc.clip;
+            v.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
             @memset(used, false);
@@ -197,6 +201,7 @@ fn morphNodeLeaky(
             h.flex = inc.flex;
             h.pad = inc.pad;
             h.clip = inc.clip;
+            h.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
             @memset(used, false);
@@ -248,6 +253,7 @@ fn morphNodeLeaky(
             l.h = inc.h;
             l.flex = inc.flex;
             l.height = inc.height;
+            l.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
             @memset(used, false);

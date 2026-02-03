@@ -168,6 +168,7 @@ pub fn run() !void {
     while (true) {
         var requested_reason: ?RenderReason = null;
         var resize_changed_this_iter: bool = false;
+        var handled_input_this_iter: bool = false;
 
         const now_ns = timing.monotonicNowNs();
         const resize_timeout_ms = timing.pollTimeoutMsForPendingResize(pending_resize, last_resize_tx_ns);
@@ -255,7 +256,7 @@ pub fn run() !void {
                         decoded.mouse,
                     );
                     if (changed) requested_reason = .input;
-                    continue;
+                    handled_input_this_iter = true;
                 }
 
                 const key_now_ns = timing.monotonicNowNs();
@@ -263,7 +264,7 @@ pub fn run() !void {
                     emergency_last_ns = 0;
                 }
 
-                if (decoded == .tab or decoded == .shift_tab) {
+                if (!handled_input_this_iter and (decoded == .tab or decoded == .shift_tab)) {
                     if (current_root != null) {
                         const next_focus = try ui.cycleFocusInTree(allocator, current_root.?, focused_id);
                         try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
@@ -274,7 +275,7 @@ pub fn run() !void {
                     try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
                     try child_in.flush();
                     requested_reason = .input;
-                } else {
+                } else if (!handled_input_this_iter) {
                     if (decoded == .byte and decoded.byte == 7) {
                         if (emergency_last_ns != 0 and key_now_ns <= emergency_last_ns + emergency_window_ns) {
                             log.logPrint(&log_sink, "EMERGENCY_EXIT chord=ctrl-g ctrl-g\n", .{});

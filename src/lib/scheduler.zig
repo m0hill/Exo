@@ -255,6 +255,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .w = t.w,
             .h = t.h,
             .flex = t.flex,
+            .style = t.style,
             .text = try allocator.dupe(u8, t.text),
         } },
         .input => |i| .{ .input = .{
@@ -262,6 +263,8 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .w = i.w,
             .h = i.h,
             .flex = i.flex,
+            .style = i.style,
+            .placeholder_style = i.placeholder_style,
             .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
         } },
         .vbox => |v| blk: {
@@ -276,6 +279,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .flex = v.flex,
                 .pad = v.pad,
                 .clip = v.clip,
+                .style = v.style,
                 .children = children,
             } };
         },
@@ -291,6 +295,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .flex = h.flex,
                 .pad = h.pad,
                 .clip = h.clip,
+                .style = h.style,
                 .children = children,
             } };
         },
@@ -305,6 +310,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .h = l.h,
                 .flex = l.flex,
                 .height = l.height,
+                .style = l.style,
                 .children = children,
             } };
         },

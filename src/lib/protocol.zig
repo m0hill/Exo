@@ -1,4 +1,5 @@
 const std = @import("std");
+const style = @import("style.zig");
 
 pub const Msg = union(enum) {
     patch: PatchMsg,
@@ -39,6 +40,7 @@ pub const VBoxNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    style: ?style.StyleOverride = null,
     children: []Node,
 };
 
@@ -49,6 +51,7 @@ pub const HBoxNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    style: ?style.StyleOverride = null,
     children: []Node,
 };
 
@@ -57,6 +60,7 @@ pub const TextNode = struct {
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
+    style: ?style.StyleOverride = null,
     text: []const u8,
 };
 
@@ -65,6 +69,8 @@ pub const InputNode = struct {
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
+    style: ?style.StyleOverride = null,
+    placeholder_style: ?style.StyleOverride = null,
     placeholder: ?[]const u8 = null,
 };
 
@@ -74,6 +80,7 @@ pub const ListNode = struct {
     h: ?usize = null,
     flex: usize = 0,
     height: ?usize = null,
+    style: ?style.StyleOverride = null,
     children: []Node,
 };
 
@@ -86,6 +93,7 @@ pub const ParseMsgError = error{
     InvalidPatchShape,
     UnknownPatchMode,
     UnknownEventName,
+    InvalidColor,
 } || std.mem.Allocator.Error;
 
 pub fn parseMsgLeaky(allocator: std.mem.Allocator, line: []const u8) ParseMsgError!Msg {
@@ -171,13 +179,14 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
+        const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
         var out = try allocator.alloc(Node, children_arr.items.len);
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .vbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .children = out } };
+        return .{ .vbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .children = out } };
     } else if (std.mem.eql(u8, type_str, "hbox")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
@@ -185,40 +194,45 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
+        const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
         var out = try allocator.alloc(Node, children_arr.items.len);
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .hbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .children = out } };
+        return .{ .hbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .children = out } };
     } else if (std.mem.eql(u8, type_str, "text")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const st = try getOptionalStyleOverride(obj, "style");
         const text = try getRequiredString(obj, "text");
-        return .{ .text = .{ .id = id, .w = w, .h = h, .flex = flex, .text = text } };
+        return .{ .text = .{ .id = id, .w = w, .h = h, .flex = flex, .style = st, .text = text } };
     } else if (std.mem.eql(u8, type_str, "input")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const st = try getOptionalStyleOverride(obj, "style");
+        const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
         const placeholder = try getOptionalString(obj, "placeholder");
-        return .{ .input = .{ .id = id, .w = w, .h = h, .flex = flex, .placeholder = placeholder } };
+        return .{ .input = .{ .id = id, .w = w, .h = h, .flex = flex, .style = st, .placeholder_style = ph_st, .placeholder = placeholder } };
     } else if (std.mem.eql(u8, type_str, "list")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const height = try getOptionalUsize(obj, "height");
+        const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
         var out = try allocator.alloc(Node, children_arr.items.len);
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .list = .{ .id = id, .w = w, .h = h, .flex = flex, .height = height, .children = out } };
+        return .{ .list = .{ .id = id, .w = w, .h = h, .flex = flex, .height = height, .style = st, .children = out } };
     } else {
         return error.UnknownNodeType;
     }
@@ -236,6 +250,55 @@ fn asArray(v: std.json.Value) ParseMsgError!std.json.Array {
         .array => |a| a,
         else => error.WrongType,
     };
+}
+
+fn getOptionalStyleOverride(obj: std.json.ObjectMap, key: []const u8) ParseMsgError!?style.StyleOverride {
+    const v = obj.get(key) orelse return null;
+    return switch (v) {
+        .null => null,
+        .object => |o| try parseStyleOverride(o),
+        else => error.WrongType,
+    };
+}
+
+fn parseStyleOverride(obj: std.json.ObjectMap) ParseMsgError!style.StyleOverride {
+    var out: style.StyleOverride = .{};
+
+    if (obj.get("fg")) |v| {
+        out.fg = switch (v) {
+            .null => .clear,
+            .string => |s| .{ .rgb = style.parseColorSpec(s) catch return error.InvalidColor },
+            else => return error.WrongType,
+        };
+    }
+
+    if (obj.get("bg")) |v| {
+        out.bg = switch (v) {
+            .null => .clear,
+            .string => |s| .{ .rgb = style.parseColorSpec(s) catch return error.InvalidColor },
+            else => return error.WrongType,
+        };
+    }
+
+    try parseOptionalBoolAttr(obj, "bold", &out, .bold);
+    try parseOptionalBoolAttr(obj, "dim", &out, .dim);
+    try parseOptionalBoolAttr(obj, "italic", &out, .italic);
+    try parseOptionalBoolAttr(obj, "underline", &out, .underline);
+    try parseOptionalBoolAttr(obj, "blink", &out, .blink);
+    try parseOptionalBoolAttr(obj, "inverse", &out, .inverse);
+    try parseOptionalBoolAttr(obj, "hidden", &out, .hidden);
+    try parseOptionalBoolAttr(obj, "strikethrough", &out, .strikethrough);
+
+    return out;
+}
+
+fn parseOptionalBoolAttr(obj: std.json.ObjectMap, key: []const u8, out: *style.StyleOverride, attr: style.Attr) ParseMsgError!void {
+    const v = obj.get(key) orelse return;
+    const b = switch (v) {
+        .bool => |bb| bb,
+        else => return error.WrongType,
+    };
+    out.setAttr(attr, b);
 }
 
 fn getRequired(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!std.json.Value {

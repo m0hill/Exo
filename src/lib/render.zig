@@ -1,6 +1,7 @@
 const std = @import("std");
 const frame_mod = @import("frame.zig");
 const protocol = @import("protocol.zig");
+const style = @import("style.zig");
 const unicode = @import("unicode.zig");
 
 const Frame = frame_mod.Frame;
@@ -40,7 +41,7 @@ pub fn renderToFrame(root: protocol.Node, state: RenderState, frame: *Frame) voi
         .h = @as(usize, frame.rows),
     };
     var cursor: ?CursorPos = null;
-    paintNode(frame, root, root_rect, root_rect, state, &cursor);
+    paintNode(frame, root, root_rect, root_rect, state, &cursor, .{});
     frame.cursor = cursor;
 }
 
@@ -204,15 +205,16 @@ fn putGraphemeClipped(
     bytes: []const u8,
     width: u2,
     clip: Rect,
+    st: style.PackedStyle,
 ) void {
     if (width == 0) return;
     if (clip.w == 0 or clip.h == 0) return;
     if (row < clip.y or row >= clip.y + clip.h) return;
     if (col < clip.x or col + @as(usize, width) > clip.x + clip.w) return;
-    frame.putGrapheme(row, col, bytes, width);
+    frame.putGraphemeStyled(row, col, bytes, width, st);
 }
 
-fn drawWrappedTextInRect(frame: *Frame, rect: Rect, clip: Rect, text: []const u8) void {
+fn drawWrappedTextInRect(frame: *Frame, rect: Rect, clip: Rect, text: []const u8, st: style.PackedStyle) void {
     if (rect.w == 0 or rect.h == 0) return;
 
     const max_rows: usize = rect.y + rect.h;
@@ -247,18 +249,27 @@ fn drawWrappedTextInRect(frame: *Frame, rect: Rect, clip: Rect, text: []const u8
 
         if (g.width > 0) {
             const abs_col = rect.x + col;
-            putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip);
+            putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
             col += g.width;
         }
         i = g.end;
     }
 }
 
-fn renderLinePiecesInRect(frame: *Frame, row: usize, rect: Rect, clip: Rect, pieces: []const []const u8) void {
+fn renderLinePiecesInRectStyled(
+    frame: *Frame,
+    row: usize,
+    rect: Rect,
+    clip: Rect,
+    pieces: []const []const u8,
+    styles: []const style.PackedStyle,
+) void {
     if (rect.w == 0) return;
+    std.debug.assert(pieces.len == styles.len);
 
     var used: usize = 0;
-    for (pieces) |p| {
+    for (pieces, 0..) |p, pi| {
+        const st = styles[pi];
         if (used >= rect.w) break;
         var i: usize = 0;
         while (i < p.len and used < rect.w) {
@@ -272,10 +283,41 @@ fn renderLinePiecesInRect(frame: *Frame, row: usize, rect: Rect, clip: Rect, pie
 
             if (g.width > 0) {
                 const abs_col = rect.x + used;
-                putGraphemeClipped(frame, row, abs_col, p[g.start..g.end], @as(u2, @intCast(g.width)), clip);
+                putGraphemeClipped(frame, row, abs_col, p[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
                 used += g.width;
             }
             i = g.end;
+        }
+    }
+}
+
+fn packedEq(a: style.PackedStyle, b: style.PackedStyle) bool {
+    return @as(u64, @bitCast(a)) == @as(u64, @bitCast(b));
+}
+
+fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
+    return switch (node) {
+        .vbox => |v| v.style,
+        .hbox => |h| h.style,
+        .text => |t| t.style,
+        .input => |i| i.style,
+        .list => |l| l.style,
+    };
+}
+
+fn fillRectStyle(frame: *Frame, rect: Rect, clip: Rect, st: style.PackedStyle) void {
+    const r = rectIntersect(rect, clip);
+    if (r.w == 0 or r.h == 0) return;
+
+    var y: usize = r.y;
+    const y_end: usize = r.y + r.h;
+    const x0: usize = r.x;
+    const x_end: usize = r.x + r.w;
+    while (y < y_end) : (y += 1) {
+        var row = frame.rowSliceMut(y);
+        var x: usize = x0;
+        while (x < x_end) : (x += 1) {
+            row[x].style = st;
         }
     }
 }
@@ -287,6 +329,7 @@ fn paintInput(
     state: RenderState,
     cursor_out: *?CursorPos,
     i: protocol.InputNode,
+    inherited: style.Style,
 ) void {
     if (rect.h == 0) return;
     const row: usize = rect.y;
@@ -298,6 +341,11 @@ fn paintInput(
     const cols: usize = rect.w;
     const visible_cols: usize = if (cols > prefix_cols) cols - prefix_cols else 0;
 
+    const base_style = inherited;
+    const base_packed = style.pack(base_style);
+    const ph_style = style.merge(base_style, i.placeholder_style);
+    const ph_packed = style.pack(ph_style);
+
     if (input_state == null) {
         if (focused and cursor_out.* == null) {
             if (cols != 0 and row >= clip.y and row < clip.y + clip.h and rect.x < clip.x + clip.w) {
@@ -307,7 +355,7 @@ fn paintInput(
                 }
             }
         }
-        renderLinePiecesInRect(frame, row, rect, clip, &.{prefix});
+        renderLinePiecesInRectStyled(frame, row, rect, clip, &.{prefix}, &.{base_packed});
         return;
     }
 
@@ -330,7 +378,7 @@ fn paintInput(
             }
         }
 
-        renderLinePiecesInRect(frame, row, rect, clip, &.{ prefix, visible });
+        renderLinePiecesInRectStyled(frame, row, rect, clip, &.{ prefix, visible }, &.{ base_packed, base_packed });
         return;
     }
 
@@ -342,9 +390,9 @@ fn paintInput(
                     cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
                 }
             }
-            renderLinePiecesInRect(frame, row, rect, clip, &.{ prefix, ph });
+            renderLinePiecesInRectStyled(frame, row, rect, clip, &.{ prefix, ph }, &.{ base_packed, ph_packed });
         } else {
-            renderLinePiecesInRect(frame, row, rect, clip, &.{ prefix, "[", ph, "]" });
+            renderLinePiecesInRectStyled(frame, row, rect, clip, &.{ prefix, "[", ph, "]" }, &.{ base_packed, base_packed, ph_packed, base_packed });
         }
     } else {
         if (focused and cursor_out.* == null and cols != 0) {
@@ -353,16 +401,19 @@ fn paintInput(
                 cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
             }
         }
-        renderLinePiecesInRect(frame, row, rect, clip, &.{prefix});
+        renderLinePiecesInRectStyled(frame, row, rect, clip, &.{prefix}, &.{base_packed});
     }
 }
 
-fn paintList(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, l: protocol.ListNode) void {
+fn paintList(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, l: protocol.ListNode, inherited: style.Style) void {
     if (rect.h == 0) return;
     const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, l.id);
     const list_state = findListState(state.lists, l.id);
     const selected_id = if (list_state) |st| st.selected_id else "";
     const scroll = if (list_state) |st| st.scroll else 0;
+
+    const list_style = inherited;
+    const list_packed = style.pack(list_style);
 
     const desired_height: usize = l.height orelse rect.h;
     const height: usize = @min(desired_height, rect.h);
@@ -378,6 +429,10 @@ fn paintList(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, l: proto
         const is_selected = selected_id.len > 0 and std.mem.eql(u8, selected_id, item_id);
 
         const prefix = if (is_selected) (if (focused) "> " else "* ") else "  ";
+        const item_style = style.merge(list_style, nodeStyleOverride(item));
+        var row_packed = style.pack(item_style);
+        if (is_selected) row_packed.attrs |= style.ATTR_INVERSE;
+
         const label = switch (item) {
             .text => |t| t.text,
             else => "",
@@ -385,11 +440,23 @@ fn paintList(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, l: proto
 
         const row: usize = rect.y + row_idx;
         if (row >= rect.y + rect.h) break;
-        renderLinePiecesInRect(frame, row, .{ .x = rect.x, .y = row, .w = rect.w, .h = 1 }, clip, &.{ prefix, label });
+        const row_rect: Rect = .{ .x = rect.x, .y = row, .w = rect.w, .h = 1 };
+        if (!packedEq(row_packed, list_packed) and row_packed.affectsBlank()) {
+            fillRectStyle(frame, row_rect, clip, row_packed);
+        }
+        renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{ prefix, label }, &.{ row_packed, row_packed });
     }
 }
 
-fn paintVBox(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, cursor_out: *?CursorPos, v: protocol.VBoxNode) void {
+fn paintVBox(
+    frame: *Frame,
+    rect: Rect,
+    clip: Rect,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+    v: protocol.VBoxNode,
+    inherited: style.Style,
+) void {
     const pad = v.pad;
     const inner = rectDeflate(rect, pad);
     const base_clip = rectIntersect(clip, rect);
@@ -425,12 +492,20 @@ fn paintVBox(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, cursor_o
 
         const clamped_h: usize = if (y + child_h <= inner.y + inner.h) child_h else (inner.y + inner.h - y);
         const child_rect: Rect = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
-        paintNode(frame, child, child_rect, child_clip, state, cursor_out);
+        paintNode(frame, child, child_rect, child_clip, state, cursor_out, inherited);
         y += clamped_h;
     }
 }
 
-fn paintHBox(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, cursor_out: *?CursorPos, h: protocol.HBoxNode) void {
+fn paintHBox(
+    frame: *Frame,
+    rect: Rect,
+    clip: Rect,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+    h: protocol.HBoxNode,
+    inherited: style.Style,
+) void {
     const pad = h.pad;
     const inner = rectDeflate(rect, pad);
     const base_clip = rectIntersect(clip, rect);
@@ -464,7 +539,7 @@ fn paintHBox(frame: *Frame, rect: Rect, clip: Rect, state: RenderState, cursor_o
 
         const clamped_w: usize = if (x + child_w <= inner.x + inner.w) child_w else (inner.x + inner.w - x);
         const child_rect: Rect = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
-        paintNode(frame, child, child_rect, child_clip, state, cursor_out);
+        paintNode(frame, child, child_rect, child_clip, state, cursor_out, inherited);
         x += clamped_w;
     }
 }
@@ -476,16 +551,25 @@ fn paintNode(
     clip: Rect,
     state: RenderState,
     cursor_out: *?CursorPos,
+    inherited: style.Style,
 ) void {
     const node_clip = rectIntersect(clip, rect);
     if (node_clip.w == 0 or node_clip.h == 0) return;
 
+    const own_override = nodeStyleOverride(node);
+    const resolved = style.merge(inherited, own_override);
+    const inherited_packed = style.pack(inherited);
+    const resolved_packed = style.pack(resolved);
+    if (!packedEq(resolved_packed, inherited_packed) and resolved_packed.affectsBlank()) {
+        fillRectStyle(frame, rect, node_clip, resolved_packed);
+    }
+
     switch (node) {
-        .text => |t| drawWrappedTextInRect(frame, rect, node_clip, t.text),
-        .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i),
-        .list => |l| paintList(frame, rect, node_clip, state, l),
-        .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v),
-        .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h),
+        .text => |t| drawWrappedTextInRect(frame, rect, node_clip, t.text, resolved_packed),
+        .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i, resolved),
+        .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
+        .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved),
+        .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h, resolved),
     }
 }
 

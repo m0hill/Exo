@@ -98,7 +98,7 @@ pub fn main() !void {
                     tick += 1;
                     if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=clock tick={d}\n", .{tick});
                     tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
-                    try render.emitTextPatchById(out, "clock", tick_text);
+                    try render.emitTextPatchByIdStyled(out, "clock", tick_text, "{\"fg\":\"#22c55e\",\"bold\":true}");
 
                     state.updateItems(allocator, &lists[0], tick);
                     state.updateItems(allocator, &lists[1], tick + 2);
@@ -139,7 +139,7 @@ pub fn main() !void {
             }
 
             if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=status\n", .{});
-            try render.emitTextPatchById(out, "status", status_text);
+            try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
 
             try out.flush();
             continue;
@@ -148,6 +148,14 @@ pub fn main() !void {
         if ((fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
             return;
         }
+
+        _ = lr.readMore() catch |e| {
+            if (e == error.LineTooLong) {
+                std.debug.print("backend_demo: EVENT_ERR line_too_long\n", .{});
+                continue;
+            }
+            return e;
+        };
 
         while (lr.nextLine()) |line| {
             _ = arena.reset(.retain_capacity);
@@ -173,7 +181,7 @@ pub fn main() !void {
                                 term_cols,
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
-                            try render.emitTextPatchById(out, "status", status_text);
+                            try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
                         } else if (std.mem.eql(u8, k.key, "x") or std.mem.eql(u8, k.key, "ctrl-c")) {
                             return;
@@ -194,7 +202,7 @@ pub fn main() !void {
                             term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchById(out, "status", status_text);
+                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                         try out.flush();
                     },
                     .input => |inp| {
@@ -218,7 +226,7 @@ pub fn main() !void {
                             term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchById(out, "status", status_text);
+                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                         try out.flush();
                     },
                     .select => |s| {
@@ -238,7 +246,7 @@ pub fn main() !void {
                             term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchById(out, "status", status_text);
+                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                         try out.flush();
                     },
                     .activate => |a| {
@@ -258,7 +266,7 @@ pub fn main() !void {
                             term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchById(out, "status", status_text);
+                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                         try out.flush();
                     },
                     .resize => |r| {
@@ -277,7 +285,7 @@ pub fn main() !void {
                             term_cols,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchById(out, "status", status_text);
+                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
 
                         try out.flush();
                     },

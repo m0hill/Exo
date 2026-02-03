@@ -1,4 +1,5 @@
 const std = @import("std");
+const style = @import("style.zig");
 
 pub const CursorPos = struct {
     row: usize, // 1-based
@@ -12,6 +13,7 @@ pub const Cell = struct {
     len: u8 = 0,
     width: u2 = 1,
     continuation: bool = false,
+    style: style.PackedStyle = .{},
 
     pub fn isBlank(self: Cell) bool {
         return !self.continuation and self.len == 0;
@@ -79,12 +81,12 @@ pub const Frame = struct {
         return &self.rowSlice(row)[col];
     }
 
-    fn blankCell() Cell {
-        return .{ .len = 0, .width = 1, .continuation = false };
+    fn blankCell(st: style.PackedStyle) Cell {
+        return .{ .len = 0, .width = 1, .continuation = false, .style = st };
     }
 
-    fn continuationCell() Cell {
-        return .{ .len = 0, .width = 0, .continuation = true };
+    fn continuationCell(st: style.PackedStyle) Cell {
+        return .{ .len = 0, .width = 0, .continuation = true, .style = st };
     }
 
     fn breakWideAt(self: *Frame, row: usize, col: usize) void {
@@ -95,22 +97,33 @@ pub const Frame = struct {
         const cell = row_cells[col];
 
         if (cell.continuation) {
-            row_cells[col] = blankCell();
+            row_cells[col] = blankCell(.{});
             if (col > 0) {
                 const left = row_cells[col - 1];
                 if (!left.continuation and left.width == 2) {
-                    row_cells[col - 1] = blankCell();
+                    row_cells[col - 1] = blankCell(.{});
                 }
             }
             return;
         }
 
         if (!cell.continuation and cell.width == 2) {
-            if (col + 1 < cols) row_cells[col + 1] = blankCell();
+            if (col + 1 < cols) row_cells[col + 1] = blankCell(.{});
         }
     }
 
     pub fn putGrapheme(self: *Frame, row: usize, col: usize, bytes: []const u8, width: u2) void {
+        self.putGraphemeStyled(row, col, bytes, width, .{});
+    }
+
+    pub fn putGraphemeStyled(
+        self: *Frame,
+        row: usize,
+        col: usize,
+        bytes: []const u8,
+        width: u2,
+        st: style.PackedStyle,
+    ) void {
         if (row >= @as(usize, self.rows)) return;
         const cols: usize = @as(usize, self.cols);
         if (cols == 0 or col >= cols) return;
@@ -125,22 +138,24 @@ pub const Frame = struct {
 
         var cell: Cell = .{};
         if (bytes.len == 0) {
-            cell = blankCell();
+            cell = blankCell(st);
         } else if (bytes.len > MAX_GRAPHEME_BYTES) {
             cell.len = 1;
             cell.bytes[0] = '?';
             cell.width = 1;
             cell.continuation = false;
+            cell.style = st;
         } else {
             cell.len = @as(u8, @intCast(bytes.len));
             @memcpy(cell.bytes[0..bytes.len], bytes);
             cell.width = width;
             cell.continuation = false;
+            cell.style = st;
         }
         row_cells[col] = cell;
 
         if (width == 2) {
-            row_cells[col + 1] = continuationCell();
+            row_cells[col + 1] = continuationCell(st);
         }
     }
 
@@ -155,7 +170,8 @@ pub const Frame = struct {
             var max: usize = 0;
             var c: usize = cols;
             while (c > 0) : (c -= 1) {
-                if (!row[c - 1].isBlank()) {
+                const cell = row[c - 1];
+                if (!cell.isBlank() or (cell.style.affectsBlank() and !cell.style.isDefault())) {
                     max = c;
                     break;
                 }

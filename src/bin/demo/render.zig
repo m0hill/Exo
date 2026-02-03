@@ -48,11 +48,27 @@ fn writeTextNodeLayout(
     h: ?usize,
     flex: usize,
 ) !void {
+    try writeTextNodeLayoutStyled(writer, id, text, w, h, flex, null);
+}
+
+fn writeTextNodeLayoutStyled(
+    writer: anytype,
+    id: []const u8,
+    text: []const u8,
+    w: ?usize,
+    h: ?usize,
+    flex: usize,
+    style_json: ?[]const u8,
+) !void {
     try writer.writeAll("{\"type\":\"text\",\"id\":");
     try protocol.writeJsonString(writer, id);
     if (w) |vw| try writer.print(",\"w\":{d}", .{vw});
     if (h) |vh| try writer.print(",\"h\":{d}", .{vh});
     if (flex != 0) try writer.print(",\"flex\":{d}", .{flex});
+    if (style_json) |sj| {
+        try writer.writeAll(",\"style\":");
+        try writer.writeAll(sj);
+    }
     try writer.writeAll(",\"text\":");
     try protocol.writeJsonString(writer, text);
     try writer.writeByte('}');
@@ -74,11 +90,32 @@ fn writeInputNodeLayout(
     h: ?usize,
     flex: usize,
 ) !void {
+    try writeInputNodeLayoutStyled(writer, id, placeholder, w, h, flex, null, null);
+}
+
+fn writeInputNodeLayoutStyled(
+    writer: anytype,
+    id: []const u8,
+    placeholder: []const u8,
+    w: ?usize,
+    h: ?usize,
+    flex: usize,
+    style_json: ?[]const u8,
+    placeholder_style_json: ?[]const u8,
+) !void {
     try writer.writeAll("{\"type\":\"input\",\"id\":");
     try protocol.writeJsonString(writer, id);
     if (w) |vw| try writer.print(",\"w\":{d}", .{vw});
     if (h) |vh| try writer.print(",\"h\":{d}", .{vh});
     if (flex != 0) try writer.print(",\"flex\":{d}", .{flex});
+    if (style_json) |sj| {
+        try writer.writeAll(",\"style\":");
+        try writer.writeAll(sj);
+    }
+    if (placeholder_style_json) |sj| {
+        try writer.writeAll(",\"placeholder_style\":");
+        try writer.writeAll(sj);
+    }
     try writer.writeAll(",\"placeholder\":");
     try protocol.writeJsonString(writer, placeholder);
     try writer.writeByte('}');
@@ -108,11 +145,24 @@ pub fn emitListMorphPatch(writer: anytype, list_id: []const u8, items: []const u
 }
 
 pub fn emitTextPatchById(writer: anytype, target: []const u8, text: []const u8) !void {
+    return emitTextPatchByIdStyled(writer, target, text, null);
+}
+
+pub fn emitTextPatchByIdStyled(
+    writer: anytype,
+    target: []const u8,
+    text: []const u8,
+    style_json: ?[]const u8,
+) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":");
     try protocol.writeJsonString(writer, target);
     try writer.writeAll(",\"node\":{\"type\":\"text\",\"id\":");
     try protocol.writeJsonString(writer, target);
     try writer.writeAll(",\"h\":1");
+    if (style_json) |sj| {
+        try writer.writeAll(",\"style\":");
+        try writer.writeAll(sj);
+    }
     try writer.writeAll(",\"text\":");
     try protocol.writeJsonString(writer, text);
     try writer.writeAll("}}\n");
@@ -130,10 +180,21 @@ fn writePanelNode(
 ) !void {
     try writer.writeAll("{\"type\":\"vbox\",\"id\":");
     try protocol.writeJsonString(writer, id);
-    try writer.writeAll(",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
-    try writeTextNodeLayout(writer, title_id, title, null, 1, 0);
+    try writer.writeAll(",\"flex\":1,\"pad\":1,\"clip\":true");
+    try writer.writeAll(",\"style\":{\"bg\":\"#0b1220\",\"fg\":\"#e5e7eb\"}");
+    try writer.writeAll(",\"children\":[");
+    try writeTextNodeLayoutStyled(writer, title_id, title, null, 1, 0, "{\"bold\":true,\"fg\":\"brightwhite\"}");
     try writer.writeByte(',');
-    try writeInputNodeLayout(writer, input_id, "Type here…", null, 1, 0);
+    try writeInputNodeLayoutStyled(
+        writer,
+        input_id,
+        "Type here…",
+        null,
+        1,
+        0,
+        "{\"fg\":\"#f9fafb\"}",
+        "{\"fg\":\"gray\",\"dim\":true}",
+    );
     try writer.writeByte(',');
     try writeListNode(writer, list_id, list_height, items);
     try writer.writeAll("]}");
@@ -149,7 +210,7 @@ fn writeRootNode(
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
-    try writeTextNodeLayout(writer, "title", "Tracer Demo", null, 1, 0);
+    try writeTextNodeLayoutStyled(writer, "title", "Tracer Demo", null, 1, 0, "{\"bold\":true,\"fg\":\"brightwhite\"}");
     try writer.writeByte(',');
     try writeTextNodeLayout(
         writer,
@@ -160,7 +221,7 @@ fn writeRootNode(
         0,
     );
     try writer.writeByte(',');
-    try writeTextNodeLayout(writer, "clock", tick_text, null, 1, 0);
+    try writeTextNodeLayoutStyled(writer, "clock", tick_text, null, 1, 0, "{\"fg\":\"#22c55e\",\"bold\":true}");
     try writer.writeByte(',');
 
     try writer.writeAll("{\"type\":\"hbox\",\"id\":\"body\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
@@ -212,6 +273,6 @@ fn writeRootNode(
     try writer.writeAll("]}");
 
     try writer.writeByte(',');
-    try writeTextNodeLayout(writer, "status", status_text, null, 1, 0);
+    try writeTextNodeLayoutStyled(writer, "status", status_text, null, 1, 0, "{\"fg\":\"#fbbf24\"}");
     try writer.writeAll("]}");
 }

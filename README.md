@@ -108,6 +108,19 @@ Resize (runtime-generated):
 - `input`: `{ "type":"input", "id":"...", "placeholder":"..." }`
 - `list`: `{ "type":"list", "id":"...", "height":3, "children":[ ... ] }`
 
+### Styling
+
+Any node may include an optional `style` object. `input` nodes may also include `placeholder_style`.
+
+```json
+{"type":"text","id":"status","text":"Connected","style":{"fg":"#00FF00","bold":true}}
+```
+
+Runtime selects a color mode automatically (and degrades gracefully). You can force it via:
+
+- `NO_COLOR=1` (disable colors)
+- `TUI_COLOR_MODE=truecolor|256|16|mono`
+
 ### Layout hints (optional)
 
 Any node may include:
