@@ -53,6 +53,43 @@ const VBoxMode = enum {
     unbounded,
 };
 
+fn screenRect(frame: *Frame) RectI {
+    return .{ .x = 0, .y = 0, .w = @as(usize, frame.cols), .h = @as(usize, frame.rows) };
+}
+
+fn alignStartCenterEnd(anchor_start: isize, anchor_len: usize, child_len: usize, align_mode: protocol.OverlayAlign) isize {
+    const a: isize = anchor_start;
+    const aw: isize = @as(isize, @intCast(anchor_len));
+    const cw: isize = @as(isize, @intCast(child_len));
+    return switch (align_mode) {
+        .start => a,
+        .center => a + @divTrunc(aw - cw, 2),
+        .end => a + aw - cw,
+    };
+}
+
+fn clampOverlayOrigin(screen: RectI, x: isize, y: isize, w: usize, h: usize) struct { x: isize, y: isize } {
+    const sx1: isize = screen.x;
+    const sy1: isize = screen.y;
+    const sx2: isize = screen.x + @as(isize, @intCast(screen.w));
+    const sy2: isize = screen.y + @as(isize, @intCast(screen.h));
+
+    const ww: isize = @as(isize, @intCast(w));
+    const hh: isize = @as(isize, @intCast(h));
+
+    const max_x: isize = if (ww >= screen.w) sx1 else sx2 - ww;
+    const max_y: isize = if (hh >= screen.h) sy1 else sy2 - hh;
+
+    var out_x = x;
+    var out_y = y;
+    if (out_x < sx1) out_x = sx1;
+    if (out_x > max_x) out_x = max_x;
+    if (out_y < sy1) out_y = sy1;
+    if (out_y > max_y) out_y = max_y;
+
+    return .{ .x = out_x, .y = out_y };
+}
+
 pub fn renderToFrame(root: protocol.Node, state: RenderState, frame: *Frame) void {
     const root_rect: RectI = .{
         .x = 0,
@@ -97,6 +134,7 @@ fn nodeId(node: protocol.Node) []const u8 {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
         .scroll => |s| s.id,
+        .overlay => |o| o.id,
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
@@ -109,6 +147,7 @@ fn nodeHintW(node: protocol.Node) ?usize {
         .vbox => |v| v.w,
         .hbox => |h| h.w,
         .scroll => |s| s.w,
+        .overlay => |o| o.w,
         .text => |t| t.w,
         .styled_text => |t| t.w,
         .input => |i| i.w,
@@ -121,6 +160,7 @@ fn nodeHintH(node: protocol.Node) ?usize {
         .vbox => |v| v.h,
         .hbox => |h| h.h,
         .scroll => |s| s.h,
+        .overlay => |o| o.h,
         .text => |t| t.h,
         .styled_text => |t| t.h,
         .input => |i| i.h,
@@ -133,6 +173,7 @@ fn nodeFlex(node: protocol.Node) usize {
         .vbox => |v| v.flex,
         .hbox => |h| h.flex,
         .scroll => |s| s.flex,
+        .overlay => |o| o.flex,
         .text => |t| t.flex,
         .styled_text => |t| t.flex,
         .input => |i| i.flex,
@@ -145,6 +186,7 @@ fn nodePad(node: protocol.Node) usize {
         .vbox => |v| v.pad,
         .hbox => |h| h.pad,
         .scroll => |s| s.pad,
+        .overlay => |o| o.pad,
         else => 0,
     };
 }
@@ -154,6 +196,7 @@ fn nodeClip(node: protocol.Node) bool {
         .vbox => |v| v.clip,
         .hbox => |h| h.clip,
         .scroll => |s| s.clip,
+        .overlay => |o| o.clip,
         else => false,
     };
 }
@@ -232,6 +275,10 @@ fn measureHeight(node: protocol.Node, avail_w: usize) usize {
         .scroll => |s| {
             const inner_w: usize = if (avail_w > s.pad * 2) avail_w - s.pad * 2 else 0;
             return measureHeight(s.child.*, inner_w) + s.pad * 2;
+        },
+        .overlay => |o| {
+            const inner_w: usize = if (avail_w > o.pad * 2) avail_w - o.pad * 2 else 0;
+            return measureHeight(o.base.*, inner_w) + o.pad * 2;
         },
         .vbox => |v| {
             const inner_w: usize = if (avail_w > v.pad * 2) avail_w - v.pad * 2 else 0;
@@ -343,6 +390,10 @@ fn findContentYRangeForIdInto(
         .scroll => |s| {
             const inner_w: usize = if (avail_w > s.pad * 2) avail_w - s.pad * 2 else 0;
             return findContentYRangeForIdInto(s.child.*, inner_w, id, y_offset + s.pad, out);
+        },
+        .overlay => |o| {
+            const inner_w: usize = if (avail_w > o.pad * 2) avail_w - o.pad * 2 else 0;
+            return findContentYRangeForIdInto(o.base.*, inner_w, id, y_offset + o.pad, out);
         },
         else => return false,
     }
@@ -558,6 +609,7 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
         .vbox => |v| v.style,
         .hbox => |h| h.style,
         .scroll => |s| s.style,
+        .overlay => |o| o.style,
         .text => |t| t.style,
         .styled_text => |t| t.style,
         .input => |i| i.style,
@@ -888,7 +940,90 @@ fn paintNode(
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved, mode),
         .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h, resolved, mode),
         .scroll => |s| paintScroll(frame, rect, node_clip, state, cursor_out, s, resolved),
+        .overlay => |o| paintOverlay(frame, rect, node_clip, state, cursor_out, o, resolved, mode),
     }
+}
+
+fn paintOverlay(
+    frame: *Frame,
+    rect: RectI,
+    clip: RectI,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+    o: protocol.OverlayNode,
+    inherited: style.Style,
+    mode: VBoxMode,
+) void {
+    const pad = o.pad;
+    const inner = rectDeflate(rect, pad);
+    const base_clip = rectIntersect(clip, rect);
+    const child_clip = if (o.clip) rectIntersect(base_clip, inner) else base_clip;
+
+    paintNode(frame, o.base.*, inner, child_clip, state, cursor_out, inherited, mode);
+
+    const screen = screenRect(frame);
+    for (o.layers) |layer| {
+        const layer_rect = computeOverlayLayerRectForBaseRect(screen, rect, inner, o.base.*, layer, state.scrolls, mode);
+        const layer_clip = screen;
+        paintNode(frame, layer.node.*, layer_rect, layer_clip, state, cursor_out, inherited, .bounded);
+    }
+}
+
+fn computeOverlayLayerRectForBaseRect(
+    screen: RectI,
+    overlay_rect: RectI,
+    base_rect: RectI,
+    base: protocol.Node,
+    layer: protocol.OverlayLayer,
+    scrolls: []const ScrollState,
+    mode: VBoxMode,
+) RectI {
+    const anchor_rect: RectI = blk: {
+        if (layer.anchor) |aid| {
+            if (findRectInNodeIBaseOnly(base, base_rect, aid, scrolls, mode)) |r| break :blk r;
+        }
+        break :blk .{ .x = overlay_rect.x, .y = overlay_rect.y, .w = 0, .h = 0 };
+    };
+
+    const w: usize = layer.w orelse blk: {
+        if (layer.anchor != null and layer.placement != .center) break :blk anchor_rect.w;
+        break :blk overlay_rect.w;
+    };
+    const h: usize = layer.h orelse measureHeight(layer.node.*, w);
+
+    var x: isize = 0;
+    var y: isize = 0;
+
+    switch (layer.placement) {
+        .below => {
+            x = alignStartCenterEnd(anchor_rect.x, anchor_rect.w, w, layer.align_);
+            y = anchor_rect.y + @as(isize, @intCast(anchor_rect.h));
+        },
+        .above => {
+            x = alignStartCenterEnd(anchor_rect.x, anchor_rect.w, w, layer.align_);
+            y = anchor_rect.y - @as(isize, @intCast(h));
+        },
+        .right => {
+            x = anchor_rect.x + @as(isize, @intCast(anchor_rect.w));
+            y = alignStartCenterEnd(anchor_rect.y, anchor_rect.h, h, layer.align_);
+        },
+        .left => {
+            x = anchor_rect.x - @as(isize, @intCast(w));
+            y = alignStartCenterEnd(anchor_rect.y, anchor_rect.h, h, layer.align_);
+        },
+        .center => {
+            const dx: isize = @as(isize, @intCast(if (overlay_rect.w > w) overlay_rect.w - w else 0));
+            const dy: isize = @as(isize, @intCast(if (overlay_rect.h > h) overlay_rect.h - h else 0));
+            x = overlay_rect.x + @divTrunc(dx, 2);
+            y = overlay_rect.y + @divTrunc(dy, 2);
+        },
+    }
+
+    x += layer.offset_x;
+    y += layer.offset_y;
+
+    const clamped = clampOverlayOrigin(screen, x, y, w, h);
+    return .{ .x = clamped.x, .y = clamped.y, .w = w, .h = h };
 }
 
 fn paintScroll(
@@ -984,7 +1119,7 @@ pub fn findRectForIdWithScrolls(
     scrolls: []const ScrollState,
 ) ?Rect {
     const root_rect: RectI = .{ .x = 0, .y = 0, .w = cols, .h = rows };
-    const r = findRectInNodeI(root, root_rect, id, scrolls, .bounded) orelse return null;
+    const r = findRectInNodeI(root, root_rect, id, scrolls, .bounded, root_rect) orelse return null;
     const vis = rectIntersect(root_rect, r);
     if (vis.w == 0 or vis.h == 0) return null;
     if (vis.x < 0 or vis.y < 0) return null;
@@ -997,6 +1132,132 @@ pub fn findRectForIdWithScrolls(
 }
 
 fn findRectInNodeI(
+    node: protocol.Node,
+    rect: RectI,
+    id: []const u8,
+    scrolls: []const ScrollState,
+    mode: VBoxMode,
+    screen: RectI,
+) ?RectI {
+    if (std.mem.eql(u8, nodeId(node), id)) return rect;
+
+    switch (node) {
+        .vbox => |v| {
+            const inner = rectDeflate(rect, v.pad);
+            const y_end: isize = inner.y + @as(isize, @intCast(inner.h));
+
+            var fixed_sum: usize = 0;
+            var total_flex: usize = 0;
+            if (mode == .bounded) {
+                for (v.children) |child| {
+                    if (nodeHintH(child)) |h| {
+                        fixed_sum += h;
+                    } else if (nodeFlex(child) > 0) {
+                        total_flex += nodeFlex(child);
+                    } else {
+                        fixed_sum += measureHeight(child, inner.w);
+                    }
+                }
+            }
+
+            const remaining: usize = if (mode == .bounded and inner.h > fixed_sum) inner.h - fixed_sum else 0;
+
+            var y: isize = inner.y;
+            var carry: u128 = 0;
+
+            for (v.children) |child| {
+                if (y >= y_end) break;
+
+                const child_h: usize = blk: {
+                    if (nodeHintH(child)) |h| break :blk h;
+                    if (mode == .bounded and nodeFlex(child) > 0 and total_flex > 0) {
+                        const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                        const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+                        carry = numer % @as(u128, total_flex);
+                        break :blk share;
+                    }
+                    break :blk measureHeight(child, inner.w);
+                };
+
+                const child_y2: isize = y + @as(isize, @intCast(child_h));
+                const clamped_h: usize = if (child_y2 <= y_end) child_h else if (y_end > y) @as(usize, @intCast(y_end - y)) else 0;
+                if (clamped_h == 0) break;
+
+                const child_rect: RectI = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
+                if (findRectInNodeI(child, child_rect, id, scrolls, mode, screen)) |r| return r;
+                y += @as(isize, @intCast(clamped_h));
+            }
+            return null;
+        },
+        .hbox => |h| {
+            const inner = rectDeflate(rect, h.pad);
+            const x_end: isize = inner.x + @as(isize, @intCast(inner.w));
+
+            var fixed_sum: usize = 0;
+            var total_flex: usize = 0;
+
+            for (h.children) |child| {
+                if (nodeHintW(child)) |w| {
+                    fixed_sum += w;
+                } else if (nodeFlex(child) > 0) {
+                    total_flex += nodeFlex(child);
+                }
+            }
+
+            const remaining: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+
+            var x: isize = inner.x;
+            var carry: u128 = 0;
+
+            for (h.children) |child| {
+                if (x >= x_end) break;
+
+                const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
+                    const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                    const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+                    carry = numer % @as(u128, total_flex);
+                    break :blk share;
+                } else 0;
+
+                const child_x2: isize = x + @as(isize, @intCast(child_w));
+                const clamped_w: usize = if (child_x2 <= x_end) child_w else if (x_end > x) @as(usize, @intCast(x_end - x)) else 0;
+                if (clamped_w == 0) break;
+
+                const child_rect: RectI = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
+                if (findRectInNodeI(child, child_rect, id, scrolls, mode, screen)) |r| return r;
+                x += @as(isize, @intCast(clamped_w));
+            }
+            return null;
+        },
+        .scroll => |s| {
+            const inner = rectDeflate(rect, s.pad);
+            const st = findScrollStateUnsorted(scrolls, s.id);
+            const scroll_y: usize = if (st) |ss| ss.scroll_y else 0;
+            const content_h: usize = if (st) |ss| ss.content_h else measureHeight(s.child.*, inner.w);
+
+            const dy: isize = @as(isize, @intCast(@min(scroll_y, @as(usize, std.math.maxInt(isize)))));
+            const child_rect: RectI = .{
+                .x = inner.x,
+                .y = inner.y - dy,
+                .w = inner.w,
+                .h = content_h,
+            };
+            return findRectInNodeI(s.child.*, child_rect, id, scrolls, .unbounded, screen);
+        },
+        .overlay => |o| {
+            const inner = rectDeflate(rect, o.pad);
+            if (findRectInNodeI(o.base.*, inner, id, scrolls, mode, screen)) |r| return r;
+            for (o.layers) |layer| {
+                const layer_rect = computeOverlayLayerRectForBaseRect(screen, rect, inner, o.base.*, layer, scrolls, mode);
+                if (findRectInNodeI(layer.node.*, layer_rect, id, scrolls, .bounded, screen)) |r| return r;
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
+fn findRectInNodeIBaseOnly(
     node: protocol.Node,
     rect: RectI,
     id: []const u8,
@@ -1048,7 +1309,7 @@ fn findRectInNodeI(
                 if (clamped_h == 0) break;
 
                 const child_rect: RectI = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
-                if (findRectInNodeI(child, child_rect, id, scrolls, mode)) |r| return r;
+                if (findRectInNodeIBaseOnly(child, child_rect, id, scrolls, mode)) |r| return r;
                 y += @as(isize, @intCast(clamped_h));
             }
             return null;
@@ -1088,7 +1349,7 @@ fn findRectInNodeI(
                 if (clamped_w == 0) break;
 
                 const child_rect: RectI = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
-                if (findRectInNodeI(child, child_rect, id, scrolls, mode)) |r| return r;
+                if (findRectInNodeIBaseOnly(child, child_rect, id, scrolls, mode)) |r| return r;
                 x += @as(isize, @intCast(clamped_w));
             }
             return null;
@@ -1106,7 +1367,11 @@ fn findRectInNodeI(
                 .w = inner.w,
                 .h = content_h,
             };
-            return findRectInNodeI(s.child.*, child_rect, id, scrolls, .unbounded);
+            return findRectInNodeIBaseOnly(s.child.*, child_rect, id, scrolls, .unbounded);
+        },
+        .overlay => |o| {
+            const inner = rectDeflate(rect, o.pad);
+            return findRectInNodeIBaseOnly(o.base.*, inner, id, scrolls, mode);
         },
         else => return null,
     }

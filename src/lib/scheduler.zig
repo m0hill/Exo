@@ -331,6 +331,42 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 break :blk child;
             },
         } },
+        .overlay => |o| blk: {
+            const base_node = try cloneNodeLeaky(allocator, o.base.*);
+            const base = try allocator.create(protocol.Node);
+            base.* = base_node;
+
+            var layers = try allocator.alloc(protocol.OverlayLayer, o.layers.len);
+            for (o.layers, 0..) |layer, idx| {
+                const node_node = try cloneNodeLeaky(allocator, layer.node.*);
+                const layer_node = try allocator.create(protocol.Node);
+                layer_node.* = node_node;
+                layers[idx] = .{
+                    .node = layer_node,
+                    .anchor = if (layer.anchor) |a| try allocator.dupe(u8, a) else null,
+                    .placement = layer.placement,
+                    .align_ = layer.align_,
+                    .offset_x = layer.offset_x,
+                    .offset_y = layer.offset_y,
+                    .w = layer.w,
+                    .h = layer.h,
+                    .clip = layer.clip,
+                    .modal = layer.modal,
+                };
+            }
+
+            break :blk .{ .overlay = .{
+                .id = try allocator.dupe(u8, o.id),
+                .w = o.w,
+                .h = o.h,
+                .flex = o.flex,
+                .pad = o.pad,
+                .clip = o.clip,
+                .style = o.style,
+                .base = base,
+                .layers = layers,
+            } };
+        },
         .list => |l| blk: {
             var children = try allocator.alloc(protocol.Node, l.children.len);
             for (l.children, 0..) |child, idx| {

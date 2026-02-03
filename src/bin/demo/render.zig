@@ -22,6 +22,7 @@ pub fn emitInitialFull(
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     list_height: usize,
+    popups: state.PopupInfo,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"root\":");
     try writeRootNode(
@@ -40,6 +41,7 @@ pub fn emitInitialFull(
         lists,
         false,
         list_height,
+        popups,
     );
     try writer.writeAll("}\n");
 }
@@ -60,6 +62,7 @@ pub fn emitRootMorphPatch(
     lists: []const state.ListSlot,
     layout_alt: bool,
     list_height: usize,
+    popups: state.PopupInfo,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
     try writeRootNode(
@@ -78,6 +81,7 @@ pub fn emitRootMorphPatch(
         lists,
         layout_alt,
         list_height,
+        popups,
     );
     try writer.writeAll("}\n");
 }
@@ -350,8 +354,10 @@ fn writeRootNode(
     lists: []const state.ListSlot,
     layout_alt: bool,
     list_height: usize,
+    popups: state.PopupInfo,
 ) !void {
-    try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
+    try writer.writeAll("{\"type\":\"overlay\",\"id\":\"root\",\"base\":");
+    try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root-base\",\"children\":[");
     try writeTextNodeLayoutStyled(writer, "title", "Tracer Demo", null, 1, 0, "{\"bold\":true,\"fg\":\"brightwhite\"}");
     try writer.writeByte(',');
     try writeTextNodeLayout(
@@ -364,6 +370,14 @@ fn writeRootNode(
     );
     try writer.writeByte(',');
     try writeTextNodeLayoutStyled(writer, "clock", tick_text, null, 1, 0, "{\"fg\":\"#22c55e\",\"bold\":true}");
+    try writer.writeByte(',');
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"popups\",\"height\":3,\"children\":[");
+    try writeTextNode(writer, "popup-open-modal", "Popups: open modal");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "popup-open-dropdown", "Popups: open dropdown");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "popup-toggle-tooltip", "Popups: toggle tooltip");
+    try writer.writeAll("]}");
     try writer.writeByte(',');
     const rich_md =
         "Status: **Connected**  (latency `42ms`)  — inline spans wrap across style boundaries when narrow";
@@ -517,5 +531,63 @@ fn writeRootNode(
 
     try writer.writeByte(',');
     try writeTextNodeLayoutStyled(writer, "status", status_text, null, 1, 0, "{\"fg\":\"#fbbf24\"}");
-    try writer.writeAll("]}");
+    try writer.writeAll("]}"); // end base
+
+    try writer.writeAll(",\"layers\":[");
+    var wrote_any: bool = false;
+
+    if (popups.dropdown_open) {
+        wrote_any = true;
+        try writer.writeAll("{\"node\":");
+        try writer.writeAll("{\"type\":\"list\",\"id\":\"dropdown\",\"height\":4,\"children\":[");
+        try writeTextNode(writer, "dropdown-a", "Dropdown: option A");
+        try writer.writeByte(',');
+        try writeTextNode(writer, "dropdown-b", "Dropdown: option B");
+        try writer.writeByte(',');
+        try writeTextNode(writer, "dropdown-c", "Dropdown: option C");
+        try writer.writeByte(',');
+        try writeTextNode(writer, "dropdown-close", "Close dropdown");
+        try writer.writeAll("]}");
+        try writer.writeAll(",\"anchor\":\"query-a\",\"placement\":\"below\",\"align\":\"start\",\"w\":28}");
+    }
+
+    if (popups.tooltip_on) {
+        if (wrote_any) try writer.writeByte(',') else wrote_any = true;
+        const anchor = if (popups.tooltip_anchor.len > 0) popups.tooltip_anchor else "title";
+        var tip_buf: [128]u8 = undefined;
+        const tip_text = try std.fmt.bufPrint(&tip_buf, "Tooltip for: {s}", .{anchor});
+        try writer.writeAll("{\"node\":");
+        try writer.writeAll("{\"type\":\"text\",\"id\":\"tooltip\",\"text\":");
+        try protocol.writeJsonString(writer, tip_text);
+        try writer.writeAll("}");
+        try writer.writeAll(",\"anchor\":");
+        try protocol.writeJsonString(writer, anchor);
+        try writer.writeAll(",\"placement\":\"right\",\"align\":\"center\",\"offset_x\":1,\"w\":26}");
+    }
+
+    if (popups.modal_open) {
+        if (wrote_any) try writer.writeByte(',') else wrote_any = true;
+        try writer.writeAll("{\"node\":");
+        try writer.writeAll("{\"type\":\"vbox\",\"id\":\"modal\",\"pad\":1,\"clip\":true,\"style\":{\"bg\":\"#111827\",\"fg\":\"#e5e7eb\"},\"children\":[");
+        try writeTextNodeLayoutStyled(writer, "modal-title", "Modal dialog (focus is trapped)", null, 1, 0, "{\"bold\":true}");
+        try writer.writeByte(',');
+        try writeInputNodeLayoutStyled(
+            writer,
+            "modal-input",
+            "Type in modal…",
+            null,
+            1,
+            0,
+            "{\"fg\":\"#f9fafb\"}",
+            "{\"fg\":\"gray\",\"dim\":true}",
+        );
+        try writer.writeByte(',');
+        try writer.writeAll("{\"type\":\"list\",\"id\":\"modal-actions\",\"height\":1,\"children\":[");
+        try writeTextNode(writer, "modal-close", "Close modal");
+        try writer.writeAll("]}");
+        try writer.writeAll("]}");
+        try writer.writeAll(",\"placement\":\"center\",\"modal\":true,\"w\":56}");
+    }
+
+    try writer.writeAll("]}"); // end overlay
 }

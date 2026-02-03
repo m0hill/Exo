@@ -6,6 +6,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
         .scroll => |s| s.id,
+        .overlay => |o| o.id,
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
@@ -29,6 +30,13 @@ pub fn treeContainsId(node: protocol.Node, id: []const u8) bool {
             return false;
         },
         .scroll => |s| treeContainsId(s.child.*, id),
+        .overlay => |o| {
+            if (treeContainsId(o.base.*, id)) return true;
+            for (o.layers) |layer| {
+                if (treeContainsId(layer.node.*, id)) return true;
+            }
+            return false;
+        },
         .list => |l| {
             for (l.children) |child| {
                 if (treeContainsId(child, id)) return true;
@@ -59,6 +67,13 @@ pub fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: pro
             return false;
         },
         .scroll => |*s| return applyPatchById(s.child, target, replacement),
+        .overlay => |*o| {
+            if (applyPatchById(o.base, target, replacement)) return true;
+            for (o.layers) |layer| {
+                if (applyPatchById(layer.node, target, replacement)) return true;
+            }
+            return false;
+        },
         .list => |*l| {
             for (l.children) |*child| {
                 if (applyPatchById(child, target, replacement)) return true;
@@ -103,6 +118,13 @@ pub fn morphPatchByIdLeaky(
             return false;
         },
         .scroll => |*s| return try morphPatchByIdLeaky(allocator, s.child, target, incoming, stats),
+        .overlay => |*o| {
+            if (try morphPatchByIdLeaky(allocator, o.base, target, incoming, stats)) return true;
+            for (o.layers) |layer| {
+                if (try morphPatchByIdLeaky(allocator, layer.node, target, incoming, stats)) return true;
+            }
+            return false;
+        },
         .list => |*l| {
             for (l.children) |*child| {
                 if (try morphPatchByIdLeaky(allocator, child, target, incoming, stats)) return true;
@@ -274,6 +296,77 @@ fn morphNodeLeaky(
                 stats.replaced += 1;
                 s.child = inc.child;
             }
+        },
+        .overlay => |*o| {
+            const inc = incoming.overlay;
+            const existing_layers = o.layers;
+
+            o.w = inc.w;
+            o.h = inc.h;
+            o.flex = inc.flex;
+            o.pad = inc.pad;
+            o.clip = inc.clip;
+            o.style = inc.style;
+
+            if (std.meta.activeTag(o.base.*) == std.meta.activeTag(inc.base.*)) {
+                try morphNodeLeaky(allocator, o.base, inc.base.*, stats);
+            } else {
+                stats.type_mismatch += 1;
+                stats.replaced += 1;
+                o.base = inc.base;
+            }
+
+            var used = try allocator.alloc(bool, existing_layers.len);
+            @memset(used, false);
+
+            var next_layers = try allocator.alloc(protocol.OverlayLayer, inc.layers.len);
+            var matched: usize = 0;
+
+            for (inc.layers, 0..) |inc_layer, out_idx| {
+                const inc_id = nodeId(inc_layer.node.*);
+                var found_idx: ?usize = null;
+
+                for (existing_layers, 0..) |ex_layer, ex_idx| {
+                    if (used[ex_idx]) continue;
+                    if (std.mem.eql(u8, nodeId(ex_layer.node.*), inc_id)) {
+                        found_idx = ex_idx;
+                        break;
+                    }
+                }
+
+                if (found_idx) |ex_idx| {
+                    used[ex_idx] = true;
+                    matched += 1;
+
+                    const ex_layer = existing_layers[ex_idx];
+                    if (std.meta.activeTag(ex_layer.node.*) == std.meta.activeTag(inc_layer.node.*)) {
+                        stats.reused += 1;
+                        try morphNodeLeaky(allocator, ex_layer.node, inc_layer.node.*, stats);
+                        next_layers[out_idx] = .{
+                            .node = ex_layer.node,
+                            .anchor = inc_layer.anchor,
+                            .placement = inc_layer.placement,
+                            .align_ = inc_layer.align_,
+                            .offset_x = inc_layer.offset_x,
+                            .offset_y = inc_layer.offset_y,
+                            .w = inc_layer.w,
+                            .h = inc_layer.h,
+                            .clip = inc_layer.clip,
+                            .modal = inc_layer.modal,
+                        };
+                    } else {
+                        stats.type_mismatch += 1;
+                        stats.replaced += 1;
+                        next_layers[out_idx] = inc_layer;
+                    }
+                } else {
+                    stats.inserted += 1;
+                    next_layers[out_idx] = inc_layer;
+                }
+            }
+
+            stats.removed += existing_layers.len - matched;
+            o.layers = next_layers;
         },
         .list => |*l| {
             const inc = incoming.list;

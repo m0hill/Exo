@@ -545,5 +545,38 @@
       "Confirm the status line updates with 'Scroll: md-scroll y=<n>' as you scroll",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 21,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Overlays & Z-axis: add overlay layers (dropdowns/tooltips/modals) that render above normal layout, with anchor-based placement and modal input trapping",
+    "deliverables": [
+      "src/lib/protocol.zig: protocol v0.7 adds `overlay` node with `layers` (anchor/placement/offset/w/h/clip/modal)",
+      "src/lib/render.zig: render overlay base + layered popups with clamped positioning; overlay-aware findRect + content measurement",
+      "src/lib/tree.zig: patch-by-id + morph traverse and morph overlay base/layers",
+      "src/bin/runtime/ui.zig: modal routing (block click-through + trap Tab focus) and topmost hit-testing for layered widgets",
+      "src/bin/demo/render.zig + src/bin/demo/main.zig + src/bin/demo/state.zig: demo popups list + modal/dropdown/tooltip showcase",
+      "src/test/tests.zig: overlay protocol/render/layout/findRect unit tests",
+      "README.md: document protocol v0.7 + `overlay` node"
+    ],
+    "boundaries_hit": [
+      "Absolute-positioned layers anchored to existing node ids (dropdowns/tooltips)",
+      "Z-order rendering (base then layers) and overlay-aware hit-testing",
+      "Modal behavior: block click-through and trap focus within modal subtree",
+      "Overlay support across patch-by-id and morph patches"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "In the Popups list, activate 'Popups: open modal'",
+      "Confirm modal renders above the base layout; Tab cycles focus only within modal controls",
+      "Click behind the modal; confirm it does not change focus/selection",
+      "Activate 'Close modal' in modal-actions to dismiss the modal",
+      "Activate 'Popups: open dropdown' and confirm it appears below query-a",
+      "Activate any dropdown item to close the dropdown",
+      "Activate 'Popups: toggle tooltip' and confirm the tooltip follows focus changes",
+      "Exit with 'x'"
+    ]
   }
 ]

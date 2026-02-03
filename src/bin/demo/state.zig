@@ -19,6 +19,13 @@ pub const ScrollInfo = struct {
     scroll_y: usize,
 };
 
+pub const PopupInfo = struct {
+    modal_open: bool,
+    dropdown_open: bool,
+    tooltip_on: bool,
+    tooltip_anchor: []const u8,
+};
+
 pub fn buildStatusText(
     allocator: std.mem.Allocator,
     buf: *std.ArrayList(u8),
@@ -29,6 +36,7 @@ pub fn buildStatusText(
     term_rows: ?usize,
     term_cols: ?usize,
     scroll: ?ScrollInfo,
+    popups: PopupInfo,
 ) ![]const u8 {
     buf.clearRetainingCapacity();
     const w = buf.writer(allocator);
@@ -39,6 +47,17 @@ pub fn buildStatusText(
     }
     if (focus.len > 0) {
         try w.print(" | Focus: {s}", .{focus});
+    }
+    try w.print(
+        " | Popups: modal={s} dropdown={s} tooltip={s}",
+        .{
+            if (popups.modal_open) "on" else "off",
+            if (popups.dropdown_open) "on" else "off",
+            if (popups.tooltip_on) "on" else "off",
+        },
+    );
+    if (popups.tooltip_on and popups.tooltip_anchor.len > 0) {
+        try w.print("(anchor={s})", .{popups.tooltip_anchor});
     }
     for (inputs) |in| {
         if (in.last_len == 0 and in.last.items.len == 0) continue;

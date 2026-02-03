@@ -200,6 +200,40 @@ test "protocol: parse scroll node + scroll event" {
     }
 }
 
+test "protocol: parse overlay node" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"patch\",\"root\":{\"type\":\"overlay\",\"id\":\"root\",\"base\":{\"type\":\"vbox\",\"id\":\"base\",\"children\":[{\"type\":\"text\",\"id\":\"a\",\"text\":\"A\"}]},\"layers\":[{\"node\":{\"type\":\"text\",\"id\":\"tip\",\"text\":\"T\"},\"anchor\":\"a\",\"placement\":\"below\",\"align\":\"center\",\"offset_x\":1,\"offset_y\":-2,\"w\":10,\"modal\":true}]}}";
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const ov = switch (root) {
+        .overlay => |o| o,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("root", ov.id);
+    try std.testing.expectEqualStrings("base", ov.base.*.vbox.id);
+    try std.testing.expectEqual(@as(usize, 1), ov.layers.len);
+
+    const layer = ov.layers[0];
+    try std.testing.expectEqualStrings("a", layer.anchor orelse "");
+    try std.testing.expectEqual(protocol.OverlayPlacement.below, layer.placement);
+    try std.testing.expectEqual(protocol.OverlayAlign.center, layer.align_);
+    try std.testing.expectEqual(@as(isize, 1), layer.offset_x);
+    try std.testing.expectEqual(@as(isize, -2), layer.offset_y);
+    try std.testing.expectEqual(@as(?usize, 10), layer.w);
+    try std.testing.expect(layer.modal);
+}
+
 test "render: scroll viewport shifts visible content" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
@@ -227,6 +261,73 @@ test "render: scroll viewport shifts visible content" {
     }, &frame);
     try std.testing.expectEqual(@as(u8, 'C'), cellByte(&frame, 0, 0));
     try std.testing.expectEqual(@as(u8, 'D'), cellByte(&frame, 1, 0));
+}
+
+test "render: overlay paints above base" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 1);
+    frame.clear(' ');
+
+    var base_children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .text = "A" } },
+    };
+    var base = protocol.Node{ .vbox = .{ .id = "base", .children = base_children[0..] } };
+
+    var layer_node = protocol.Node{ .text = .{ .id = "b", .text = "B" } };
+    var layers = [_]protocol.OverlayLayer{
+        .{ .node = &layer_node, .placement = .center, .w = 1 },
+    };
+    const root = protocol.Node{ .overlay = .{ .id = "root", .base = &base, .layers = layers[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+    try std.testing.expectEqual(@as(u8, 'B'), cellByte(&frame, 0, 0));
+}
+
+test "layout: overlay layers do not affect base layout height" {
+    var base_children = [_]protocol.Node{
+        .{ .text = .{ .id = "base-text", .text = "A" } },
+    };
+    var base = protocol.Node{ .vbox = .{ .id = "base", .children = base_children[0..] } };
+
+    var layer_children = [_]protocol.Node{
+        .{ .text = .{ .id = "l1", .text = "L1" } },
+        .{ .text = .{ .id = "l2", .text = "L2" } },
+        .{ .text = .{ .id = "l3", .text = "L3" } },
+    };
+    var layer_node = protocol.Node{ .vbox = .{ .id = "layer", .children = layer_children[0..] } };
+    var layers = [_]protocol.OverlayLayer{
+        .{ .node = &layer_node, .placement = .center, .w = 10 },
+    };
+    const ov = protocol.Node{ .overlay = .{ .id = "ov", .base = &base, .layers = layers[0..] } };
+
+    var root_children = [_]protocol.Node{
+        ov,
+        .{ .text = .{ .id = "below", .text = "X" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = root_children[0..] } };
+
+    const r = render.findRectForId(root, 10, 10, "below") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), r.y);
+}
+
+test "render.findRectForId: overlay anchored below computes expected rect" {
+    var base_children = [_]protocol.Node{
+        .{ .text = .{ .id = "anchor", .text = "A" } },
+    };
+    var base = protocol.Node{ .vbox = .{ .id = "base", .children = base_children[0..] } };
+
+    var layer_node = protocol.Node{ .text = .{ .id = "layer", .text = "B" } };
+    var layers = [_]protocol.OverlayLayer{
+        .{ .node = &layer_node, .anchor = "anchor", .placement = .below, .w = 4 },
+    };
+    const root = protocol.Node{ .overlay = .{ .id = "root", .base = &base, .layers = layers[0..] } };
+
+    const r = render.findRectForId(root, 5, 10, "layer") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 0), r.x);
+    try std.testing.expectEqual(@as(usize, 1), r.y);
+    try std.testing.expectEqual(@as(usize, 4), r.w);
+    try std.testing.expectEqual(@as(usize, 1), r.h);
 }
 
 test "render: cursor respects scroll_y for focused input" {

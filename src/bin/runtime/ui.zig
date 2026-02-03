@@ -173,6 +173,42 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 break :blk child;
             },
         } },
+        .overlay => |o| blk: {
+            const base_node = try cloneNodeLeaky(allocator, o.base.*);
+            const base = try allocator.create(protocol.Node);
+            base.* = base_node;
+
+            var layers = try allocator.alloc(protocol.OverlayLayer, o.layers.len);
+            for (o.layers, 0..) |layer, idx| {
+                const node_node = try cloneNodeLeaky(allocator, layer.node.*);
+                const layer_node = try allocator.create(protocol.Node);
+                layer_node.* = node_node;
+                layers[idx] = .{
+                    .node = layer_node,
+                    .anchor = if (layer.anchor) |a| try allocator.dupe(u8, a) else null,
+                    .placement = layer.placement,
+                    .align_ = layer.align_,
+                    .offset_x = layer.offset_x,
+                    .offset_y = layer.offset_y,
+                    .w = layer.w,
+                    .h = layer.h,
+                    .clip = layer.clip,
+                    .modal = layer.modal,
+                };
+            }
+
+            break :blk .{ .overlay = .{
+                .id = try allocator.dupe(u8, o.id),
+                .w = o.w,
+                .h = o.h,
+                .flex = o.flex,
+                .pad = o.pad,
+                .clip = o.clip,
+                .style = o.style,
+                .base = base,
+                .layers = layers,
+            } };
+        },
         .list => |l| blk: {
             var children = try allocator.alloc(protocol.Node, l.children.len);
             for (l.children, 0..) |child, idx| {
@@ -196,6 +232,7 @@ fn nodeId(node: protocol.Node) []const u8 {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
         .scroll => |s| s.id,
+        .overlay => |o| o.id,
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
@@ -338,6 +375,12 @@ fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focus
             try collectFocusablesInto(allocator, out, s.child.*);
             try out.append(allocator, .{ .id = s.id, .kind = .scroll });
         },
+        .overlay => |o| {
+            try collectFocusablesInto(allocator, out, o.base.*);
+            for (o.layers) |layer| {
+                try collectFocusablesInto(allocator, out, layer.node.*);
+            }
+        },
         .vbox => |v| {
             for (v.children) |child| try collectFocusablesInto(allocator, out, child);
         },
@@ -349,7 +392,112 @@ fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focus
     }
 }
 
+fn treeContainsId(node: protocol.Node, id: []const u8) bool {
+    if (std.mem.eql(u8, nodeId(node), id)) return true;
+    return switch (node) {
+        .vbox => |v| blk: {
+            for (v.children) |child| {
+                if (treeContainsId(child, id)) break :blk true;
+            }
+            break :blk false;
+        },
+        .hbox => |h| blk: {
+            for (h.children) |child| {
+                if (treeContainsId(child, id)) break :blk true;
+            }
+            break :blk false;
+        },
+        .scroll => |s| treeContainsId(s.child.*, id),
+        .overlay => |o| blk: {
+            if (treeContainsId(o.base.*, id)) break :blk true;
+            for (o.layers) |layer| {
+                if (treeContainsId(layer.node.*, id)) break :blk true;
+            }
+            break :blk false;
+        },
+        .list => |l| blk: {
+            for (l.children) |child| {
+                if (treeContainsId(child, id)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn findTopmostModalLayer(root: protocol.Node) ?*const protocol.Node {
+    var out: ?*const protocol.Node = null;
+    findTopmostModalLayerInto(root, &out);
+    return out;
+}
+
+fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) void {
+    switch (node) {
+        .overlay => |o| {
+            findTopmostModalLayerInto(o.base.*, out);
+            for (o.layers) |layer| {
+                if (layer.modal) out.* = layer.node;
+                findTopmostModalLayerInto(layer.node.*, out);
+            }
+        },
+        .vbox => |v| for (v.children) |child| findTopmostModalLayerInto(child, out),
+        .hbox => |h| for (h.children) |child| findTopmostModalLayerInto(child, out),
+        .scroll => |s| findTopmostModalLayerInto(s.child.*, out),
+        .list => |l| for (l.children) |child| findTopmostModalLayerInto(child, out),
+        else => {},
+    }
+}
+
+fn collectHitTestables(allocator: std.mem.Allocator, root: protocol.Node) !std.ArrayList([]const u8) {
+    var out: std.ArrayList([]const u8) = .empty;
+    errdefer out.deinit(allocator);
+    try collectHitTestablesInto(allocator, &out, root);
+    return out;
+}
+
+fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]const u8), node: protocol.Node) !void {
+    switch (node) {
+        .input => |i| try out.append(allocator, i.id),
+        .list => |l| try out.append(allocator, l.id),
+        .scroll => |s| {
+            // Put scroll before its children so leaf focusables win when hit-testing "topmost".
+            try out.append(allocator, s.id);
+            try collectHitTestablesInto(allocator, out, s.child.*);
+        },
+        .overlay => |o| {
+            try collectHitTestablesInto(allocator, out, o.base.*);
+            for (o.layers) |layer| {
+                try collectHitTestablesInto(allocator, out, layer.node.*);
+            }
+        },
+        .vbox => |v| for (v.children) |child| try collectHitTestablesInto(allocator, out, child),
+        .hbox => |h| for (h.children) |child| try collectHitTestablesInto(allocator, out, child),
+        else => {},
+    }
+}
+
 pub fn cycleFocusInTree(allocator: std.mem.Allocator, root: protocol.Node, current: ?[]const u8) !?[]const u8 {
+    if (findTopmostModalLayer(root)) |modal_ptr| {
+        var modal_focusables = try collectFocusables(allocator, modal_ptr.*);
+        defer modal_focusables.deinit(allocator);
+
+        if (modal_focusables.items.len == 0) return null;
+        if (current == null) return modal_focusables.items[0].id;
+
+        var current_idx: ?usize = null;
+        for (modal_focusables.items, 0..) |f, idx| {
+            if (std.mem.eql(u8, f.id, current.?)) {
+                current_idx = idx;
+                break;
+            }
+        }
+
+        if (current_idx == null) return modal_focusables.items[0].id;
+        const idx = current_idx.?;
+        if (idx + 1 < modal_focusables.items.len) return modal_focusables.items[idx + 1].id;
+        return modal_focusables.items[0].id;
+    }
+
     var focusables = try collectFocusables(allocator, root);
     defer focusables.deinit(allocator);
 
@@ -415,19 +563,40 @@ pub fn syncUiAfterPatch(
     pruneWidgetsNotInFocusables(allocator, widgets, focusables.items);
     try ensureWidgetsForFocusables(allocator, widgets, focusables.items);
 
-    if (focused_id.* == null) {
-        if (!auto_focus_done.* and focusables.items.len > 0) {
-            try setFocusId(allocator, focused_id_buf, focused_id, focusables.items[0].id);
-            auto_focus_done.* = true;
-            log.logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
-            try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
+    if (findTopmostModalLayer(root)) |modal_ptr| {
+        var modal_focusables = try collectFocusables(allocator, modal_ptr.*);
+        defer modal_focusables.deinit(allocator);
+
+        if (modal_focusables.items.len > 0) {
+            const fid = focused_id.* orelse "";
+            const in_modal = focused_id.* != null and treeContainsId(modal_ptr.*, focused_id.*.?);
+            if (!in_modal) {
+                try setFocusId(allocator, focused_id_buf, focused_id, modal_focusables.items[0].id);
+                auto_focus_done.* = true;
+                log.logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
+                try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
+            } else if (focused_id.* != null and !focusablesContainsId(modal_focusables.items, fid)) {
+                try setFocusId(allocator, focused_id_buf, focused_id, modal_focusables.items[0].id);
+                auto_focus_done.* = true;
+                log.logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
+                try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
+            }
         }
     } else {
-        if (!focusablesContainsId(focusables.items, focused_id.*.?)) {
-            const next = if (focusables.items.len > 0) focusables.items[0].id else null;
-            try setFocusId(allocator, focused_id_buf, focused_id, next);
-            log.logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
-            try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
+        if (focused_id.* == null) {
+            if (!auto_focus_done.* and focusables.items.len > 0) {
+                try setFocusId(allocator, focused_id_buf, focused_id, focusables.items[0].id);
+                auto_focus_done.* = true;
+                log.logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
+                try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
+            }
+        } else {
+            if (!focusablesContainsId(focusables.items, focused_id.*.?)) {
+                const next = if (focusables.items.len > 0) focusables.items[0].id else null;
+                try setFocusId(allocator, focused_id_buf, focused_id, next);
+                log.logPrint(log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id.* orelse ""});
+                try protocol.writeFocusEventJsonl(backend_in, focused_id.* orelse "");
+            }
         }
     }
 
@@ -560,20 +729,23 @@ fn handleMouseDownLeft(
     var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
     defer scroll_states.deinit(allocator);
 
-    var hit_idx: ?usize = null;
+    const hit_root: protocol.Node = if (findTopmostModalLayer(root)) |modal_ptr| modal_ptr.* else root;
+    var ids = try collectHitTestables(allocator, hit_root);
+    defer ids.deinit(allocator);
+
+    var hit_id: ?[]const u8 = null;
     var hit_rect: render.Rect = undefined;
 
-    for (widgets.items, 0..) |w, idx| {
-        const r = render.findRectForIdWithScrolls(root, rows, cols, w.id.items, scroll_states.items) orelse continue;
+    for (ids.items) |id| {
+        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states.items) orelse continue;
         if (rectContains(r, x, y)) {
-            hit_idx = idx;
+            hit_id = id;
             hit_rect = r;
-            break;
         }
     }
 
-    const idx = hit_idx orelse return false;
-    const id = widgets.items[idx].id.items;
+    const id = hit_id orelse return false;
+    const idx = findWidgetIndex(widgets.items, id) orelse return false;
 
     var changed: bool = false;
     var need_flush: bool = false;
@@ -675,21 +847,32 @@ fn handleMouseWheel(
     var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
     defer scroll_states.deinit(allocator);
 
+    const hit_root: protocol.Node = if (findTopmostModalLayer(root)) |modal_ptr| modal_ptr.* else root;
+    var ids = try collectHitTestables(allocator, hit_root);
+    defer ids.deinit(allocator);
+
     // Wheel priority:
-    // 1) Lists (local scroll)
-    // 2) Deepest scroll viewport under pointer
-    for (widgets.items) |*w| {
-        if (w.state != .list) continue;
-        const list_id = w.id.items;
+    // 1) Topmost list under pointer (local scroll)
+    // 2) Topmost/deepest scroll viewport under pointer
+    var list_hit: ?[]const u8 = null;
+    var list_hit_rect: render.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    for (ids.items) |id| {
+        const widx = findWidgetIndex(widgets.items, id) orelse continue;
+        if (widgets.items[widx].state != .list) continue;
 
-        const r = render.findRectForIdWithScrolls(root, rows, cols, list_id, scroll_states.items) orelse continue;
+        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states.items) orelse continue;
         if (!rectContains(r, x, y)) continue;
+        list_hit = id;
+        list_hit_rect = r;
+    }
 
+    if (list_hit) |list_id| {
+        const widx = findWidgetIndex(widgets.items, list_id) orelse return false;
         const l = findListNodeById(root, list_id) orelse return false;
-        const visible_height = listVisibleHeight(r, l);
+        const visible_height = listVisibleHeight(list_hit_rect, l);
         if (visible_height == 0) return false;
 
-        const stw = &w.state.list;
+        const stw = &widgets.items[widx].state.list;
         const max_scroll: usize = if (l.children.len > visible_height) l.children.len - visible_height else 0;
 
         var next: usize = stw.scroll;
@@ -710,13 +893,17 @@ fn handleMouseWheel(
     const dir: isize = if (delta > 0) 1 else if (delta < 0) -1 else 0;
     if (dir == 0) return false;
 
-    for (widgets.items) |*w| {
-        if (w.state != .scroll) continue;
-        const scroll_id = w.id.items;
+    var scroll_hit: ?[]const u8 = null;
+    for (ids.items) |id| {
+        const widx = findWidgetIndex(widgets.items, id) orelse continue;
+        if (widgets.items[widx].state != .scroll) continue;
 
-        const r = render.findRectForIdWithScrolls(root, rows, cols, scroll_id, scroll_states.items) orelse continue;
+        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states.items) orelse continue;
         if (!rectContains(r, x, y)) continue;
+        scroll_hit = id;
+    }
 
+    if (scroll_hit) |scroll_id| {
         return try scrollViewportById(
             allocator,
             log_sink,
@@ -843,6 +1030,13 @@ fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
             break :blk null;
         },
         .scroll => |s| return findListNodeById(s.child.*, id),
+        .overlay => |o| blk: {
+            if (findListNodeById(o.base.*, id)) |l| break :blk l;
+            for (o.layers) |layer| {
+                if (findListNodeById(layer.node.*, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
         .list => |l| blk: {
             for (l.children) |child| {
                 if (findListNodeById(child, id)) |ll| break :blk ll;
@@ -875,6 +1069,13 @@ fn findScrollNodeById(root: protocol.Node, id: []const u8) ?protocol.ScrollNode 
             break :blk null;
         },
         .scroll => |s| return findScrollNodeById(s.child.*, id),
+        .overlay => |o| blk: {
+            if (findScrollNodeById(o.base.*, id)) |s| break :blk s;
+            for (o.layers) |layer| {
+                if (findScrollNodeById(layer.node.*, id)) |s| break :blk s;
+            }
+            break :blk null;
+        },
         .list => |l| blk: {
             for (l.children) |child| {
                 if (findScrollNodeById(child, id)) |s| break :blk s;
@@ -1004,6 +1205,13 @@ fn findNearestScrollAncestorInto(node: protocol.Node, target_id: []const u8, out
             if (findNearestScrollAncestorInto(s.child.*, target_id, out)) {
                 if (out.* == null) out.* = s.id;
                 return true;
+            }
+            return false;
+        },
+        .overlay => |o| {
+            if (findNearestScrollAncestorInto(o.base.*, target_id, out)) return true;
+            for (o.layers) |layer| {
+                if (findNearestScrollAncestorInto(layer.node.*, target_id, out)) return true;
             }
             return false;
         },
