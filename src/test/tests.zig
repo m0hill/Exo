@@ -325,6 +325,140 @@ test "markdown: ids are stable under append (streaming approach #1)" {
     try std.testing.expectEqualStrings("md-p-0", para_b.id);
 }
 
+test "markdown: streamblocks final matches full compile (tracer 19A)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const doc =
+        "# Heading\n" ++
+        "\n" ++
+        "- item\n" ++
+        "> quote\n" ++
+        "para\n" ++
+        "line2\n" ++
+        "\n" ++
+        "tail";
+
+    var stream = markdown.StreamBlocks.init(
+        std.testing.allocator,
+        .{ .id = "md", .id_prefix = "md", .pretty_prefixes = false, .own_text = false },
+        .{},
+        .plain,
+    );
+    defer stream.deinit();
+
+    var i: usize = 0;
+    while (i < doc.len) {
+        const step: usize = @min(@as(usize, 7), doc.len - i);
+        _ = try stream.push(doc[i .. i + step]);
+        i += step;
+    }
+    _ = try stream.finish();
+
+    const streamed = try stream.snapshotLeaky(arena.allocator());
+    const full = try markdown.compileLeaky(
+        arena.allocator(),
+        doc,
+        .{ .id = "md", .id_prefix = "md", .pretty_prefixes = false, .own_text = false },
+    );
+
+    var a: std.ArrayList(u8) = .empty;
+    defer a.deinit(std.testing.allocator);
+    var b: std.ArrayList(u8) = .empty;
+    defer b.deinit(std.testing.allocator);
+    try protocol.writeNodeJson(a.writer(std.testing.allocator), streamed);
+    try protocol.writeNodeJson(b.writer(std.testing.allocator), full);
+    try std.testing.expectEqualStrings(b.items, a.items);
+}
+
+test "markdown: streaminline tail styles appear when delimiters close (tracer 19B)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var stream = markdown.StreamInline.init(
+        std.testing.allocator,
+        .{ .id = "md", .id_prefix = "md", .pretty_prefixes = false, .own_text = false },
+        .{},
+    );
+    defer stream.deinit();
+
+    _ = try stream.push("**bo");
+    {
+        const snap = try stream.snapshotLeaky(arena.allocator());
+        const v = switch (snap) {
+            .vbox => |vv| vv,
+            else => return error.TestUnexpectedResult,
+        };
+        try std.testing.expectEqual(@as(usize, 1), v.children.len);
+        const t = switch (v.children[0]) {
+            .styled_text => |st| st,
+            else => return error.TestUnexpectedResult,
+        };
+        try std.testing.expectEqual(@as(usize, 1), t.spans.len);
+        try std.testing.expectEqualStrings("**bo", t.spans[0].text);
+        try std.testing.expect(t.spans[0].style == null);
+    }
+
+    _ = try stream.push("ld**");
+    {
+        const snap = try stream.snapshotLeaky(arena.allocator());
+        const v = switch (snap) {
+            .vbox => |vv| vv,
+            else => return error.TestUnexpectedResult,
+        };
+        const t = switch (v.children[0]) {
+            .styled_text => |st| st,
+            else => return error.TestUnexpectedResult,
+        };
+        try std.testing.expectEqual(@as(usize, 1), t.spans.len);
+        try std.testing.expectEqualStrings("bold", t.spans[0].text);
+        const st = t.spans[0].style orelse return error.TestUnexpectedResult;
+        try std.testing.expect((st.attrs_set & style.ATTR_BOLD) != 0);
+        try std.testing.expect((st.attrs_values & style.ATTR_BOLD) != 0);
+    }
+
+    stream.reset();
+    _ = try stream.push("`co");
+    _ = try stream.push("de");
+    _ = try stream.push("`");
+    {
+        const snap = try stream.snapshotLeaky(arena.allocator());
+        const v = switch (snap) {
+            .vbox => |vv| vv,
+            else => return error.TestUnexpectedResult,
+        };
+        const t = switch (v.children[0]) {
+            .styled_text => |st| st,
+            else => return error.TestUnexpectedResult,
+        };
+        try std.testing.expectEqual(@as(usize, 1), t.spans.len);
+        try std.testing.expectEqualStrings("code", t.spans[0].text);
+        try std.testing.expect(t.spans[0].style != null);
+    }
+
+    stream.reset();
+    _ = try stream.push("**bold *it");
+    _ = try stream.push("alic* bold**");
+    {
+        const snap = try stream.snapshotLeaky(arena.allocator());
+        const v = switch (snap) {
+            .vbox => |vv| vv,
+            else => return error.TestUnexpectedResult,
+        };
+        const t = switch (v.children[0]) {
+            .styled_text => |st| st,
+            else => return error.TestUnexpectedResult,
+        };
+        try std.testing.expect(t.spans.len >= 3);
+        try std.testing.expectEqualStrings("bold ", t.spans[0].text);
+        try std.testing.expectEqualStrings("italic", t.spans[1].text);
+        try std.testing.expectEqualStrings(" bold", t.spans[t.spans.len - 1].text);
+        const italic_style = t.spans[1].style orelse return error.TestUnexpectedResult;
+        try std.testing.expect((italic_style.attrs_set & style.ATTR_ITALIC) != 0);
+        try std.testing.expect((italic_style.attrs_values & style.ATTR_ITALIC) != 0);
+    }
+}
+
 test "markdown: blocks compile to vbox + hbox prefixes" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

@@ -12,13 +12,35 @@ pub fn emitInitialFull(
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
-    md_stream_text: []const u8,
+    md_stream_node: protocol.Node,
+    md_stream_title: []const u8,
+    md_stream_hint: []const u8,
+    md_speed_faster_label: []const u8,
+    md_speed_slower_label: []const u8,
+    md_speed_chunk_smaller_label: []const u8,
+    md_speed_chunk_larger_label: []const u8,
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"root\":");
-    try writeRootNode(allocator, writer, tick_text, status_text, md_stream_text, inputs, lists, false, list_height);
+    try writeRootNode(
+        allocator,
+        writer,
+        tick_text,
+        status_text,
+        md_stream_node,
+        md_stream_title,
+        md_stream_hint,
+        md_speed_faster_label,
+        md_speed_slower_label,
+        md_speed_chunk_smaller_label,
+        md_speed_chunk_larger_label,
+        inputs,
+        lists,
+        false,
+        list_height,
+    );
     try writer.writeAll("}\n");
 }
 
@@ -27,14 +49,36 @@ pub fn emitRootMorphPatch(
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
-    md_stream_text: []const u8,
+    md_stream_node: protocol.Node,
+    md_stream_title: []const u8,
+    md_stream_hint: []const u8,
+    md_speed_faster_label: []const u8,
+    md_speed_slower_label: []const u8,
+    md_speed_chunk_smaller_label: []const u8,
+    md_speed_chunk_larger_label: []const u8,
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     layout_alt: bool,
     list_height: usize,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
-    try writeRootNode(allocator, writer, tick_text, status_text, md_stream_text, inputs, lists, layout_alt, list_height);
+    try writeRootNode(
+        allocator,
+        writer,
+        tick_text,
+        status_text,
+        md_stream_node,
+        md_stream_title,
+        md_stream_hint,
+        md_speed_faster_label,
+        md_speed_slower_label,
+        md_speed_chunk_smaller_label,
+        md_speed_chunk_larger_label,
+        inputs,
+        lists,
+        layout_alt,
+        list_height,
+    );
     try writer.writeAll("}\n");
 }
 
@@ -218,6 +262,22 @@ pub fn emitMarkdownMorphPatch(
     try writer.writeAll("}\n");
 }
 
+pub fn emitNodeMorphPatch(writer: anytype, target: []const u8, node: protocol.Node) !void {
+    try writer.writeAll("{\"type\":\"patch\",\"target\":");
+    try protocol.writeJsonString(writer, target);
+    try writer.writeAll(",\"mode\":\"morph\",\"node\":");
+    try protocol.writeNodeJson(writer, node);
+    try writer.writeAll("}\n");
+}
+
+pub fn emitNodePatchById(writer: anytype, target: []const u8, node: protocol.Node) !void {
+    try writer.writeAll("{\"type\":\"patch\",\"target\":");
+    try protocol.writeJsonString(writer, target);
+    try writer.writeAll(",\"node\":");
+    try protocol.writeNodeJson(writer, node);
+    try writer.writeAll("}\n");
+}
+
 pub fn emitTextPatchById(writer: anytype, target: []const u8, text: []const u8) !void {
     return emitTextPatchByIdStyled(writer, target, text, null);
 }
@@ -279,7 +339,13 @@ fn writeRootNode(
     writer: anytype,
     tick_text: []const u8,
     status_text: []const u8,
-    md_stream_text: []const u8,
+    md_stream_node: protocol.Node,
+    md_stream_title: []const u8,
+    md_stream_hint: []const u8,
+    md_speed_faster_label: []const u8,
+    md_speed_slower_label: []const u8,
+    md_speed_chunk_smaller_label: []const u8,
+    md_speed_chunk_larger_label: []const u8,
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     layout_alt: bool,
@@ -337,12 +403,12 @@ fn writeRootNode(
     // Placeholder container for Tracer 18 (backend-streamed markdown).
     // Use flex so the streaming output gets real vertical space.
     try writer.writeAll("{\"type\":\"vbox\",\"id\":\"md-stream-wrap\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
-    try writeTextNodeLayoutStyled(writer, "md-stream-title", "Streaming Markdown (Tracer 18)", null, 1, 0, "{\"bold\":true}");
+    try writeTextNodeLayoutStyled(writer, "md-stream-title", md_stream_title, null, 1, 0, "{\"bold\":true}");
     try writer.writeByte(',');
     try writeTextNodeLayout(
         writer,
         "md-stream-hint",
-        "Type markdown into the prompt input, then start.\nClick an action in md-actions (click selected row to activate), or Tab to md-actions and press Enter.",
+        md_stream_hint,
         null,
         1,
         0,
@@ -367,19 +433,35 @@ fn writeRootNode(
     try writeTextNode(writer, "md-actions-reset", "Reset");
     try writer.writeAll("]}");
     try writer.writeByte(',');
-    var md_stream_node = try markdown.compileLeaky(
-        allocator,
-        md_stream_text,
-        .{ .id = "md-stream", .id_prefix = "md-stream", .own_text = false },
-    );
-    switch (md_stream_node) {
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-mode\",\"height\":3,\"children\":[");
+    try writeTextNode(writer, "md-mode-18", "Mode: Tracer 18 (full recompile)");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "md-mode-19a", "Mode: Tracer 19A (finalize blocks)");
+    try writer.writeByte(',');
+    try writeTextNode(writer, "md-mode-19b", "Mode: Tracer 19B (inline tail)");
+    try writer.writeAll("]}");
+    try writer.writeByte(',');
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-speed\",\"height\":4,\"children\":[");
+    try writeTextNode(writer, "md-speed-faster", md_speed_faster_label);
+    try writer.writeByte(',');
+    try writeTextNode(writer, "md-speed-slower", md_speed_slower_label);
+    try writer.writeByte(',');
+    try writeTextNode(writer, "md-speed-chunk-smaller", md_speed_chunk_smaller_label);
+    try writer.writeByte(',');
+    try writeTextNode(writer, "md-speed-chunk-larger", md_speed_chunk_larger_label);
+    try writer.writeAll("]}");
+    try writer.writeByte(',');
+
+    // Streaming subtree is owned by the backend, and is also patched independently.
+    var md_stream_node_local = md_stream_node;
+    switch (md_stream_node_local) {
         .vbox => |*v| {
             v.flex = 1;
             v.clip = true;
         },
         else => {},
     }
-    try protocol.writeNodeJson(writer, md_stream_node);
+    try protocol.writeNodeJson(writer, md_stream_node_local);
     try writer.writeAll("]}");
     try writer.writeByte(',');
 

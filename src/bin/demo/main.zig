@@ -3,6 +3,7 @@ const std = @import("std");
 const tui = @import("tui");
 const jsonl = tui.jsonl;
 const protocol = tui.protocol;
+const markdown = tui.markdown;
 
 const args_mod = @import("args.zig");
 const render = @import("render.zig");
@@ -14,6 +15,66 @@ const MD_ACTIONS_ID: []const u8 = "md-actions";
 const MD_ACTION_START: []const u8 = "md-actions-start";
 const MD_ACTION_PAUSE: []const u8 = "md-actions-pause";
 const MD_ACTION_RESET: []const u8 = "md-actions-reset";
+const MD_MODE_ID: []const u8 = "md-mode";
+const MD_MODE_18: []const u8 = "md-mode-18";
+const MD_MODE_19A: []const u8 = "md-mode-19a";
+const MD_MODE_19B: []const u8 = "md-mode-19b";
+const MD_SPEED_ID: []const u8 = "md-speed";
+const MD_SPEED_FASTER: []const u8 = "md-speed-faster";
+const MD_SPEED_SLOWER: []const u8 = "md-speed-slower";
+const MD_SPEED_CHUNK_SMALLER: []const u8 = "md-speed-chunk-smaller";
+const MD_SPEED_CHUNK_LARGER: []const u8 = "md-speed-chunk-larger";
+
+const MdMode = enum { tracer18, tracer19a, tracer19b };
+
+fn modeName(mode: MdMode) []const u8 {
+    return switch (mode) {
+        .tracer18 => "Tracer 18 (full recompile)",
+        .tracer19a => "Tracer 19A (finalize blocks)",
+        .tracer19b => "Tracer 19B (inline tail)",
+    };
+}
+
+fn mdStreamTitle(buf: []u8, mode: MdMode) ![]const u8 {
+    return std.fmt.bufPrint(buf, "Streaming Markdown — {s}", .{modeName(mode)});
+}
+
+fn mdStreamHint(buf: []u8, mode: MdMode, tick_every: usize, chunk_len: usize) ![]const u8 {
+    return std.fmt.bufPrint(
+        buf,
+        "Type markdown into the prompt input, then start.\n" ++
+            "md-actions: click/Enter. md-mode switches strategies (resets). md-speed adjusts cadence.\n" ++
+            "Current: mode={s} cadence=every {d} ticks chunk={d} bytes",
+        .{ modeName(mode), tick_every, chunk_len },
+    );
+}
+
+fn mdSpeedFasterLabel(buf: []u8, tick_every: usize) ![]const u8 {
+    return std.fmt.bufPrint(buf, "Cadence: faster (currently every {d} ticks)", .{tick_every});
+}
+
+fn mdSpeedSlowerLabel(buf: []u8, tick_every: usize) ![]const u8 {
+    return std.fmt.bufPrint(buf, "Cadence: slower (currently every {d} ticks)", .{tick_every});
+}
+
+fn mdChunkSmallerLabel(buf: []u8, chunk_len: usize) ![]const u8 {
+    return std.fmt.bufPrint(buf, "Chunk: smaller (currently {d} bytes)", .{chunk_len});
+}
+
+fn mdChunkLargerLabel(buf: []u8, chunk_len: usize) ![]const u8 {
+    return std.fmt.bufPrint(buf, "Chunk: larger (currently {d} bytes)", .{chunk_len});
+}
+
+fn nodeId(node: protocol.Node) []const u8 {
+    return switch (node) {
+        .vbox => |v| v.id,
+        .hbox => |h| h.id,
+        .text => |t| t.id,
+        .styled_text => |t| t.id,
+        .input => |i| i.id,
+        .list => |l| l.id,
+    };
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -62,6 +123,14 @@ pub fn main() !void {
     var md_cursor: usize = 0;
     var md_active: bool = false;
     var md_paused: bool = false;
+    var md_mode: MdMode = .tracer18;
+    var md_tick_every: usize = 1;
+    var md_chunk_len: usize = 24;
+
+    var md_blocks: ?tui.markdown.StreamBlocks = null;
+    defer if (md_blocks) |*s| s.deinit();
+    var md_inline: ?tui.markdown.StreamInline = null;
+    defer if (md_inline) |*s| s.deinit();
 
     const md_default =
         "# Streaming markdown demo\n" ++
@@ -97,13 +166,36 @@ pub fn main() !void {
             term_rows,
             term_cols,
         );
+        var title_buf: [128]u8 = undefined;
+        var hint_buf: [512]u8 = undefined;
+        var faster_buf: [96]u8 = undefined;
+        var slower_buf: [96]u8 = undefined;
+        var chunk_smaller_buf: [96]u8 = undefined;
+        var chunk_larger_buf: [96]u8 = undefined;
+        const md_title = try mdStreamTitle(&title_buf, md_mode);
+        const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
+        const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
+        const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
+        const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
+        const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
         _ = arena_tx.reset(.retain_capacity);
+        const md_stream_node = try markdown.compileLeaky(
+            arena_tx.allocator(),
+            md_buf.items,
+            .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+        );
         try render.emitInitialFull(
             arena_tx.allocator(),
             out,
             tick_text,
             status_text,
-            md_buf.items,
+            md_stream_node,
+            md_title,
+            md_hint,
+            md_faster,
+            md_slower,
+            md_chunk_smaller,
+            md_chunk_larger,
             inputs[0..],
             lists[0..],
             list_height,
@@ -174,12 +266,47 @@ pub fn main() !void {
                 if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=root mode=morph tick={d}\n", .{tick});
                 const layout_alt = (tick % 2) == 1;
                 _ = arena_tx.reset(.retain_capacity);
+                const md_stream_node = switch (md_mode) {
+                    .tracer18 => try markdown.compileLeaky(
+                        arena_tx.allocator(),
+                        md_buf.items,
+                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                    ),
+                    .tracer19a => if (md_blocks) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                        arena_tx.allocator(),
+                        "",
+                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                    ),
+                    .tracer19b => if (md_inline) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                        arena_tx.allocator(),
+                        "",
+                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                    ),
+                };
+                var title_buf: [128]u8 = undefined;
+                var hint_buf: [512]u8 = undefined;
+                var faster_buf: [96]u8 = undefined;
+                var slower_buf: [96]u8 = undefined;
+                var chunk_smaller_buf: [96]u8 = undefined;
+                var chunk_larger_buf: [96]u8 = undefined;
+                const md_title = try mdStreamTitle(&title_buf, md_mode);
+                const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
+                const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
+                const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
+                const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
+                const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
                 try render.emitRootMorphPatch(
                     arena_tx.allocator(),
                     out,
                     tick_text,
                     status_text,
-                    md_buf.items,
+                    md_stream_node,
+                    md_title,
+                    md_hint,
+                    md_faster,
+                    md_slower,
+                    md_chunk_smaller,
+                    md_chunk_larger,
                     inputs[0..],
                     lists[0..],
                     layout_alt,
@@ -190,20 +317,77 @@ pub fn main() !void {
             if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=status\n", .{});
             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
 
-            if (md_active and !md_paused and md_cursor < md_source.items.len) {
-                const chunk_len: usize = 24;
-                const next = @min(md_source.items.len, md_cursor + chunk_len);
+            if (md_active and !md_paused and md_cursor < md_source.items.len and (md_tick_every == 1 or (tick % md_tick_every) == 0)) {
+                const next = @min(md_source.items.len, md_cursor + md_chunk_len);
                 if (next > md_cursor) {
-                    try md_buf.appendSlice(allocator, md_source.items[md_cursor..next]);
+                    const chunk = md_source.items[md_cursor..next];
                     md_cursor = next;
-                    _ = arena_tx.reset(.retain_capacity);
-                    if (!cfg.quiet_tx) std.debug.print(
-                        "PATCH_TX target={s} mode=morph bytes={d}\n",
-                        .{ MD_STREAM_ID, md_buf.items.len },
-                    );
-                    try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+
+                    switch (md_mode) {
+                        .tracer18 => {
+                            try md_buf.appendSlice(allocator, chunk);
+                            _ = arena_tx.reset(.retain_capacity);
+                            if (!cfg.quiet_tx) std.debug.print(
+                                "PATCH_TX target={s} mode=morph bytes={d}\n",
+                                .{ MD_STREAM_ID, md_buf.items.len },
+                            );
+                            try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                        },
+                        .tracer19a => {
+                            if (md_blocks == null) {
+                                md_blocks = tui.markdown.StreamBlocks.init(
+                                    allocator,
+                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    .{},
+                                    .plain,
+                                );
+                            }
+                            const r = try md_blocks.?.push(chunk);
+                            _ = arena_tx.reset(.retain_capacity);
+                            if (r.blocks_committed != 0 or r.tail_key_changed) {
+                                const node = try md_blocks.?.snapshotLeaky(arena_tx.allocator());
+                                if (!cfg.quiet_tx) std.debug.print("PATCH_TX target={s} mode=morph\n", .{MD_STREAM_ID});
+                                try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                            } else if (md_blocks.?.tailNodeLeaky(arena_tx.allocator())) |tail| {
+                                if (!cfg.quiet_tx) std.debug.print("PATCH_TX target={s} leaf\n", .{nodeId(tail)});
+                                try render.emitNodePatchById(out, nodeId(tail), tail);
+                            }
+                        },
+                        .tracer19b => {
+                            if (md_inline == null) {
+                                md_inline = tui.markdown.StreamInline.init(
+                                    allocator,
+                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    .{},
+                                );
+                            }
+                            const r = try md_inline.?.push(chunk);
+                            _ = arena_tx.reset(.retain_capacity);
+                            if (r.blocks_committed != 0 or r.tail_key_changed) {
+                                const node = try md_inline.?.snapshotLeaky(arena_tx.allocator());
+                                if (!cfg.quiet_tx) std.debug.print("PATCH_TX target={s} mode=morph\n", .{MD_STREAM_ID});
+                                try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                            } else if (md_inline.?.tailNodeLeaky(arena_tx.allocator())) |tail| {
+                                if (!cfg.quiet_tx) std.debug.print("PATCH_TX target={s} leaf\n", .{nodeId(tail)});
+                                try render.emitNodePatchById(out, nodeId(tail), tail);
+                            }
+                        },
+                    }
                 }
-                if (md_cursor >= md_source.items.len) md_active = false;
+                if (md_cursor >= md_source.items.len) {
+                    md_active = false;
+                    if (md_mode == .tracer19a and md_blocks != null) {
+                        _ = arena_tx.reset(.retain_capacity);
+                        _ = try md_blocks.?.finish();
+                        const node = try md_blocks.?.snapshotLeaky(arena_tx.allocator());
+                        try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                    } else if (md_mode == .tracer19b and md_inline != null) {
+                        _ = arena_tx.reset(.retain_capacity);
+                        _ = try md_inline.?.finish();
+                        const node = try md_inline.?.snapshotLeaky(arena_tx.allocator());
+                        try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                    }
+                }
             }
 
             try out.flush();
@@ -337,6 +521,10 @@ pub fn main() !void {
                                 md_cursor = 0;
                                 md_active = true;
                                 md_paused = false;
+                                if (md_blocks) |*s| s.deinit();
+                                md_blocks = null;
+                                if (md_inline) |*s| s.deinit();
+                                md_inline = null;
 
                                 const prompt = if (state.findInputSlot(inputs[0..], MD_PROMPT_ID)) |slot|
                                     slot.last.items
@@ -348,14 +536,42 @@ pub fn main() !void {
                                     try md_source.appendSlice(allocator, md_default);
                                 }
 
-                                const chunk_len: usize = 24;
-                                const next = @min(md_source.items.len, md_cursor + chunk_len);
+                                const next = @min(md_source.items.len, md_cursor + md_chunk_len);
                                 if (next > md_cursor) {
-                                    try md_buf.appendSlice(allocator, md_source.items[md_cursor..next]);
+                                    const chunk = md_source.items[md_cursor..next];
                                     md_cursor = next;
+
+                                    switch (md_mode) {
+                                        .tracer18 => {
+                                            try md_buf.appendSlice(allocator, chunk);
+                                            _ = arena_tx.reset(.retain_capacity);
+                                            try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                                        },
+                                        .tracer19a => {
+                                            md_blocks = tui.markdown.StreamBlocks.init(
+                                                allocator,
+                                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                                .{},
+                                                .plain,
+                                            );
+                                            _ = try md_blocks.?.push(chunk);
+                                            _ = arena_tx.reset(.retain_capacity);
+                                            const node = try md_blocks.?.snapshotLeaky(arena_tx.allocator());
+                                            try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                                        },
+                                        .tracer19b => {
+                                            md_inline = tui.markdown.StreamInline.init(
+                                                allocator,
+                                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                                .{},
+                                            );
+                                            _ = try md_inline.?.push(chunk);
+                                            _ = arena_tx.reset(.retain_capacity);
+                                            const node = try md_inline.?.snapshotLeaky(arena_tx.allocator());
+                                            try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                                        },
+                                    }
                                 }
-                                _ = arena_tx.reset(.retain_capacity);
-                                try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
                                 try out.flush();
                                 continue;
                             } else if (std.mem.eql(u8, a.item, MD_ACTION_PAUSE)) {
@@ -367,11 +583,85 @@ pub fn main() !void {
                                 md_cursor = 0;
                                 md_active = false;
                                 md_paused = false;
+                                if (md_blocks) |*s| s.deinit();
+                                md_blocks = null;
+                                if (md_inline) |*s| s.deinit();
+                                md_inline = null;
                                 _ = arena_tx.reset(.retain_capacity);
-                                try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                                const empty = try markdown.compileLeaky(
+                                    arena_tx.allocator(),
+                                    "",
+                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                );
+                                try render.emitNodeMorphPatch(out, MD_STREAM_ID, empty);
                                 try out.flush();
                                 continue;
                             }
+                        } else if (std.mem.eql(u8, a.id, MD_MODE_ID)) {
+                            if (std.mem.eql(u8, a.item, MD_MODE_18)) {
+                                md_mode = .tracer18;
+                            } else if (std.mem.eql(u8, a.item, MD_MODE_19A)) {
+                                md_mode = .tracer19a;
+                            } else if (std.mem.eql(u8, a.item, MD_MODE_19B)) {
+                                md_mode = .tracer19b;
+                            }
+
+                            md_buf.clearRetainingCapacity();
+                            md_source.clearRetainingCapacity();
+                            md_cursor = 0;
+                            md_active = false;
+                            md_paused = false;
+                            if (md_blocks) |*s| s.deinit();
+                            md_blocks = null;
+                            if (md_inline) |*s| s.deinit();
+                            md_inline = null;
+
+                            _ = arena_tx.reset(.retain_capacity);
+                            const empty = try markdown.compileLeaky(
+                                arena_tx.allocator(),
+                                "",
+                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                            );
+                            try render.emitNodeMorphPatch(out, MD_STREAM_ID, empty);
+                            try out.flush();
+                            continue;
+                        } else if (std.mem.eql(u8, a.id, MD_SPEED_ID)) {
+                            if (std.mem.eql(u8, a.item, MD_SPEED_FASTER)) {
+                                md_tick_every = @max(@as(usize, 1), md_tick_every / 2);
+                            } else if (std.mem.eql(u8, a.item, MD_SPEED_SLOWER)) {
+                                md_tick_every = @min(@as(usize, 64), md_tick_every * 2);
+                            } else if (std.mem.eql(u8, a.item, MD_SPEED_CHUNK_SMALLER)) {
+                                md_chunk_len = @max(@as(usize, 1), md_chunk_len / 2);
+                            } else if (std.mem.eql(u8, a.item, MD_SPEED_CHUNK_LARGER)) {
+                                md_chunk_len = @min(@as(usize, 512), md_chunk_len * 2);
+                            }
+
+                            var faster_buf: [96]u8 = undefined;
+                            var slower_buf: [96]u8 = undefined;
+                            var chunk_smaller_buf: [96]u8 = undefined;
+                            var chunk_larger_buf: [96]u8 = undefined;
+                            try render.emitTextPatchById(
+                                out,
+                                MD_SPEED_FASTER,
+                                try mdSpeedFasterLabel(&faster_buf, md_tick_every),
+                            );
+                            try render.emitTextPatchById(
+                                out,
+                                MD_SPEED_SLOWER,
+                                try mdSpeedSlowerLabel(&slower_buf, md_tick_every),
+                            );
+                            try render.emitTextPatchById(
+                                out,
+                                MD_SPEED_CHUNK_SMALLER,
+                                try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len),
+                            );
+                            try render.emitTextPatchById(
+                                out,
+                                MD_SPEED_CHUNK_LARGER,
+                                try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len),
+                            );
+                            try out.flush();
+                            continue;
                         }
                         if (state.findListSlot(lists[0..], a.id)) |slot| {
                             slot.activated.clearRetainingCapacity();

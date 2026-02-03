@@ -446,7 +446,7 @@
     "status": "completed",
     "description": "Markdown → styled_text spans (rich text v2): compile a minimal Markdown subset into existing styled_text/list/quote primitives",
     "deliverables": [
-      "src/lib/markdown.zig: Markdown compiler (headings, bold, italic, inline code, blockquote, bulleted lists) emitting protocol.Node trees",
+      "src/lib/markdown/mod.zig: Markdown compiler (headings, bold, italic, inline code, blockquote, bulleted lists) emitting protocol.Node trees",
       "src/lib/protocol.zig: JSON writer for nodes/spans/styles (writeNodeJson/writeSpanJson/writeStyleOverrideJson)",
       "src/bin/demo/render.zig: demo uses markdown compiler for the rich status line + a small markdown block",
       "src/test/tests.zig: golden-ish markdown compile tests + wrap-alignment render test"
@@ -487,6 +487,34 @@
       "Observe the 'Streaming Markdown (Tracer 18)' panel filling in over time",
       "Make the terminal narrow: wrapped list/quote lines remain aligned under their body (hbox prefixes)",
       "Press 'x' to exit"
+    ]
+  },
+  {
+    "slice": 19,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Streaming Markdown v2: Tracer 19A (incremental finalize blocks + tail updates) and Tracer 19B (inline tail formatting), with mode/speed controls",
+    "deliverables": [
+      "src/lib/markdown/stream.zig: StreamBlocks (19A) + StreamInline (19B) incremental compilers with tail-only patch support",
+      "src/lib/markdown/: split markdown compiler into submodules (block/inline/stream/types/common) to keep files small",
+      "src/bin/demo/main.zig: demo supports Tracer 18 vs 19A vs 19B and uses leaf patches for tail updates when safe",
+      "src/bin/demo/render.zig: UI adds md-mode + md-speed controls and generic emitNodeMorphPatch/emitNodePatchById helpers",
+      "src/test/tests.zig: tests for 19A final-tree equivalence and 19B delimiter-closure behavior"
+    ],
+    "boundaries_hit": [
+      "Incremental compilation without full doc reparse (19A/19B)",
+      "Tail-only leaf patches to minimize payloads",
+      "Stable ids across streaming to enable morph reuse",
+      "Backpressure caps (max_doc_bytes/max_blocks) to bound memory"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "In md-mode, select 'Mode: Tracer 19A (finalize blocks)' and click 'Start streaming' in md-actions",
+      "Confirm only the tail line changes frequently; committed blocks do not churn",
+      "Switch to 'Mode: Tracer 19B (inline tail)' and start streaming; confirm **bold** / `code` formatting appears immediately once delimiters close",
+      "Use md-speed controls to change cadence and chunk size; confirm streaming remains responsive",
+      "Exit with 'x'"
     ]
   }
 ]
