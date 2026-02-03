@@ -7,6 +7,7 @@ const render = tui.render;
 const renderer_mod = tui.renderer;
 const terminal = tui.terminal;
 const input = tui.input;
+const unicode = tui.unicode;
 const state = tui.state;
 const tree = tui.tree;
 
@@ -190,7 +191,7 @@ fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol
                 if (render.findRectForId(root, rows, cols, e.id.items)) |r| {
                     visible_cols = inputVisibleCols(r.w);
                 }
-                _ = input.ensure_cursor_visible(&s.scroll_x, s.cursor, s.value.items.len, visible_cols);
+                _ = input.ensure_cursor_visible(&s.scroll_x, s.cursor, s.value.items, visible_cols);
             },
             .list => {},
         }
@@ -323,6 +324,7 @@ pub fn main() !void {
     var last_term_size: terminal.Size = effectiveTermSize(term.getSize() catch .{ .rows = 0, .cols = 0 });
     var pending_resize: ?terminal.Size = null;
     var last_resize_tx_ns: u64 = 0;
+    var utf8_pending: Utf8Pending = .{};
 
     while (true) {
         var fds = [_]std.posix.pollfd{
@@ -509,7 +511,7 @@ pub fn main() !void {
 
         if ((fds[2].revents & std.posix.POLL.IN) != 0) {
             const first = try term.readByte();
-            const decoded = try decodeKey(&term, first) orelse continue;
+            const decoded = try decodeKeyWithUtf8(&term, &utf8_pending, first) orelse continue;
             if (decoded == .tab or decoded == .shift_tab) {
                 if (current_root != null) {
                     const next_focus = try cycleFocusInTree(allocator, current_root.?, focused_id);
@@ -684,6 +686,7 @@ fn readByteIfReady(term: *terminal.Terminal) !?u8 {
 
 const DecodedKey = union(enum) {
     byte: u8,
+    utf8: Utf8Bytes,
     tab,
     shift_tab,
     left,
@@ -694,6 +697,30 @@ const DecodedKey = union(enum) {
     word_left,
     word_right,
 };
+
+const Utf8Bytes = struct {
+    bytes: [4]u8,
+    len: u3,
+
+    fn slice(self: *const Utf8Bytes) []const u8 {
+        return self.bytes[0..@as(usize, self.len)];
+    }
+};
+
+const Utf8Pending = struct {
+    bytes: [4]u8 = undefined,
+    len: u3 = 0,
+    expect: u3 = 0,
+
+    fn reset(self: *Utf8Pending) void {
+        self.len = 0;
+        self.expect = 0;
+    }
+};
+
+fn isUtf8ContinuationByte(b: u8) bool {
+    return (b & 0b1100_0000) == 0b1000_0000;
+}
 
 fn decodeKey(term: *terminal.Terminal, first: u8) !?DecodedKey {
     if (first == '\t') return .tab;
@@ -739,6 +766,39 @@ fn decodeKey(term: *terminal.Terminal, first: u8) !?DecodedKey {
         'f' => return .word_right,
         else => return null,
     }
+}
+
+fn decodeKeyWithUtf8(term: *terminal.Terminal, pending: *Utf8Pending, b: u8) !?DecodedKey {
+    if (pending.expect != 0) {
+        if (isUtf8ContinuationByte(b)) {
+            if (@as(usize, pending.len) >= pending.bytes.len) {
+                pending.reset();
+                return null;
+            }
+            pending.bytes[@as(usize, pending.len)] = b;
+            pending.len += 1;
+
+            if (pending.len == pending.expect) {
+                const out: Utf8Bytes = .{ .bytes = pending.bytes, .len = pending.len };
+                pending.reset();
+                return .{ .utf8 = out };
+            }
+            return null;
+        }
+
+        // Incomplete sequence; drop and treat this byte as a new key.
+        pending.reset();
+    }
+
+    if (b == 0x1b or b < 0x80) return decodeKey(term, b);
+
+    const expect = std.unicode.utf8ByteSequenceLength(b) catch return null;
+    if (expect <= 1 or expect > 4) return null;
+
+    pending.bytes[0] = b;
+    pending.len = 1;
+    pending.expect = expect;
+    return null;
 }
 
 fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.Node {
@@ -1271,13 +1331,20 @@ fn handleFocusedInputKey(
     var changed: bool = false;
     switch (key) {
         .byte => |b| changed = try input.handleInputByte(allocator, &st.value, &st.cursor, b),
-        .left => if (st.cursor > 0) {
-            st.cursor -= 1;
-            changed = true;
+        .utf8 => |u| changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, u.slice()),
+        .left => {
+            const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
         },
-        .right => if (st.cursor < st.value.items.len) {
-            st.cursor += 1;
-            changed = true;
+        .right => {
+            const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
         },
         .home => if (st.cursor != 0) {
             st.cursor = 0;
@@ -1290,15 +1357,17 @@ fn handleFocusedInputKey(
         .delete => changed = input.delete_at_cursor(&st.value, &st.cursor),
         .word_left => {
             const next = input.word_left(st.value.items, st.cursor);
-            if (next != st.cursor) {
-                st.cursor = next;
+            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+            if (clamped != st.cursor) {
+                st.cursor = clamped;
                 changed = true;
             }
         },
         .word_right => {
             const next = input.word_right(st.value.items, st.cursor);
-            if (next != st.cursor) {
-                st.cursor = next;
+            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+            if (clamped != st.cursor) {
+                st.cursor = clamped;
                 changed = true;
             }
         },
@@ -1309,7 +1378,7 @@ fn handleFocusedInputKey(
 
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
-    const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items.len, visible_cols);
+    const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
     return changed or scroll_changed;
 }
 

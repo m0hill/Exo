@@ -7,6 +7,7 @@ const Size = @import("term_size.zig").Size;
 
 const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
+const Cell = frame_mod.Cell;
 
 pub const DrawMetrics = struct {
     full: bool = false,
@@ -88,15 +89,23 @@ fn fullPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
     try termWriteAll(term, metrics, "\x1b[2J\x1b[H");
 
     const rows: usize = @as(usize, next.rows);
-    const cols: usize = @as(usize, next.cols);
-    _ = cols;
+    _ = @as(usize, next.cols);
 
     var r: usize = 0;
     while (r < rows) : (r += 1) {
         const max: usize = @as(usize, next.row_max[r]);
         if (max > 0) {
             const row = next.rowSlice(r);
-            try termWriteAll(term, metrics, row[0..max]);
+            var c: usize = 0;
+            while (c < max) : (c += 1) {
+                const cell = row[c];
+                if (cell.continuation) continue;
+                if (cell.len == 0) {
+                    try termWriteAll(term, metrics, " ");
+                } else {
+                    try termWriteAll(term, metrics, cell.slice());
+                }
+            }
         }
         try termWriteAll(term, metrics, "\x1b[K");
         if (r + 1 < rows) {
@@ -105,34 +114,52 @@ fn fullPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
     }
 }
 
+fn cellsEqual(a: Cell, b: Cell) bool {
+    if (a.continuation != b.continuation) return false;
+    if (a.width != b.width) return false;
+    if (a.len != b.len) return false;
+    return std.mem.eql(u8, a.slice(), b.slice());
+}
+
 fn diffAndFlush(term: anytype, metrics: *DrawMetrics, prev: *const Frame, next: *const Frame) !void {
     const rows: usize = @as(usize, next.rows);
-    const cols: usize = @as(usize, next.cols);
-    _ = cols;
+    _ = @as(usize, next.cols);
 
     var r: usize = 0;
     while (r < rows) : (r += 1) {
         const prev_max: usize = @as(usize, prev.row_max[r]);
         const next_max: usize = @as(usize, next.row_max[r]);
 
-        const compare_end: usize = if (next_max < prev_max) next_max else @max(prev_max, next_max);
+        const compare_end: usize = next_max;
         if (compare_end > 0) {
             const prev_row = prev.rowSlice(r);
             const next_row = next.rowSlice(r);
 
             var c: usize = 0;
             while (c < compare_end) {
-                if (prev_row[c] == next_row[c]) {
+                if (cellsEqual(prev_row[c], next_row[c])) {
                     c += 1;
                     continue;
                 }
 
-                const start = c;
+                var start = c;
+                if (start > 0 and (prev_row[start].continuation or next_row[start].continuation)) {
+                    start -= 1;
+                }
                 c += 1;
-                while (c < compare_end and prev_row[c] != next_row[c]) : (c += 1) {}
+                while (c < compare_end and !cellsEqual(prev_row[c], next_row[c])) : (c += 1) {}
 
                 try emitCursorMove(term, metrics, r + 1, start + 1);
-                try termWriteAll(term, metrics, next_row[start..c]);
+                var col: usize = start;
+                while (col < c) : (col += 1) {
+                    const cell = next_row[col];
+                    if (cell.continuation) continue;
+                    if (cell.len == 0) {
+                        try termWriteAll(term, metrics, " ");
+                    } else {
+                        try termWriteAll(term, metrics, cell.slice());
+                    }
+                }
                 metrics.changed_cells += c - start;
             }
         }

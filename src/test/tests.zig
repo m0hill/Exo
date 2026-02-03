@@ -7,8 +7,15 @@ const render = tui.render;
 const renderer_mod = tui.renderer;
 const testing_terminal = @import("testing_terminal.zig");
 const input = tui.input;
+const unicode = tui.unicode;
 const state = tui.state;
 const tree = tui.tree;
+
+fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
+    const c = frame.rowSlice(row)[col];
+    if (c.len == 0) return ' ';
+    return c.bytes[0];
+}
 
 test "layout: padding offsets child origin" {
     var frame: Frame = .{};
@@ -23,7 +30,7 @@ test "layout: padding offsets child origin" {
 
     render.renderToFrame(root, .{}, &frame);
 
-    try std.testing.expectEqual(@as(u8, 'X'), frame.rowSlice(1)[1]);
+    try std.testing.expectEqual(@as(u8, 'X'), cellByte(&frame, 1, 1));
 }
 
 test "layout: hbox fixed width + flex places siblings" {
@@ -40,9 +47,9 @@ test "layout: hbox fixed width + flex places siblings" {
 
     render.renderToFrame(root, .{}, &frame);
 
-    try std.testing.expectEqual(@as(u8, 'L'), frame.rowSlice(1)[1]);
+    try std.testing.expectEqual(@as(u8, 'L'), cellByte(&frame, 1, 1));
     // pad=1 => inner.x=1. left.w=10 => right.x=11 (0-based), i.e. column 12 (1-based).
-    try std.testing.expectEqual(@as(u8, 'R'), frame.rowSlice(1)[11]);
+    try std.testing.expectEqual(@as(u8, 'R'), cellByte(&frame, 1, 11));
 }
 
 test "layout: clipping prevents hbox child bleed" {
@@ -59,9 +66,9 @@ test "layout: clipping prevents hbox child bleed" {
 
     render.renderToFrame(root, .{}, &frame);
 
-    try std.testing.expectEqual(@as(u8, 'B'), frame.rowSlice(0)[10]);
-    try std.testing.expectEqual(@as(u8, ' '), frame.rowSlice(0)[11]);
-    try std.testing.expectEqual(@as(u8, ' '), frame.rowSlice(0)[19]);
+    try std.testing.expectEqual(@as(u8, 'B'), cellByte(&frame, 0, 10));
+    try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 0, 11));
+    try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 0, 19));
 }
 
 test "render: focused input shows cursor + placeholder" {
@@ -233,7 +240,7 @@ test "render: input horizontal scroll keeps cursor visible" {
     const value = "abcdefghijklmnop";
     const cursor: usize = value.len;
     var scroll_x: usize = 0;
-    _ = input.ensure_cursor_visible(&scroll_x, cursor, value.len, 8);
+    _ = input.ensure_cursor_visible(&scroll_x, cursor, value, 8);
 
     try renderer.draw(&term, root, .{
         .focused_id = "query",
@@ -275,15 +282,29 @@ test "input: insert and backspace edit buffer" {
     try std.testing.expectEqual(@as(usize, 1), cursor);
 }
 
+test "input: insert utf8 and backspace deletes grapheme" {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    var cursor: usize = 0;
+
+    try std.testing.expect(try input.insertUtf8Bytes(std.testing.allocator, &buf, &cursor, "漢"));
+    try std.testing.expectEqualStrings("漢", buf.items);
+    try std.testing.expectEqual(@as(usize, "漢".len), cursor);
+
+    try std.testing.expect(try input.handleInputByte(std.testing.allocator, &buf, &cursor, 127));
+    try std.testing.expectEqualStrings("", buf.items);
+    try std.testing.expectEqual(@as(usize, 0), cursor);
+}
+
 test "input: ensure_cursor_visible scrolls window" {
-    const value_len: usize = 16;
+    const value = "abcdefghijklmnop";
     const visible_cols: usize = 8;
     var scroll_x: usize = 0;
 
-    _ = input.ensure_cursor_visible(&scroll_x, 16, value_len, visible_cols);
+    _ = input.ensure_cursor_visible(&scroll_x, 16, value, visible_cols);
     try std.testing.expectEqual(@as(usize, 8), scroll_x);
 
-    _ = input.ensure_cursor_visible(&scroll_x, 6, value_len, visible_cols);
+    _ = input.ensure_cursor_visible(&scroll_x, 6, value, visible_cols);
     try std.testing.expectEqual(@as(usize, 6), scroll_x);
 }
 
@@ -393,4 +414,60 @@ test "render: focused list shows selection marker and hides cursor" {
     const out = term.out.items;
     try std.testing.expect(std.mem.indexOf(u8, out, "> Beta") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[?25l") != null);
+}
+
+test "unicode: combining mark stays together and width=1" {
+    const s = "e\u{0301}";
+    const g = unicode.nextGrapheme(s, 0);
+    try std.testing.expectEqual(@as(usize, 0), g.start);
+    try std.testing.expectEqual(@as(usize, s.len), g.end);
+    try std.testing.expectEqual(@as(usize, 1), g.width);
+    try std.testing.expectEqual(@as(usize, s.len), unicode.sliceEndByWidth(s, 0, 1));
+}
+
+test "unicode: cjk is width 2 and does not render into 1 col" {
+    try std.testing.expectEqual(@as(u2, 2), unicode.cellWidth('漢'));
+
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 1, .cols = 1 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    const root = protocol.Node{ .text = .{ .id = "t", .text = "漢" } };
+    try renderer.draw(&term, root, .{});
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "漢") == null);
+}
+
+test "unicode: flag cluster treated as one grapheme width 2" {
+    const flag = "🇯🇵";
+    const g = unicode.nextGrapheme(flag, 0);
+    try std.testing.expectEqual(@as(usize, flag.len), g.end);
+    try std.testing.expectEqual(@as(usize, 2), g.width);
+}
+
+test "render: cursor column uses display width not bytes" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 5, .cols = 20 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "title", .text = "T" } },
+        .{ .text = .{ .id = "clock", .text = "C" } },
+        .{ .input = .{ .id = "query", .placeholder = "Type here" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    const value = "a漢b";
+    const cursor: usize = 1 + "漢".len; // after 漢 (byte offset)
+
+    try renderer.draw(&term, root, .{
+        .focused_id = "query",
+        .inputs = &.{.{ .id = "query", .value = value, .cursor = cursor, .scroll_x = 0 }},
+    });
+
+    // Line 3, col = 1 + prefix(2) + (a=1, 漢=2) = 6.
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[3;6H") != null);
 }

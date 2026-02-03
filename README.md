@@ -84,6 +84,15 @@ Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrup
    - focus/cursor still tracks the focused input as panels swap order
 5. Exit with `x`
 
+## Manual repro (slice 11)
+
+1. `zig build demo`
+2. Confirm the hint line shows some Unicode (e.g. `é 漢 🇯🇵 👩‍👩‍👧‍👦`) without breaking alignment
+3. Make the terminal narrow:
+   - the Unicode hint is clipped/soft-wrapped without splitting glyphs
+   - the input placeholder contains Unicode and the cursor remains aligned while typing/moving
+4. Exit with `x`
+
 ## Automated tests
 
 Run:

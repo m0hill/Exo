@@ -481,7 +481,7 @@ fn writeRootNode(
     try writeTextNodeLayout(
         writer,
         "hint",
-        "Tab cycles focus by tree order. Arrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x exits.\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
+        "Unicode demo: e\u{0301} 漢 🇯🇵 👩‍👩‍👧‍👦\nTab cycles focus by tree order. Arrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x exits.\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
         null,
         3,
         0,
@@ -587,7 +587,7 @@ fn writePanelNode(
         try writeTextNodeLayout(writer, "panel-b-status", status_text, null, 2, 0);
         try writer.writeByte(',');
     }
-    try writeInputNodeLayout(writer, input_id, "Type here", null, 1, 0);
+    try writeInputNodeLayout(writer, input_id, "Type here: e\u{0301} 漢 🇯🇵", null, 1, 0);
     try writer.writeByte(',');
     try writeListNode(writer, list_id, list_height, list_items);
 

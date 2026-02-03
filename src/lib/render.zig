@@ -1,6 +1,7 @@
 const std = @import("std");
 const frame_mod = @import("frame.zig");
 const protocol = @import("protocol.zig");
+const unicode = @import("unicode.zig");
 
 const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
@@ -124,18 +125,28 @@ fn countWrappedLines(text: []const u8, cols: usize) usize {
     var lines: usize = 1;
     var col: usize = 0;
 
-    for (text) |b| {
-        if (b == '\n') {
+    var i: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '\n') {
+            lines += 1;
+            col = 0;
+            i += 1;
+            continue;
+        }
+
+        const g = unicode.nextGrapheme(text, i);
+        if (g.end <= i) break;
+
+        if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
             lines += 1;
             col = 0;
             continue;
         }
 
-        if (cols != 0 and col == cols) {
-            lines += 1;
-            col = 0;
+        if (g.width <= cols or cols == 0) {
+            col += g.width;
         }
-        col += 1;
+        i = g.end;
     }
     return lines;
 }
@@ -186,22 +197,19 @@ fn measureHeight(node: protocol.Node, avail_w: usize) usize {
     }
 }
 
-fn putTextClipped(frame: *Frame, row: usize, col: usize, text: []const u8, clip: Rect) void {
+fn putGraphemeClipped(
+    frame: *Frame,
+    row: usize,
+    col: usize,
+    bytes: []const u8,
+    width: u2,
+    clip: Rect,
+) void {
+    if (width == 0) return;
     if (clip.w == 0 or clip.h == 0) return;
     if (row < clip.y or row >= clip.y + clip.h) return;
-    if (col >= clip.x + clip.w) return;
-
-    const start_col = if (col > clip.x) col else clip.x;
-    const end_col = blk: {
-        const row_end = clip.x + clip.w;
-        const write_end = col + text.len;
-        break :blk if (write_end < row_end) write_end else row_end;
-    };
-    if (end_col <= start_col) return;
-
-    const src_off: usize = start_col - col;
-    const n: usize = end_col - start_col;
-    frame.putText(row, start_col, text[src_off .. src_off + n]);
+    if (col < clip.x or col + @as(usize, width) > clip.x + clip.w) return;
+    frame.putGrapheme(row, col, bytes, width);
 }
 
 fn drawWrappedTextInRect(frame: *Frame, rect: Rect, clip: Rect, text: []const u8) void {
@@ -215,46 +223,60 @@ fn drawWrappedTextInRect(frame: *Frame, rect: Rect, clip: Rect, text: []const u8
     var i: usize = 0;
 
     while (i < text.len and row < max_rows) {
-        const b = text[i];
-        if (b == '\n') {
+        if (text[i] == '\n') {
             row += 1;
             col = 0;
             i += 1;
             continue;
         }
 
-        if (cols != 0 and col == cols) {
+        const g = unicode.nextGrapheme(text, i);
+        if (g.end <= i) break;
+
+        if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
             row += 1;
             col = 0;
             continue;
         }
 
-        const remaining_cols: usize = if (cols == 0) (text.len - i) else (cols - col);
-        if (remaining_cols == 0) continue;
+        if (g.width > 0 and cols != 0 and g.width > cols) {
+            // Too wide to fit anywhere in this rect; skip without corrupting the grid.
+            i = g.end;
+            continue;
+        }
 
-        const remaining_text = text[i..];
-        const want: usize = @min(remaining_cols, remaining_text.len);
-        const scan = remaining_text[0..want];
-        const n = if (std.mem.indexOfScalar(u8, scan, '\n')) |nl| nl else scan.len;
-        if (n == 0) continue;
-
-        putTextClipped(frame, row, rect.x + col, remaining_text[0..n], clip);
-        col += n;
-        i += n;
+        if (g.width > 0) {
+            const abs_col = rect.x + col;
+            putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip);
+            col += g.width;
+        }
+        i = g.end;
     }
 }
 
 fn renderLinePiecesInRect(frame: *Frame, row: usize, rect: Rect, clip: Rect, pieces: []const []const u8) void {
     if (rect.w == 0) return;
 
-    var remaining: usize = rect.w;
-    var col: usize = rect.x;
+    var used: usize = 0;
     for (pieces) |p| {
-        if (remaining == 0) break;
-        const chunk = if (p.len <= remaining) p else p[0..remaining];
-        putTextClipped(frame, row, col, chunk, clip);
-        remaining -= chunk.len;
-        col += chunk.len;
+        if (used >= rect.w) break;
+        var i: usize = 0;
+        while (i < p.len and used < rect.w) {
+            const g = unicode.nextGrapheme(p, i);
+            if (g.end <= i) break;
+            if (g.width > 0 and used + g.width > rect.w) break;
+            if (g.width > 0 and rect.w != 0 and g.width > rect.w) {
+                i = g.end;
+                continue;
+            }
+
+            if (g.width > 0) {
+                const abs_col = rect.x + used;
+                putGraphemeClipped(frame, row, abs_col, p[g.start..g.end], @as(u2, @intCast(g.width)), clip);
+                used += g.width;
+            }
+            i = g.end;
+        }
     }
 }
 
@@ -272,14 +294,14 @@ fn paintInput(
     const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, i.id);
     const input_state = findInputState(state.inputs, i.id);
     const prefix = "> ";
-    const prefix_len: usize = prefix.len;
+    const prefix_cols: usize = unicode.displayWidth(prefix);
     const cols: usize = rect.w;
-    const visible_cols: usize = if (cols > prefix_len) cols - prefix_len else 0;
+    const visible_cols: usize = if (cols > prefix_cols) cols - prefix_cols else 0;
 
     if (input_state == null) {
         if (focused and cursor_out.* == null) {
             if (cols != 0 and row >= clip.y and row < clip.y + clip.h and rect.x < clip.x + clip.w) {
-                const col_abs = if (rect.x + prefix_len < rect.x + cols) rect.x + prefix_len else (rect.x + cols - 1);
+                const col_abs = if (rect.x + prefix_cols < rect.x + cols) rect.x + prefix_cols else (rect.x + cols - 1);
                 if (col_abs >= clip.x and col_abs < clip.x + clip.w) {
                     cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
                 }
@@ -290,23 +312,18 @@ fn paintInput(
     }
 
     const st = input_state.?;
-    const effective_cursor = @min(st.cursor, st.value.len);
+    const effective_cursor = unicode.clampGraphemeBoundary(st.value, @min(st.cursor, st.value.len));
 
     if (st.value.len > 0) {
-        var start: usize = @min(st.scroll_x, st.value.len);
-        if (visible_cols == 0 or st.value.len <= visible_cols) {
-            start = 0;
-        } else {
-            if (effective_cursor < start) start = effective_cursor;
-            if (effective_cursor > start + visible_cols) start = effective_cursor - visible_cols;
-            if (start > st.value.len) start = st.value.len;
-        }
+        var start: usize = unicode.clampGraphemeBoundary(st.value, @min(st.scroll_x, st.value.len));
+        if (visible_cols == 0 or unicode.displayWidth(st.value) <= visible_cols) start = 0;
 
-        const end: usize = @min(st.value.len, start + visible_cols);
+        const end: usize = unicode.sliceEndByWidth(st.value, start, visible_cols);
         const visible = if (start < end) st.value[start..end] else "";
 
         if (focused and cursor_out.* == null and cols != 0) {
-            var col_abs: usize = rect.x + prefix_len + (effective_cursor - start);
+            const cursor_cols: usize = if (effective_cursor <= start) 0 else unicode.displayWidth(st.value[start..effective_cursor]);
+            var col_abs: usize = rect.x + prefix_cols + cursor_cols;
             if (col_abs >= rect.x + cols) col_abs = rect.x + cols - 1;
             if (row >= clip.y and row < clip.y + clip.h and col_abs >= clip.x and col_abs < clip.x + clip.w) {
                 cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
@@ -320,7 +337,7 @@ fn paintInput(
     if (i.placeholder) |ph| {
         if (focused) {
             if (cursor_out.* == null and cols != 0) {
-                const col_abs = if (rect.x + prefix_len < rect.x + cols) rect.x + prefix_len else (rect.x + cols - 1);
+                const col_abs = if (rect.x + prefix_cols < rect.x + cols) rect.x + prefix_cols else (rect.x + cols - 1);
                 if (row >= clip.y and row < clip.y + clip.h and col_abs >= clip.x and col_abs < clip.x + clip.w) {
                     cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
                 }
@@ -331,7 +348,7 @@ fn paintInput(
         }
     } else {
         if (focused and cursor_out.* == null and cols != 0) {
-            const col_abs = if (rect.x + prefix_len < rect.x + cols) rect.x + prefix_len else (rect.x + cols - 1);
+            const col_abs = if (rect.x + prefix_cols < rect.x + cols) rect.x + prefix_cols else (rect.x + cols - 1);
             if (row >= clip.y and row < clip.y + clip.h and col_abs >= clip.x and col_abs < clip.x + clip.w) {
                 cursor_out.* = .{ .row = row + 1, .col = col_abs + 1 };
             }

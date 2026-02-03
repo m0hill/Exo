@@ -180,5 +180,25 @@
       "Widget cursor/scroll must use per-node rect sizing"
     ],
     "timestamp": "2026-02-03"
+  },
+  {
+    "slice": 11,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Unicode display width + simplified grapheme clusters: UTF-8 rendering, no split clusters for clipping/scroll/cursor, and wcwidth-ish column math",
+    "deliverables": [
+      "src/lib/unicode.zig: simplified wcwidth-ish cellWidth + nextGrapheme iterator + display width helpers",
+      "src/lib/frame.zig: cell grid stores grapheme bytes + wide-char continuation markers",
+      "src/lib/render.zig: grapheme-aware clipping, wrapping, and input cursor placement",
+      "src/lib/input.zig: grapheme-aware backspace/delete and horizontal scrolling by byte offsets",
+      "src/lib/renderer.zig: frame diff compares cells and flushes UTF-8 safely",
+      "src/test/tests.zig: unit tests for combining marks, CJK width, flag clusters, and cursor math"
+    ],
+    "boundaries_hit": [
+      "Unicode display width (0/1/2) impacts layout, clipping, and cursor placement",
+      "Grapheme-safe truncation prevents split combining/ZWJ/flag sequences",
+      "Frame diff no longer assumes 1 byte = 1 cell"
+    ],
+    "timestamp": "2026-02-03"
   }
 ]
