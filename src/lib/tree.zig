@@ -11,6 +11,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
+        .textarea => |t| t.id,
         .list => |l| l.id,
     };
 }
@@ -161,6 +162,10 @@ fn morphNodeLeaky(
             t.align_self = inc.align_self;
             t.hoverable = inc.hoverable;
             t.mouseable = inc.mouseable;
+            t.disabled = inc.disabled;
+            t.readonly = inc.readonly;
+            t.validation = inc.validation;
+            t.focusable = inc.focusable;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
             t.style = inc.style;
@@ -174,6 +179,10 @@ fn morphNodeLeaky(
             t.align_self = inc.align_self;
             t.hoverable = inc.hoverable;
             t.mouseable = inc.mouseable;
+            t.disabled = inc.disabled;
+            t.readonly = inc.readonly;
+            t.validation = inc.validation;
+            t.focusable = inc.focusable;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
             t.style = inc.style;
@@ -187,10 +196,30 @@ fn morphNodeLeaky(
             i.align_self = inc.align_self;
             i.hoverable = inc.hoverable;
             i.mouseable = inc.mouseable;
+            i.disabled = inc.disabled;
+            i.readonly = inc.readonly;
+            i.validation = inc.validation;
+            i.focusable = inc.focusable;
             i.content_align = inc.content_align;
             i.style = inc.style;
             i.placeholder_style = inc.placeholder_style;
             i.placeholder = inc.placeholder;
+        },
+        .textarea => |*t| {
+            const inc = incoming.textarea;
+            t.w = inc.w;
+            t.h = inc.h;
+            t.flex = inc.flex;
+            t.align_self = inc.align_self;
+            t.hoverable = inc.hoverable;
+            t.mouseable = inc.mouseable;
+            t.disabled = inc.disabled;
+            t.readonly = inc.readonly;
+            t.validation = inc.validation;
+            t.focusable = inc.focusable;
+            t.style = inc.style;
+            t.placeholder_style = inc.placeholder_style;
+            t.placeholder = inc.placeholder;
         },
         .vbox => |*v| {
             const inc = incoming.vbox;
@@ -203,6 +232,10 @@ fn morphNodeLeaky(
             v.clip = inc.clip;
             v.hoverable = inc.hoverable;
             v.mouseable = inc.mouseable;
+            v.disabled = inc.disabled;
+            v.readonly = inc.readonly;
+            v.validation = inc.validation;
+            v.focusable = inc.focusable;
             v.justify_content = inc.justify_content;
             v.align_items = inc.align_items;
             v.gap = inc.gap;
@@ -262,6 +295,10 @@ fn morphNodeLeaky(
             h.clip = inc.clip;
             h.hoverable = inc.hoverable;
             h.mouseable = inc.mouseable;
+            h.disabled = inc.disabled;
+            h.readonly = inc.readonly;
+            h.validation = inc.validation;
+            h.focusable = inc.focusable;
             h.justify_content = inc.justify_content;
             h.align_items = inc.align_items;
             h.gap = inc.gap;
@@ -322,6 +359,10 @@ fn morphNodeLeaky(
             b.shadow = inc.shadow;
             b.hoverable = inc.hoverable;
             b.mouseable = inc.mouseable;
+            b.disabled = inc.disabled;
+            b.readonly = inc.readonly;
+            b.validation = inc.validation;
+            b.focusable = inc.focusable;
             b.align_self = inc.align_self;
             b.style = inc.style;
 
@@ -342,6 +383,10 @@ fn morphNodeLeaky(
             s.clip = inc.clip;
             s.hoverable = inc.hoverable;
             s.mouseable = inc.mouseable;
+            s.disabled = inc.disabled;
+            s.readonly = inc.readonly;
+            s.validation = inc.validation;
+            s.focusable = inc.focusable;
             s.align_self = inc.align_self;
             s.style = inc.style;
 
@@ -364,6 +409,10 @@ fn morphNodeLeaky(
             o.clip = inc.clip;
             o.hoverable = inc.hoverable;
             o.mouseable = inc.mouseable;
+            o.disabled = inc.disabled;
+            o.readonly = inc.readonly;
+            o.validation = inc.validation;
+            o.focusable = inc.focusable;
             o.align_self = inc.align_self;
             o.style = inc.style;
 
@@ -438,6 +487,11 @@ fn morphNodeLeaky(
             l.align_self = inc.align_self;
             l.hoverable = inc.hoverable;
             l.mouseable = inc.mouseable;
+            l.disabled = inc.disabled;
+            l.readonly = inc.readonly;
+            l.validation = inc.validation;
+            l.focusable = inc.focusable;
+            l.marker = inc.marker;
             l.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);

@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.12)
+## Protocol (v0.13)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -110,6 +110,12 @@ List item activated:
 {"type":"event","name":"activate","id":"results","item":"item-2"}
 ```
 
+Activation for non-list widgets (buttons/checkboxes/toggles/etc) uses `item:""` by convention:
+
+```json
+{"type":"event","name":"activate","id":"my-button","item":""}
+```
+
 Scroll viewport moved (optional):
 
 ```json
@@ -162,7 +168,17 @@ Wheel/trackpad scroll (runtime emits `kind:"scroll"` with `scroll_dy` negative f
 - `text`: `{ "type":"text", "id":"...", "text":"..." }`
 - `styled_text`: `{ "type":"styled_text", "id":"...", "spans":[ {"text":"...","style":{...}} ] }`
 - `input`: `{ "type":"input", "id":"...", "placeholder":"..." }`
-- `list`: `{ "type":"list", "id":"...", "height":3, "children":[ ... ] }`
+- `textarea`: `{ "type":"textarea", "id":"...", "placeholder":"...?" }` (multiline text input; emits `event:name:"input"` like `input`)
+- `list`: `{ "type":"list", "id":"...", "height":3, "marker":"default|none", "children":[ ... ] }`
+
+### Widget state (uniform, optional)
+
+Any node may include:
+
+- `disabled` (bool, default false): skipped by focus traversal; excluded from hover/pointer hit-testing; local interactions targeting it are ignored.
+- `readonly` (bool, default false): enforced for `input`/`textarea` (cursor movement allowed, edits blocked); for other nodes it affects styling only (v1).
+- `validation` (string, default `"none"`): `"error"|"warning"|"success"` applies validation styling.
+- `focusable` (bool): if true, included in tab order. Defaults: `input`/`list`/`scroll`/`textarea` are focusable by default; other nodes are not.
 
 ### Styling
 

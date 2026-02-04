@@ -7,6 +7,7 @@ pub const PatchMsg = types.PatchMsg;
 pub const PatchMode = types.PatchMode;
 pub const EventMsg = types.EventMsg;
 pub const Node = types.Node;
+pub const ValidationState = types.ValidationState;
 
 pub const PointerKind = types.PointerKind;
 pub const PointerButton = types.PointerButton;
@@ -31,6 +32,8 @@ pub const TextNode = types.TextNode;
 pub const Span = types.Span;
 pub const StyledTextNode = types.StyledTextNode;
 pub const InputNode = types.InputNode;
+pub const TextareaNode = types.TextareaNode;
+pub const ListMarker = types.ListMarker;
 pub const ListNode = types.ListNode;
 
 pub const ParseMsgError = types.ParseMsgError;

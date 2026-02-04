@@ -34,6 +34,29 @@ const DROPDOWN_ID: []const u8 = "dropdown";
 const MODAL_ACTIONS_ID: []const u8 = "modal-actions";
 const MODAL_CLOSE: []const u8 = "modal-close";
 
+const W_BTN: []const u8 = "w-btn";
+const W_BTN_DISABLED: []const u8 = "w-btn-disabled";
+const W_BTN_ERROR: []const u8 = "w-btn-error";
+const W_CHECKBOX: []const u8 = "w-checkbox";
+const W_TOGGLE: []const u8 = "w-toggle";
+const W_RADIO: []const u8 = "w-radio";
+const W_TAB_ONE: []const u8 = "w-tab-one";
+const W_TAB_TWO: []const u8 = "w-tab-two";
+const W_TAB_THREE: []const u8 = "w-tab-three";
+const W_MENU_FILE: []const u8 = "w-menu-file";
+const W_MENU_HELP: []const u8 = "w-menu-help";
+const W_MENU_LIST: []const u8 = "w-menu-list";
+const W_MENU_NEW: []const u8 = "w-menu-new";
+const W_MENU_OPEN: []const u8 = "w-menu-open";
+const W_MENU_QUIT: []const u8 = "w-menu-quit";
+const W_MENU_ABOUT: []const u8 = "w-menu-about";
+const W_MENU_CLOSE: []const u8 = "w-menu-close";
+const W_TREE: []const u8 = "w-tree";
+const W_TREE_ROOT: []const u8 = "w-tree-root";
+const W_TREE_SRC: []const u8 = "w-tree-src";
+const W_TREE_LIB: []const u8 = "w-tree-lib";
+const W_TREE_TESTS: []const u8 = "w-tree-tests";
+
 const MdMode = enum { tracer18, tracer19a, tracer19b };
 
 fn modeName(mode: MdMode) []const u8 {
@@ -84,6 +107,7 @@ fn nodeId(node: protocol.Node) []const u8 {
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
+        .textarea => |t| t.id,
         .list => |l| l.id,
     };
 }
@@ -184,6 +208,13 @@ pub fn main() !void {
     var popup_dropdown_open: bool = false;
     var popup_tooltip_on: bool = false;
 
+    var widgets: state.WidgetsState = .{
+        .checkbox_checked = true,
+        .toggle_on = false,
+        .radio_choice = .alpha,
+        .active_tab = .one,
+    };
+
     var md_blocks: ?tui.markdown.StreamBlocks = null;
     defer if (md_blocks) |*s| s.deinit();
     var md_inline: ?tui.markdown.StreamInline = null;
@@ -260,6 +291,8 @@ pub fn main() !void {
             lists[0..],
             list_height,
             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+            widgets,
+            tick,
         );
     }
     try out.flush();
@@ -386,6 +419,8 @@ pub fn main() !void {
                     layout_alt,
                     list_height,
                     popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                    widgets,
+                    tick,
                 );
             }
 
@@ -863,11 +898,14 @@ pub fn main() !void {
                                 hover_id.items,
                                 hover_item.items,
                             ),
+                            widgets,
+                            tick,
                         );
                         try out.flush();
                     },
                     .activate => |a| {
                         std.debug.print("EVENT_RX name=activate id={s} item={s}\n", .{ a.id, a.item });
+                        var widgets_changed: bool = false;
                         if (std.mem.eql(u8, a.id, POPUPS_ID) or std.mem.eql(u8, a.id, MODAL_ACTIONS_ID) or std.mem.eql(u8, a.id, DROPDOWN_ID)) {
                             if (std.mem.eql(u8, a.id, POPUPS_ID)) {
                                 if (std.mem.eql(u8, a.item, POPUP_OPEN_MODAL)) {
@@ -961,11 +999,92 @@ pub fn main() !void {
                                 layout_alt,
                                 list_height,
                                 popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                widgets,
+                                tick,
                             );
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
                             continue;
                         }
+
+                        if (a.item.len == 0) {
+                            if (std.mem.eql(u8, a.id, W_BTN)) {
+                                widgets.button_clicks += 1;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_CHECKBOX)) {
+                                widgets.checkbox_checked = !widgets.checkbox_checked;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_TOGGLE)) {
+                                widgets.toggle_on = !widgets.toggle_on;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_TAB_ONE)) {
+                                widgets.active_tab = .one;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_TAB_TWO)) {
+                                widgets.active_tab = .two;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_TAB_THREE)) {
+                                widgets.active_tab = .three;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_MENU_FILE)) {
+                                if (widgets.menu_open and widgets.menu_anchor == .file) {
+                                    widgets.menu_open = false;
+                                } else {
+                                    widgets.menu_open = true;
+                                    widgets.menu_anchor = .file;
+                                }
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_MENU_HELP)) {
+                                if (widgets.menu_open and widgets.menu_anchor == .help) {
+                                    widgets.menu_open = false;
+                                } else {
+                                    widgets.menu_open = true;
+                                    widgets.menu_anchor = .help;
+                                }
+                                widgets_changed = true;
+                            }
+                        } else if (std.mem.eql(u8, a.id, W_RADIO)) {
+                            if (std.mem.eql(u8, a.item, "w-radio-a")) {
+                                widgets.radio_choice = .alpha;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.item, "w-radio-b")) {
+                                widgets.radio_choice = .beta;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.item, "w-radio-c")) {
+                                widgets.radio_choice = .gamma;
+                                widgets_changed = true;
+                            }
+                        } else if (std.mem.eql(u8, a.id, W_MENU_LIST)) {
+                            widgets.menu_open = false;
+                            if (std.mem.eql(u8, a.item, W_MENU_NEW)) {
+                                widgets.last_menu_action = .new;
+                            } else if (std.mem.eql(u8, a.item, W_MENU_OPEN)) {
+                                widgets.last_menu_action = .open;
+                            } else if (std.mem.eql(u8, a.item, W_MENU_ABOUT)) {
+                                widgets.last_menu_action = .about;
+                            } else if (std.mem.eql(u8, a.item, W_MENU_QUIT)) {
+                                widgets.last_menu_action = .quit;
+                                return;
+                            } else if (std.mem.eql(u8, a.item, W_MENU_CLOSE)) {
+                                widgets.last_menu_action = .none;
+                            }
+                            widgets_changed = true;
+                        } else if (std.mem.eql(u8, a.id, W_TREE)) {
+                            if (std.mem.eql(u8, a.item, W_TREE_ROOT)) {
+                                widgets.tree_root_expanded = !widgets.tree_root_expanded;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.item, W_TREE_SRC)) {
+                                widgets.tree_src_expanded = !widgets.tree_src_expanded;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.item, W_TREE_LIB)) {
+                                widgets.tree_lib_expanded = !widgets.tree_lib_expanded;
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.item, W_TREE_TESTS)) {
+                                widgets.tree_tests_expanded = !widgets.tree_tests_expanded;
+                                widgets_changed = true;
+                            }
+                        }
+
                         if (std.mem.eql(u8, a.id, MD_ACTIONS_ID)) {
                             if (std.mem.eql(u8, a.item, MD_ACTION_START)) {
                                 md_buf.clearRetainingCapacity();
@@ -1142,6 +1261,71 @@ pub fn main() !void {
                                 .captured = pointer_captured,
                             } else null,
                         );
+                        if (widgets_changed) {
+                            var tick_buf: [64]u8 = undefined;
+                            const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+
+                            const layout_alt = false;
+                            _ = arena_tx.reset(.retain_capacity);
+                            const md_stream_node = switch (md_mode) {
+                                .tracer18 => try markdown.compileLeaky(
+                                    arena_tx.allocator(),
+                                    md_buf.items,
+                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                ),
+                                .tracer19a => if (md_blocks) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                    arena_tx.allocator(),
+                                    "",
+                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                ),
+                                .tracer19b => if (md_inline) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                    arena_tx.allocator(),
+                                    "",
+                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                ),
+                            };
+
+                            var title_buf: [128]u8 = undefined;
+                            var hint_buf: [512]u8 = undefined;
+                            var faster_buf: [96]u8 = undefined;
+                            var slower_buf: [96]u8 = undefined;
+                            var chunk_smaller_buf: [96]u8 = undefined;
+                            var chunk_larger_buf: [96]u8 = undefined;
+                            const md_title = try mdStreamTitle(&title_buf, md_mode);
+                            const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
+                            const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
+                            const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
+                            const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
+                            const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
+
+                            try render.emitRootMorphPatch(
+                                arena_tx.allocator(),
+                                out,
+                                tick_text,
+                                status_text,
+                                md_stream_node,
+                                md_title,
+                                md_hint,
+                                md_faster,
+                                md_slower,
+                                md_chunk_smaller,
+                                md_chunk_larger,
+                                inputs[0..],
+                                lists[0..],
+                                layout_alt,
+                                list_height,
+                                popupsInfo(
+                                    popup_modal_open,
+                                    popup_dropdown_open,
+                                    popup_tooltip_on,
+                                    focus_id.items,
+                                    hover_id.items,
+                                    hover_item.items,
+                                ),
+                                widgets,
+                                tick,
+                            );
+                        }
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                         try out.flush();

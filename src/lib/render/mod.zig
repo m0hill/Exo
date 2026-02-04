@@ -4,13 +4,19 @@ const protocol = @import("../protocol/mod.zig");
 const style = @import("../style.zig");
 const unicode = @import("../unicode.zig");
 const render_text = @import("text.zig");
+const theme_mod = @import("theme.zig");
 
 const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
+const default_theme = theme_mod.default_theme;
 
 pub const RenderState = struct {
     focused_id: ?[]const u8 = null,
+    hovered_id: ?[]const u8 = null,
+    hovered_item: ?[]const u8 = null,
+    active_id: ?[]const u8 = null,
     inputs: []const InputState = &.{},
+    textareas: []const TextareaState = &.{},
     lists: []const ListState = &.{},
     scrolls: []const ScrollState = &.{},
 };
@@ -20,6 +26,13 @@ pub const InputState = struct {
     value: []const u8,
     cursor: usize,
     scroll_x: usize,
+};
+
+pub const TextareaState = struct {
+    id: []const u8,
+    value: []const u8,
+    cursor: usize,
+    scroll_y: usize,
 };
 
 pub const ListState = struct {
@@ -121,6 +134,7 @@ fn nodeAlignSelf(node: protocol.Node) ?protocol.AlignItems {
         .text => |t| t.align_self,
         .styled_text => |t| t.align_self,
         .input => |i| i.align_self,
+        .textarea => |t| t.align_self,
         .list => |l| l.align_self,
     };
 }
@@ -263,6 +277,7 @@ fn nodeId(node: protocol.Node) []const u8 {
         .text => |t| t.id,
         .styled_text => |t| t.id,
         .input => |i| i.id,
+        .textarea => |t| t.id,
         .list => |l| l.id,
     };
 }
@@ -277,6 +292,7 @@ fn nodeHintW(node: protocol.Node) ?usize {
         .text => |t| t.w,
         .styled_text => |t| t.w,
         .input => |i| i.w,
+        .textarea => |t| t.w,
         .list => |l| l.w,
     };
 }
@@ -291,6 +307,7 @@ fn nodeHintH(node: protocol.Node) ?usize {
         .text => |t| t.h,
         .styled_text => |t| t.h,
         .input => |i| i.h,
+        .textarea => |t| t.h,
         .list => |l| l.h,
     };
 }
@@ -305,6 +322,7 @@ fn nodeFlex(node: protocol.Node) usize {
         .text => |t| t.flex,
         .styled_text => |t| t.flex,
         .input => |i| i.flex,
+        .textarea => |t| t.flex,
         .list => |l| l.flex,
     };
 }
@@ -337,6 +355,7 @@ fn measureHeight(node: protocol.Node, avail_w: usize) usize {
         .text => |t| return render_text.countWrappedLines(t.text, avail_w),
         .styled_text => |t| return render_text.countWrappedLinesSpans(t.spans, avail_w),
         .input => return 1,
+        .textarea => return 3,
         .list => |l| return l.height orelse l.children.len,
         .box => |b| {
             const border_thickness: usize = if (b.border and avail_w >= 2) 1 else 0;
@@ -620,6 +639,94 @@ fn packedEq(a: style.PackedStyle, b: style.PackedStyle) bool {
     return @as(u64, @bitCast(a)) == @as(u64, @bitCast(b));
 }
 
+fn applyOverlay(base: style.Style, overlay: theme_mod.Overlay) style.Style {
+    var out = base;
+    if (overlay.fg) |c| out.fg = c;
+    if (overlay.bg) |c| out.bg = c;
+    return style.overlayAttrs(out, overlay.attrs_set, overlay.attrs_values);
+}
+
+fn nodeDisabled(node: protocol.Node) bool {
+    return switch (node) {
+        .vbox => |v| v.disabled,
+        .hbox => |h| h.disabled,
+        .box => |b| b.disabled,
+        .scroll => |s| s.disabled,
+        .overlay => |o| o.disabled,
+        .text => |t| t.disabled,
+        .styled_text => |t| t.disabled,
+        .input => |i| i.disabled,
+        .textarea => |t| t.disabled,
+        .list => |l| l.disabled,
+    };
+}
+
+fn nodeReadonly(node: protocol.Node) bool {
+    return switch (node) {
+        .vbox => |v| v.readonly,
+        .hbox => |h| h.readonly,
+        .box => |b| b.readonly,
+        .scroll => |s| s.readonly,
+        .overlay => |o| o.readonly,
+        .text => |t| t.readonly,
+        .styled_text => |t| t.readonly,
+        .input => |i| i.readonly,
+        .textarea => |t| t.readonly,
+        .list => |l| l.readonly,
+    };
+}
+
+fn nodeValidation(node: protocol.Node) protocol.ValidationState {
+    return switch (node) {
+        .vbox => |v| v.validation,
+        .hbox => |h| h.validation,
+        .box => |b| b.validation,
+        .scroll => |s| s.validation,
+        .overlay => |o| o.validation,
+        .text => |t| t.validation,
+        .styled_text => |t| t.validation,
+        .input => |i| i.validation,
+        .textarea => |t| t.validation,
+        .list => |l| l.validation,
+    };
+}
+
+fn applyStateOverlays(base: style.Style, node: protocol.Node, state: RenderState) style.Style {
+    var out = base;
+
+    const v = nodeValidation(node);
+    out = switch (v) {
+        .none => out,
+        .@"error" => applyOverlay(out, default_theme.validation_error_overlay),
+        .warning => applyOverlay(out, default_theme.validation_warning_overlay),
+        .success => applyOverlay(out, default_theme.validation_success_overlay),
+    };
+
+    if (nodeDisabled(node)) out = applyOverlay(out, default_theme.disabled_overlay);
+    if (nodeReadonly(node)) out = applyOverlay(out, default_theme.readonly_overlay);
+
+    const id = nodeId(node);
+    if (state.hovered_id != null and std.mem.eql(u8, state.hovered_id.?, id)) {
+        // For lists, prefer highlighting the hovered row (via `hovered_item`) rather than
+        // painting the whole list rect.
+        const is_list = switch (node) {
+            .list => true,
+            else => false,
+        };
+        if (!is_list) {
+            out = applyOverlay(out, default_theme.hovered_overlay);
+        }
+    }
+    if (state.focused_id != null and std.mem.eql(u8, state.focused_id.?, id)) {
+        out = applyOverlay(out, default_theme.focused_overlay);
+    }
+    if (state.active_id != null and std.mem.eql(u8, state.active_id.?, id)) {
+        out = applyOverlay(out, default_theme.active_overlay);
+    }
+
+    return out;
+}
+
 fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
     return switch (node) {
         .vbox => |v| v.style,
@@ -630,6 +737,7 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
         .text => |t| t.style,
         .styled_text => |t| t.style,
         .input => |i| i.style,
+        .textarea => |t| t.style,
         .list => |l| l.style,
     };
 }
@@ -812,12 +920,162 @@ fn paintInput(
     }
 }
 
+fn paintTextarea(
+    frame: *Frame,
+    rect: RectI,
+    clip: RectI,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+    t: protocol.TextareaNode,
+    inherited: style.Style,
+) void {
+    if (rect.w == 0 or rect.h == 0) return;
+
+    const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, t.id);
+    const textarea_state = findTextareaState(state.textareas, t.id);
+
+    const base_style = inherited;
+    const base_packed = style.pack(base_style);
+    const ph_style = style.merge(base_style, t.placeholder_style);
+    const ph_packed = style.pack(ph_style);
+
+    const value: []const u8 = if (textarea_state) |st| st.value else "";
+    const effective_cursor: usize = unicode.clampGraphemeBoundary(
+        value,
+        @min(if (textarea_state) |st| st.cursor else 0, value.len),
+    );
+    const scroll_y: usize = if (textarea_state) |st| st.scroll_y else 0;
+
+    if (value.len == 0 and t.placeholder != null) {
+        if (focused and cursor_out.* == null) {
+            const row: isize = rect.y;
+            const col_abs: isize = rect.x;
+            if (row >= clip.y and row < clip.y + @as(isize, @intCast(clip.h)) and col_abs >= clip.x and col_abs < clip.x + @as(isize, @intCast(clip.w)) and row >= 0 and col_abs >= 0) {
+                cursor_out.* = .{
+                    .row = @as(usize, @intCast(row + 1)),
+                    .col = @as(usize, @intCast(col_abs + 1)),
+                };
+            }
+        }
+        render_text.drawWrappedTextInRectAligned(frame, rect, clip, t.placeholder.?, ph_packed, .left, .top);
+        return;
+    }
+
+    const cols: usize = rect.w;
+    const rows: usize = rect.h;
+
+    var byte_idx: usize = 0;
+    var vis_y: usize = 0;
+    var vis_x: usize = 0;
+
+    var cursor_vis_y: usize = 0;
+    var cursor_vis_x: usize = 0;
+    var cursor_found: bool = false;
+
+    if (effective_cursor == 0) {
+        cursor_vis_y = 0;
+        cursor_vis_x = 0;
+        cursor_found = true;
+    }
+
+    while (byte_idx < value.len) {
+        if (!cursor_found and byte_idx == effective_cursor) {
+            cursor_vis_y = vis_y;
+            cursor_vis_x = vis_x;
+            cursor_found = true;
+        }
+
+        const g = unicode.nextGrapheme(value, byte_idx);
+        if (g.end <= byte_idx) break;
+
+        const b0: u8 = value[g.start];
+        if (b0 == '\r') {
+            byte_idx = g.end;
+            continue;
+        }
+        if (b0 == '\n') {
+            vis_y += 1;
+            vis_x = 0;
+            byte_idx = g.end;
+            continue;
+        }
+
+        var glyph: []const u8 = value[g.start..g.end];
+        var width: usize = g.width;
+        if (b0 == '\t') {
+            glyph = " ";
+            width = 1;
+        }
+
+        if (width == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (cols == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (width > cols) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (vis_x + width > cols) {
+            vis_y += 1;
+            vis_x = 0;
+            continue;
+        }
+
+        if (vis_y >= scroll_y and vis_y < scroll_y + rows) {
+            const row: isize = rect.y + @as(isize, @intCast(vis_y - scroll_y));
+            const col_abs: isize = rect.x + @as(isize, @intCast(vis_x));
+            render_text.putGraphemeClipped(
+                frame,
+                row,
+                col_abs,
+                glyph,
+                @as(u2, @intCast(width)),
+                clip,
+                base_packed,
+            );
+        }
+
+        vis_x += width;
+        byte_idx = g.end;
+    }
+
+    if (!cursor_found) {
+        cursor_vis_y = vis_y;
+        cursor_vis_x = vis_x;
+        cursor_found = true;
+    }
+
+    if (focused and cursor_out.* == null and cols != 0) {
+        if (cursor_vis_y >= scroll_y and cursor_vis_y < scroll_y + rows) {
+            const row: isize = rect.y + @as(isize, @intCast(cursor_vis_y - scroll_y));
+            var col_abs: isize = rect.x + @as(isize, @intCast(cursor_vis_x));
+            const rect_x2: isize = rect.x + @as(isize, @intCast(cols));
+            if (col_abs >= rect_x2) col_abs = rect_x2 - 1;
+
+            if (row >= clip.y and row < clip.y + @as(isize, @intCast(clip.h)) and col_abs >= clip.x and col_abs < clip.x + @as(isize, @intCast(clip.w)) and row >= 0 and col_abs >= 0) {
+                cursor_out.* = .{
+                    .row = @as(usize, @intCast(row + 1)),
+                    .col = @as(usize, @intCast(col_abs + 1)),
+                };
+            }
+        }
+    }
+}
+
 fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: protocol.ListNode, inherited: style.Style) void {
     if (rect.h == 0) return;
     const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, l.id);
     const list_state = findListState(state.lists, l.id);
     const selected_id = if (list_state) |st| st.selected_id else "";
     const scroll = if (list_state) |st| st.scroll else 0;
+    const hovered_item = if (state.hovered_id != null and std.mem.eql(u8, state.hovered_id.?, l.id)) state.hovered_item else null;
 
     const list_style = inherited;
     const list_packed = style.pack(list_style);
@@ -834,9 +1092,14 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
         const item = l.children[item_idx];
         const item_id = nodeId(item);
         const is_selected = selected_id.len > 0 and std.mem.eql(u8, selected_id, item_id);
+        const is_hovered = hovered_item != null and std.mem.eql(u8, hovered_item.?, item_id);
 
-        const prefix = if (is_selected) (if (focused) "> " else "* ") else "  ";
-        const item_style = style.merge(list_style, nodeStyleOverride(item));
+        const prefix = switch (l.marker) {
+            .none => "",
+            .default => if (is_selected) (if (focused) "> " else "* ") else "  ",
+        };
+        var item_style = style.merge(list_style, nodeStyleOverride(item));
+        if (is_hovered and !is_selected) item_style = applyOverlay(item_style, default_theme.hovered_overlay);
         var row_packed = style.pack(item_style);
         if (is_selected) row_packed.attrs |= style.ATTR_INVERSE;
 
@@ -1036,7 +1299,8 @@ fn paintNode(
     if (node_clip.w == 0 or node_clip.h == 0) return;
 
     const own_override = nodeStyleOverride(node);
-    const resolved = style.merge(inherited, own_override);
+    const base_resolved = style.merge(inherited, own_override);
+    const resolved = applyStateOverlays(base_resolved, node, state);
     const inherited_packed = style.pack(inherited);
     const resolved_packed = style.pack(resolved);
     if (!packedEq(resolved_packed, inherited_packed) and resolved_packed.affectsBlank()) {
@@ -1047,6 +1311,7 @@ fn paintNode(
         .text => |t| render_text.drawWrappedTextInRectAligned(frame, rect, node_clip, t.text, resolved_packed, t.ext_align, t.v_align),
         .styled_text => |t| render_text.drawWrappedStyledSpansInRectAligned(frame, rect, node_clip, t.spans, resolved, 0, t.ext_align, t.v_align),
         .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i, resolved),
+        .textarea => |t| paintTextarea(frame, rect, node_clip, state, cursor_out, t, resolved),
         .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved, mode),
         .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h, resolved, mode),
@@ -1158,8 +1423,42 @@ fn paintOverlay(
     paintNode(frame, o.base.*, inner, child_clip, state, cursor_out, inherited, mode);
 
     const screen = screenRect(frame);
-    for (o.layers) |layer| {
-        const layer_rect = computeOverlayLayerRectForBaseRect(screen, rect, inner, o.base.*, layer, state.scrolls, mode);
+    const max_layer_rects: usize = 32;
+    var computed_layer_rects: [max_layer_rects]RectI = undefined;
+
+    var i: usize = 0;
+    while (i < o.layers.len and i < max_layer_rects) : (i += 1) {
+        const layer = o.layers[i];
+        const layer_rect = computeOverlayLayerRectForBaseRect(
+            screen,
+            rect,
+            inner,
+            o.base.*,
+            o.layers[0..i],
+            computed_layer_rects[0..i],
+            layer,
+            state.scrolls,
+            mode,
+        );
+        computed_layer_rects[i] = layer_rect;
+        const layer_clip = screen;
+        paintNode(frame, layer.node.*, layer_rect, layer_clip, state, cursor_out, inherited, .bounded);
+    }
+
+    // Fallback for rare cases with many layers: compute rects without cross-layer anchors.
+    while (i < o.layers.len) : (i += 1) {
+        const layer = o.layers[i];
+        const layer_rect = computeOverlayLayerRectForBaseRect(
+            screen,
+            rect,
+            inner,
+            o.base.*,
+            &.{},
+            &.{},
+            layer,
+            state.scrolls,
+            mode,
+        );
         const layer_clip = screen;
         paintNode(frame, layer.node.*, layer_rect, layer_clip, state, cursor_out, inherited, .bounded);
     }
@@ -1170,6 +1469,8 @@ fn computeOverlayLayerRectForBaseRect(
     overlay_rect: RectI,
     base_rect: RectI,
     base: protocol.Node,
+    prev_layers: []const protocol.OverlayLayer,
+    prev_layer_rects: []const RectI,
     layer: protocol.OverlayLayer,
     scrolls: []const ScrollState,
     mode: VBoxMode,
@@ -1177,6 +1478,10 @@ fn computeOverlayLayerRectForBaseRect(
     const anchor_rect: RectI = blk: {
         if (layer.anchor) |aid| {
             if (findRectInNodeIBaseOnly(base, base_rect, aid, scrolls, mode)) |r| break :blk r;
+            var i: usize = 0;
+            while (i < prev_layers.len and i < prev_layer_rects.len) : (i += 1) {
+                if (findRectInNodeIBaseOnly(prev_layers[i].node.*, prev_layer_rects[i], aid, scrolls, .bounded)) |r| break :blk r;
+            }
         }
         break :blk .{ .x = overlay_rect.x, .y = overlay_rect.y, .w = 0, .h = 0 };
     };
@@ -1257,6 +1562,21 @@ fn findInputState(inputs: []const InputState, id: []const u8) ?InputState {
     while (lo < hi) {
         const mid: usize = lo + (hi - lo) / 2;
         const st = inputs[mid];
+        switch (std.mem.order(u8, st.id, id)) {
+            .lt => lo = mid + 1,
+            .gt => hi = mid,
+            .eq => return st,
+        }
+    }
+    return null;
+}
+
+fn findTextareaState(textareas: []const TextareaState, id: []const u8) ?TextareaState {
+    var lo: usize = 0;
+    var hi: usize = textareas.len;
+    while (lo < hi) {
+        const mid: usize = lo + (hi - lo) / 2;
+        const st = textareas[mid];
         switch (std.mem.order(u8, st.id, id)) {
             .lt => lo = mid + 1,
             .gt => hi = mid,
@@ -1480,8 +1800,41 @@ fn findRectInNodeI(
         .overlay => |o| {
             const inner = rectDeflate(rect, o.pad);
             if (findRectInNodeI(o.base.*, inner, id, scrolls, mode, screen)) |r| return r;
-            for (o.layers) |layer| {
-                const layer_rect = computeOverlayLayerRectForBaseRect(screen, rect, inner, o.base.*, layer, scrolls, mode);
+
+            const max_layer_rects: usize = 32;
+            var computed_layer_rects: [max_layer_rects]RectI = undefined;
+
+            var i: usize = 0;
+            while (i < o.layers.len and i < max_layer_rects) : (i += 1) {
+                const layer = o.layers[i];
+                const layer_rect = computeOverlayLayerRectForBaseRect(
+                    screen,
+                    rect,
+                    inner,
+                    o.base.*,
+                    o.layers[0..i],
+                    computed_layer_rects[0..i],
+                    layer,
+                    scrolls,
+                    mode,
+                );
+                computed_layer_rects[i] = layer_rect;
+                if (findRectInNodeI(layer.node.*, layer_rect, id, scrolls, .bounded, screen)) |r| return r;
+            }
+
+            while (i < o.layers.len) : (i += 1) {
+                const layer = o.layers[i];
+                const layer_rect = computeOverlayLayerRectForBaseRect(
+                    screen,
+                    rect,
+                    inner,
+                    o.base.*,
+                    &.{},
+                    &.{},
+                    layer,
+                    scrolls,
+                    mode,
+                );
                 if (findRectInNodeI(layer.node.*, layer_rect, id, scrolls, .bounded, screen)) |r| return r;
             }
             return null;

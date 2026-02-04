@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const tui = @import("tui");
 const protocol = tui.protocol;
@@ -11,8 +12,16 @@ const hover = tui.hover;
 const unicode = tui.unicode;
 const keys = tui.keys;
 
-const log = @import("../log.zig");
+const log = if (builtin.is_test)
+    struct {
+        pub const LogSink = struct {};
+        pub fn logPrint(_: *LogSink, comptime _: []const u8, _: anytype) void {}
+    }
+else
+    @import("../log.zig");
 const node_util = @import("node_util.zig");
+
+pub const pointer = @import("pointer.zig");
 
 pub fn effectiveTermSize(sz: terminal.Size) terminal.Size {
     var rows = sz.rows;
@@ -26,6 +35,111 @@ pub fn inputVisibleCols(cols: usize) usize {
     const prefix_len: usize = 2;
     if (cols <= prefix_len) return 0;
     return cols - prefix_len;
+}
+
+fn textareaCursorVisualY(value: []const u8, cursor: usize, cols: usize) usize {
+    const effective_cursor = unicode.clampGraphemeBoundary(value, @min(cursor, value.len));
+    if (effective_cursor == 0) return 0;
+
+    var byte_idx: usize = 0;
+    var y: usize = 0;
+    var x: usize = 0;
+
+    while (byte_idx < effective_cursor) {
+        const g = unicode.nextGrapheme(value, byte_idx);
+        if (g.end <= byte_idx) break;
+
+        const b0: u8 = value[g.start];
+        if (b0 == '\r') {
+            byte_idx = g.end;
+            continue;
+        }
+        if (b0 == '\n') {
+            y += 1;
+            x = 0;
+            byte_idx = g.end;
+            continue;
+        }
+
+        var width: usize = g.width;
+        if (b0 == '\t') width = 1;
+        if (width == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (cols == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (width > cols) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (x + width > cols) {
+            y += 1;
+            x = 0;
+            continue;
+        }
+
+        x += width;
+        byte_idx = g.end;
+    }
+
+    return y;
+}
+
+fn textareaVisualLines(value: []const u8, cols: usize) usize {
+    var byte_idx: usize = 0;
+    var y: usize = 0;
+    var x: usize = 0;
+
+    while (byte_idx < value.len) {
+        const g = unicode.nextGrapheme(value, byte_idx);
+        if (g.end <= byte_idx) break;
+
+        const b0: u8 = value[g.start];
+        if (b0 == '\r') {
+            byte_idx = g.end;
+            continue;
+        }
+        if (b0 == '\n') {
+            y += 1;
+            x = 0;
+            byte_idx = g.end;
+            continue;
+        }
+
+        var width: usize = g.width;
+        if (b0 == '\t') width = 1;
+        if (width == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (cols == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (width > cols) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (x + width > cols) {
+            y += 1;
+            x = 0;
+            continue;
+        }
+
+        x += width;
+        byte_idx = g.end;
+    }
+
+    return y + 1;
 }
 
 pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, size: terminal.Size) void {
@@ -45,8 +159,23 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 }
                 _ = input.ensure_cursor_visible(&s.scroll_x, s.cursor, s.value.items, visible_cols);
             },
+            .textarea => |*s| {
+                s.cursor = @min(s.cursor, s.value.items.len);
+
+                var visible_rows: usize = rows;
+                var visible_cols: usize = cols;
+                if (render.findRectForId(root, rows, cols, e.id.items)) |r| {
+                    visible_rows = r.h;
+                    visible_cols = r.w;
+                }
+
+                const cursor_y = textareaCursorVisualY(s.value.items, s.cursor, visible_cols);
+                const content_h = textareaVisualLines(s.value.items, visible_cols);
+                s.scroll_y = state.scrollIntoView(s.scroll_y, visible_rows, cursor_y, cursor_y + 1, content_h);
+            },
             .list => {},
             .scroll => {},
+            .action => {},
         }
     }
 
@@ -111,8 +240,10 @@ pub fn deinitWidgetEntries(allocator: std.mem.Allocator, widgets: *std.ArrayList
         e.id.deinit(allocator);
         switch (e.state) {
             .input => |*s| s.value.deinit(allocator),
+            .textarea => |*s| s.value.deinit(allocator),
             .list => |*s| s.selected_id.deinit(allocator),
             .scroll => {},
+            .action => {},
         }
     }
     widgets.deinit(allocator);
@@ -122,11 +253,16 @@ pub fn buildRenderState(
     allocator: std.mem.Allocator,
     widgets: []const WidgetEntry,
     render_inputs: *std.ArrayList(render.InputState),
+    render_textareas: *std.ArrayList(render.TextareaState),
     render_lists: *std.ArrayList(render.ListState),
     render_scrolls: *std.ArrayList(render.ScrollState),
     focused_id: ?[]const u8,
+    hovered_id: ?[]const u8,
+    hovered_item: ?[]const u8,
+    active_id: ?[]const u8,
 ) !render.RenderState {
     render_inputs.clearRetainingCapacity();
+    render_textareas.clearRetainingCapacity();
     render_lists.clearRetainingCapacity();
     render_scrolls.clearRetainingCapacity();
 
@@ -138,6 +274,14 @@ pub fn buildRenderState(
                     .value = s.value.items,
                     .cursor = s.cursor,
                     .scroll_x = s.scroll_x,
+                });
+            },
+            .textarea => |s| {
+                try render_textareas.append(allocator, .{
+                    .id = e.id.items,
+                    .value = s.value.items,
+                    .cursor = s.cursor,
+                    .scroll_y = s.scroll_y,
                 });
             },
             .list => |s| {
@@ -155,11 +299,17 @@ pub fn buildRenderState(
                     .viewport_h = s.viewport_h,
                 });
             },
+            .action => {},
         }
     }
 
     std.sort.pdq(render.InputState, render_inputs.items, {}, struct {
         fn lessThan(_: void, a: render.InputState, b: render.InputState) bool {
+            return std.mem.order(u8, a.id, b.id) == .lt;
+        }
+    }.lessThan);
+    std.sort.pdq(render.TextareaState, render_textareas.items, {}, struct {
+        fn lessThan(_: void, a: render.TextareaState, b: render.TextareaState) bool {
             return std.mem.order(u8, a.id, b.id) == .lt;
         }
     }.lessThan);
@@ -176,7 +326,11 @@ pub fn buildRenderState(
 
     return .{
         .focused_id = focused_id,
+        .hovered_id = hovered_id,
+        .hovered_item = hovered_item,
+        .active_id = active_id,
         .inputs = render_inputs.items,
+        .textareas = render_textareas.items,
         .lists = render_lists.items,
         .scrolls = render_scrolls.items,
     };
@@ -185,40 +339,73 @@ pub fn buildRenderState(
 fn collectFocusables(allocator: std.mem.Allocator, root: protocol.Node) !std.ArrayList(Focusable) {
     var out: std.ArrayList(Focusable) = .empty;
     errdefer out.deinit(allocator);
-    try collectFocusablesInto(allocator, &out, root);
+    try collectFocusablesInto(allocator, &out, root, false);
     return out;
 }
 
-fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focusable), node: protocol.Node) !void {
+fn collectFocusablesInto(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(Focusable),
+    node: protocol.Node,
+    disabled_ancestor: bool,
+) !void {
+    const disabled = disabled_ancestor or switch (node) {
+        .vbox => |v| v.disabled,
+        .hbox => |h| h.disabled,
+        .box => |b| b.disabled,
+        .scroll => |s| s.disabled,
+        .overlay => |o| o.disabled,
+        .text => |t| t.disabled,
+        .styled_text => |t| t.disabled,
+        .input => |i| i.disabled,
+        .textarea => |t| t.disabled,
+        .list => |l| l.disabled,
+    };
+    if (disabled) return;
+
     switch (node) {
         .input => |i| {
+            if (!i.focusable) return;
             try out.append(allocator, .{ .id = i.id, .kind = .input });
         },
+        .textarea => |t| {
+            if (!t.focusable) return;
+            try out.append(allocator, .{ .id = t.id, .kind = .textarea });
+        },
         .list => |l| {
+            if (!l.focusable) return;
             try out.append(allocator, .{ .id = l.id, .kind = .list });
         },
         .box => |b| {
-            try collectFocusablesInto(allocator, out, b.child.*);
+            if (b.focusable) try out.append(allocator, .{ .id = b.id, .kind = .action });
+            try collectFocusablesInto(allocator, out, b.child.*, false);
         },
         .scroll => |s| {
             // Prefer leaf focusables (inputs/lists) under the pointer before the viewport itself.
-            try collectFocusablesInto(allocator, out, s.child.*);
-            try out.append(allocator, .{ .id = s.id, .kind = .scroll });
+            try collectFocusablesInto(allocator, out, s.child.*, false);
+            if (s.focusable) try out.append(allocator, .{ .id = s.id, .kind = .scroll });
         },
         .overlay => |o| {
-            try collectFocusablesInto(allocator, out, o.base.*);
+            if (o.focusable) try out.append(allocator, .{ .id = o.id, .kind = .action });
+            try collectFocusablesInto(allocator, out, o.base.*, false);
             for (o.layers) |layer| {
-                try collectFocusablesInto(allocator, out, layer.node.*);
+                try collectFocusablesInto(allocator, out, layer.node.*, false);
             }
         },
         .vbox => |v| {
-            for (v.children) |child| try collectFocusablesInto(allocator, out, child);
+            if (v.focusable) try out.append(allocator, .{ .id = v.id, .kind = .action });
+            for (v.children) |child| try collectFocusablesInto(allocator, out, child, false);
         },
         .hbox => |h| {
-            for (h.children) |child| try collectFocusablesInto(allocator, out, child);
+            if (h.focusable) try out.append(allocator, .{ .id = h.id, .kind = .action });
+            for (h.children) |child| try collectFocusablesInto(allocator, out, child, false);
         },
-        .styled_text => {},
-        .text => {},
+        .styled_text => |t| {
+            if (t.focusable) try out.append(allocator, .{ .id = t.id, .kind = .action });
+        },
+        .text => |t| {
+            if (t.focusable) try out.append(allocator, .{ .id = t.id, .kind = .action });
+        },
     }
 }
 
@@ -292,10 +479,36 @@ fn collectHitTestables(allocator: std.mem.Allocator, root: protocol.Node) !std.A
 }
 
 fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]const u8), node: protocol.Node) !void {
+    const disabled = switch (node) {
+        .vbox => |v| v.disabled,
+        .hbox => |h| h.disabled,
+        .box => |b| b.disabled,
+        .scroll => |s| s.disabled,
+        .overlay => |o| o.disabled,
+        .text => |t| t.disabled,
+        .styled_text => |t| t.disabled,
+        .input => |i| i.disabled,
+        .textarea => |t| t.disabled,
+        .list => |l| l.disabled,
+    };
+    if (disabled) return;
+
     switch (node) {
         .input => |i| if (i.mouseable) try out.append(allocator, i.id),
+        .textarea => |t| if (t.mouseable) try out.append(allocator, t.id),
         .list => |l| if (l.mouseable) try out.append(allocator, l.id),
+        .text => |t| if (t.mouseable) try out.append(allocator, t.id),
+        .styled_text => |t| if (t.mouseable) try out.append(allocator, t.id),
+        .vbox => |v| {
+            if (v.mouseable) try out.append(allocator, v.id);
+            for (v.children) |child| try collectHitTestablesInto(allocator, out, child);
+        },
+        .hbox => |h| {
+            if (h.mouseable) try out.append(allocator, h.id);
+            for (h.children) |child| try collectHitTestablesInto(allocator, out, child);
+        },
         .box => |b| {
+            if (b.mouseable) try out.append(allocator, b.id);
             try collectHitTestablesInto(allocator, out, b.child.*);
         },
         .scroll => |s| {
@@ -304,14 +517,12 @@ fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]c
             try collectHitTestablesInto(allocator, out, s.child.*);
         },
         .overlay => |o| {
+            if (o.mouseable) try out.append(allocator, o.id);
             try collectHitTestablesInto(allocator, out, o.base.*);
             for (o.layers) |layer| {
                 try collectHitTestablesInto(allocator, out, layer.node.*);
             }
         },
-        .vbox => |v| for (v.children) |child| try collectHitTestablesInto(allocator, out, child),
-        .hbox => |h| for (h.children) |child| try collectHitTestablesInto(allocator, out, child),
-        else => {},
     }
 }
 
@@ -432,12 +643,23 @@ pub fn refreshHoverAfterPatch(
 }
 
 pub fn cycleFocusInTree(allocator: std.mem.Allocator, root: protocol.Node, current: ?[]const u8) !?[]const u8 {
+    return cycleFocusInTreeDir(allocator, root, current, 1);
+}
+
+pub fn cycleFocusInTreeDir(
+    allocator: std.mem.Allocator,
+    root: protocol.Node,
+    current: ?[]const u8,
+    dir: isize,
+) !?[]const u8 {
     if (findTopmostModalLayer(root)) |modal_ptr| {
         var modal_focusables = try collectFocusables(allocator, modal_ptr.*);
         defer modal_focusables.deinit(allocator);
 
         if (modal_focusables.items.len == 0) return null;
-        if (current == null) return modal_focusables.items[0].id;
+        if (current == null) {
+            return if (dir >= 0) modal_focusables.items[0].id else modal_focusables.items[modal_focusables.items.len - 1].id;
+        }
 
         var current_idx: ?usize = null;
         for (modal_focusables.items, 0..) |f, idx| {
@@ -447,17 +669,23 @@ pub fn cycleFocusInTree(allocator: std.mem.Allocator, root: protocol.Node, curre
             }
         }
 
-        if (current_idx == null) return modal_focusables.items[0].id;
+        if (current_idx == null) {
+            return if (dir >= 0) modal_focusables.items[0].id else modal_focusables.items[modal_focusables.items.len - 1].id;
+        }
         const idx = current_idx.?;
-        if (idx + 1 < modal_focusables.items.len) return modal_focusables.items[idx + 1].id;
-        return modal_focusables.items[0].id;
+        if (dir >= 0) {
+            return if (idx + 1 < modal_focusables.items.len) modal_focusables.items[idx + 1].id else modal_focusables.items[0].id;
+        }
+        return if (idx > 0) modal_focusables.items[idx - 1].id else modal_focusables.items[modal_focusables.items.len - 1].id;
     }
 
     var focusables = try collectFocusables(allocator, root);
     defer focusables.deinit(allocator);
 
     if (focusables.items.len == 0) return null;
-    if (current == null) return focusables.items[0].id;
+    if (current == null) {
+        return if (dir >= 0) focusables.items[0].id else focusables.items[focusables.items.len - 1].id;
+    }
 
     var current_idx: ?usize = null;
     for (focusables.items, 0..) |f, idx| {
@@ -467,10 +695,14 @@ pub fn cycleFocusInTree(allocator: std.mem.Allocator, root: protocol.Node, curre
         }
     }
 
-    if (current_idx == null) return focusables.items[0].id;
+    if (current_idx == null) {
+        return if (dir >= 0) focusables.items[0].id else focusables.items[focusables.items.len - 1].id;
+    }
     const idx = current_idx.?;
-    if (idx + 1 < focusables.items.len) return focusables.items[idx + 1].id;
-    return null;
+    if (dir >= 0) {
+        return if (idx + 1 < focusables.items.len) focusables.items[idx + 1].id else focusables.items[0].id;
+    }
+    return if (idx > 0) focusables.items[idx - 1].id else focusables.items[focusables.items.len - 1].id;
 }
 
 pub fn focusedKindInTree(allocator: std.mem.Allocator, root: protocol.Node, id: []const u8) !?FocusKind {
@@ -480,6 +712,48 @@ pub fn focusedKindInTree(allocator: std.mem.Allocator, root: protocol.Node, id: 
         if (std.mem.eql(u8, f.id, id)) return f.kind;
     }
     return null;
+}
+
+pub fn nodeReadonlyInTree(root: protocol.Node, id: []const u8) bool {
+    var out: bool = false;
+    _ = nodeReadonlyInTreeInto(root, id, &out);
+    return out;
+}
+
+fn nodeReadonlyInTreeInto(node: protocol.Node, id: []const u8, out: *bool) bool {
+    if (std.mem.eql(u8, node_util.nodeId(node), id)) {
+        out.* = switch (node) {
+            .vbox => |v| v.readonly,
+            .hbox => |h| h.readonly,
+            .box => |b| b.readonly,
+            .scroll => |s| s.readonly,
+            .overlay => |o| o.readonly,
+            .text => |t| t.readonly,
+            .styled_text => |t| t.readonly,
+            .input => |i| i.readonly,
+            .textarea => |t| t.readonly,
+            .list => |l| l.readonly,
+        };
+        return true;
+    }
+
+    switch (node) {
+        .vbox => |v| for (v.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
+        .hbox => |h| for (h.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
+        .box => |b| return nodeReadonlyInTreeInto(b.child.*, id, out),
+        .scroll => |s| return nodeReadonlyInTreeInto(s.child.*, id, out),
+        .overlay => |o| {
+            if (nodeReadonlyInTreeInto(o.base.*, id, out)) return true;
+            for (o.layers) |layer| {
+                if (nodeReadonlyInTreeInto(layer.node.*, id, out)) return true;
+            }
+            return false;
+        },
+        .list => |l| for (l.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
+        else => return false,
+    }
+
+    return false;
 }
 
 pub fn setFocusId(
@@ -769,6 +1043,17 @@ fn handleMouseDownLeft(
             _ = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
             if (st.cursor != before_cursor or st.scroll_x != before_scroll) changed = true;
         },
+        .textarea => |*st| {
+            const before_cursor = st.cursor;
+            const before_scroll_y = st.scroll_y;
+            st.cursor = st.value.items.len;
+            if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+
+            const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, hit_rect.w);
+            const content_h = textareaVisualLines(st.value.items, hit_rect.w);
+            st.scroll_y = state.scrollIntoView(st.scroll_y, hit_rect.h, cursor_y, cursor_y + 1, content_h);
+            if (st.cursor != before_cursor or st.scroll_y != before_scroll_y) changed = true;
+        },
         .list => |*st| {
             const l = node_util.findListNodeById(root, id) orelse {
                 if (need_flush) try backend_in.flush();
@@ -826,6 +1111,11 @@ fn handleMouseDownLeft(
             if (st.scroll != before_scroll) changed = true;
         },
         .scroll => {},
+        .action => {
+            try activateActionForId(log_sink, backend_in, id);
+            need_flush = true;
+            changed = true;
+        },
     }
 
     if (need_flush) try backend_in.flush();
@@ -939,8 +1229,10 @@ fn deinitWidgetEntry(allocator: std.mem.Allocator, e: *WidgetEntry) void {
     e.id.deinit(allocator);
     switch (e.state) {
         .input => |*s| s.value.deinit(allocator),
+        .textarea => |*s| s.value.deinit(allocator),
         .list => |*s| s.selected_id.deinit(allocator),
         .scroll => {},
+        .action => {},
     }
 }
 
@@ -972,6 +1264,8 @@ fn ensureWidgetKind(
             .input => if (kind == .input) return idx else {},
             .list => if (kind == .list) return idx else {},
             .scroll => if (kind == .scroll) return idx else {},
+            .textarea => if (kind == .textarea) return idx else {},
+            .action => if (kind == .action) return idx else {},
         }
         deinitWidgetEntryState(allocator, &widgets.items[idx]);
         widgets.items[idx].state = initWidgetState(kind);
@@ -988,8 +1282,10 @@ fn ensureWidgetKind(
 fn deinitWidgetEntryState(allocator: std.mem.Allocator, e: *WidgetEntry) void {
     switch (e.state) {
         .input => |*s| s.value.deinit(allocator),
+        .textarea => |*s| s.value.deinit(allocator),
         .list => |*s| s.selected_id.deinit(allocator),
         .scroll => {},
+        .action => {},
     }
 }
 
@@ -998,6 +1294,8 @@ fn initWidgetState(kind: FocusKind) WidgetState {
         .input => .{ .input = .{} },
         .list => .{ .list = .{} },
         .scroll => .{ .scroll = .{} },
+        .textarea => .{ .textarea = .{} },
+        .action => .{ .action = .{} },
     };
 }
 
@@ -1281,11 +1579,17 @@ pub fn activateListForId(log_sink: *log.LogSink, backend_in: anytype, widgets: [
     try protocol.writeActivateEventJsonl(backend_in, list_id, st.selected_id.items);
 }
 
+pub fn activateActionForId(log_sink: *log.LogSink, backend_in: anytype, id: []const u8) !void {
+    log.logPrint(log_sink, "EVENT_TX name=activate id={s} item=\n", .{id});
+    try protocol.writeActivateEventJsonl(backend_in, id, "");
+}
+
 pub fn handleFocusedInputKey(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
     input_id: []const u8,
     ev: keys.KeyEvent,
+    readonly: bool,
     visible_cols: usize,
 ) !bool {
     const max_input_bytes: usize = 16 * 1024;
@@ -1324,6 +1628,7 @@ pub fn handleFocusedInputKey(
             } else if (ev.mods.alt) {
                 return false;
             } else {
+                if (readonly) return false;
                 if (s.len == 0) return false;
                 if (st.value.items.len + s.len > max_input_bytes) return false;
 
@@ -1375,8 +1680,12 @@ pub fn handleFocusedInputKey(
                 st.cursor = st.value.items.len;
                 changed = true;
             },
-            .delete => changed = input.delete_at_cursor(&st.value, &st.cursor),
+            .delete => {
+                if (readonly) return false;
+                changed = input.delete_at_cursor(&st.value, &st.cursor);
+            },
             .backspace => {
+                if (readonly) return false;
                 if (st.cursor != 0) {
                     changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
                 }
@@ -1400,9 +1709,11 @@ pub fn handleFocusedInputPaste(
     widgets: *std.ArrayList(WidgetEntry),
     input_id: []const u8,
     payload: []const u8,
+    readonly: bool,
     visible_cols: usize,
 ) !bool {
     const max_input_bytes: usize = 16 * 1024;
+    if (readonly) return false;
     const idx = try ensureWidgetKind(allocator, widgets, input_id, .input);
     var st = &widgets.items[idx].state.input;
 
@@ -1470,6 +1781,396 @@ pub fn handleFocusedInputPaste(
 
     const changed = before_cursor != st.cursor or before_len != st.value.items.len or before_scroll != st.scroll_x;
     return changed or scroll_changed;
+}
+
+const VisualPos = struct {
+    y: usize,
+    x: usize,
+};
+
+fn textareaCursorVisualPos(value: []const u8, cursor: usize, cols: usize) VisualPos {
+    const effective_cursor = unicode.clampGraphemeBoundary(value, @min(cursor, value.len));
+    if (effective_cursor == 0) return .{ .y = 0, .x = 0 };
+
+    var byte_idx: usize = 0;
+    var y: usize = 0;
+    var x: usize = 0;
+
+    while (byte_idx < effective_cursor) {
+        const g = unicode.nextGrapheme(value, byte_idx);
+        if (g.end <= byte_idx) break;
+
+        const b0: u8 = value[g.start];
+        if (b0 == '\r') {
+            byte_idx = g.end;
+            continue;
+        }
+        if (b0 == '\n') {
+            y += 1;
+            x = 0;
+            byte_idx = g.end;
+            continue;
+        }
+
+        var width: usize = g.width;
+        if (b0 == '\t') width = 1;
+        if (width == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (cols == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (width > cols) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (x + width > cols) {
+            y += 1;
+            x = 0;
+            continue;
+        }
+
+        x += width;
+        byte_idx = g.end;
+    }
+
+    return .{ .y = y, .x = x };
+}
+
+fn textareaByteIndexForVisualPos(value: []const u8, target_y: usize, target_x: usize, cols: usize) usize {
+    var byte_idx: usize = 0;
+    var y: usize = 0;
+    var x: usize = 0;
+
+    var found: bool = false;
+    var best_byte: usize = 0;
+    var best_x: usize = 0;
+
+    while (true) {
+        if (y == target_y) {
+            if (!found) {
+                found = true;
+                best_byte = byte_idx;
+                best_x = x;
+            } else if (x <= target_x and x >= best_x) {
+                best_byte = byte_idx;
+                best_x = x;
+            }
+        }
+
+        if (byte_idx >= value.len) break;
+
+        const g = unicode.nextGrapheme(value, byte_idx);
+        if (g.end <= byte_idx) break;
+
+        const b0: u8 = value[g.start];
+        if (b0 == '\r') {
+            byte_idx = g.end;
+            continue;
+        }
+        if (b0 == '\n') {
+            y += 1;
+            x = 0;
+            byte_idx = g.end;
+            continue;
+        }
+
+        var width: usize = g.width;
+        if (b0 == '\t') width = 1;
+        if (width == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (cols == 0) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (width > cols) {
+            byte_idx = g.end;
+            continue;
+        }
+
+        if (x + width > cols) {
+            y += 1;
+            x = 0;
+            continue;
+        }
+
+        x += width;
+        byte_idx = g.end;
+    }
+
+    if (!found) return @min(value.len, unicode.clampGraphemeBoundary(value, value.len));
+    return unicode.clampGraphemeBoundary(value, best_byte);
+}
+
+pub fn handleFocusedTextareaKey(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    textarea_id: []const u8,
+    ev: keys.KeyEvent,
+    readonly: bool,
+    visible_rows: usize,
+    visible_cols: usize,
+) !bool {
+    const max_textarea_bytes: usize = 64 * 1024;
+    const idx = try ensureWidgetKind(allocator, widgets, textarea_id, .textarea);
+    var st = &widgets.items[idx].state.textarea;
+
+    const before_cursor: usize = st.cursor;
+    const before_len: usize = st.value.items.len;
+    const before_scroll_y: usize = st.scroll_y;
+
+    var changed: bool = false;
+    switch (ev.key) {
+        .text => |s| {
+            if (ev.mods.ctrl or ev.mods.shift) return false;
+
+            if (ev.mods.alt and s.len == 1) {
+                if (s[0] == 'b') {
+                    const next = input.word_left(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                } else if (s[0] == 'f') {
+                    const next = input.word_right(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                } else {
+                    return false;
+                }
+            } else if (ev.mods.alt) {
+                return false;
+            } else {
+                if (readonly) return false;
+                if (s.len == 0) return false;
+                if (st.value.items.len + s.len > max_textarea_bytes) return false;
+
+                if (s.len == 1 and s[0] < 0x80) {
+                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
+                } else {
+                    changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
+                }
+            }
+        },
+        .named => |k| switch (k) {
+            .left => {
+                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
+                    const next = input.word_left(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                } else {
+                    const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
+                    if (next != st.cursor) {
+                        st.cursor = next;
+                        changed = true;
+                    }
+                }
+            },
+            .right => {
+                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
+                    const next = input.word_right(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                } else {
+                    const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
+                    if (next != st.cursor) {
+                        st.cursor = next;
+                        changed = true;
+                    }
+                }
+            },
+            .up, .down => {
+                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+                const content_h = textareaVisualLines(st.value.items, visible_cols);
+                if (content_h == 0) return false;
+                const target_y: usize = if (k == .up)
+                    (if (pos.y > 0) pos.y - 1 else 0)
+                else
+                    @min(pos.y + 1, content_h - 1);
+                const next = textareaByteIndexForVisualPos(st.value.items, target_y, pos.x, visible_cols);
+                if (next != st.cursor) {
+                    st.cursor = next;
+                    changed = true;
+                }
+            },
+            .home => {
+                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+                const next = textareaByteIndexForVisualPos(st.value.items, pos.y, 0, visible_cols);
+                if (next != st.cursor) {
+                    st.cursor = next;
+                    changed = true;
+                }
+            },
+            .end => {
+                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+                const next = textareaByteIndexForVisualPos(st.value.items, pos.y, std.math.maxInt(usize), visible_cols);
+                if (next != st.cursor) {
+                    st.cursor = next;
+                    changed = true;
+                }
+            },
+            .page_up, .page_down => {
+                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+                const content_h = textareaVisualLines(st.value.items, visible_cols);
+                if (content_h == 0) return false;
+                const step: usize = if (visible_rows > 1) visible_rows - 1 else 1;
+                const target_y: usize = if (k == .page_up)
+                    (if (pos.y > step) pos.y - step else 0)
+                else
+                    @min(pos.y + step, content_h - 1);
+                const next = textareaByteIndexForVisualPos(st.value.items, target_y, pos.x, visible_cols);
+                if (next != st.cursor) {
+                    st.cursor = next;
+                    changed = true;
+                }
+            },
+            .delete => {
+                if (readonly) return false;
+                changed = input.delete_at_cursor(&st.value, &st.cursor);
+            },
+            .backspace => {
+                if (readonly) return false;
+                if (st.cursor != 0) {
+                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
+                }
+            },
+            .enter => {
+                if (readonly) return false;
+                if (st.value.items.len + 1 > max_textarea_bytes) return false;
+                if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+                st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
+                if (st.cursor == st.value.items.len) {
+                    try st.value.append(allocator, '\n');
+                } else {
+                    try st.value.insert(allocator, st.cursor, '\n');
+                }
+                st.cursor += 1;
+                changed = true;
+            },
+            else => return false,
+        },
+        else => return false,
+    }
+
+    if (!changed and before_cursor == st.cursor and before_len == st.value.items.len and before_scroll_y == st.scroll_y) return false;
+
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+    const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, visible_cols);
+    const content_h = textareaVisualLines(st.value.items, visible_cols);
+    const next_scroll_y = state.scrollIntoView(st.scroll_y, visible_rows, cursor_y, cursor_y + 1, content_h);
+    const scroll_changed = next_scroll_y != st.scroll_y;
+    st.scroll_y = next_scroll_y;
+    return changed or scroll_changed;
+}
+
+pub fn handleFocusedTextareaPaste(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    textarea_id: []const u8,
+    payload: []const u8,
+    readonly: bool,
+    visible_rows: usize,
+    visible_cols: usize,
+) !bool {
+    const max_textarea_bytes: usize = 64 * 1024;
+    if (readonly) return false;
+    const idx = try ensureWidgetKind(allocator, widgets, textarea_id, .textarea);
+    var st = &widgets.items[idx].state.textarea;
+
+    const before_cursor: usize = st.cursor;
+    const before_len: usize = st.value.items.len;
+    const before_scroll_y: usize = st.scroll_y;
+
+    var sanitized: std.ArrayList(u8) = .empty;
+    defer sanitized.deinit(allocator);
+    try sanitized.ensureTotalCapacity(allocator, @min(payload.len, 4096));
+
+    var i: usize = 0;
+    while (i < payload.len) {
+        if (st.value.items.len + sanitized.items.len >= max_textarea_bytes) break;
+
+        const b = payload[i];
+        if (b == '\r') {
+            try sanitized.append(allocator, '\n');
+            i += 1;
+            continue;
+        }
+        if (b == '\n') {
+            try sanitized.append(allocator, '\n');
+            i += 1;
+            continue;
+        }
+        if (b == '\t' or b < 0x20 or b == 0x7f) {
+            try sanitized.append(allocator, ' ');
+            i += 1;
+            continue;
+        }
+
+        if (b < 0x80) {
+            try sanitized.append(allocator, b);
+            i += 1;
+            continue;
+        }
+
+        const expect = std.unicode.utf8ByteSequenceLength(b) catch {
+            i += 1;
+            continue;
+        };
+        if (expect <= 1 or expect > 4) {
+            i += 1;
+            continue;
+        }
+        const n: usize = @as(usize, @intCast(expect));
+        if (i + n > payload.len) break;
+
+        const slice = payload[i .. i + n];
+        _ = std.unicode.utf8Decode(slice) catch {
+            i += 1;
+            continue;
+        };
+        if (st.value.items.len + sanitized.items.len + slice.len > max_textarea_bytes) break;
+        try sanitized.appendSlice(allocator, slice);
+        i += n;
+    }
+
+    if (sanitized.items.len == 0) return false;
+
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+    st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
+
+    if (st.cursor == st.value.items.len) {
+        try st.value.appendSlice(allocator, sanitized.items);
+    } else {
+        try st.value.insertSlice(allocator, st.cursor, sanitized.items);
+    }
+    st.cursor += sanitized.items.len;
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+
+    const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, visible_cols);
+    const content_h = textareaVisualLines(st.value.items, visible_cols);
+    st.scroll_y = state.scrollIntoView(st.scroll_y, visible_rows, cursor_y, cursor_y + 1, content_h);
+
+    const changed = before_cursor != st.cursor or before_len != st.value.items.len or before_scroll_y != st.scroll_y;
+    return changed;
 }
 
 fn setScrollViewportYById(
@@ -1550,11 +2251,23 @@ pub fn handleFocusedScrollKey(
 
 pub fn emitInputEventForId(log_sink: *log.LogSink, backend_in: anytype, widgets: []const WidgetEntry, input_id: []const u8) !void {
     const idx = findWidgetIndex(widgets, input_id) orelse return;
-    const st = widgets[idx].state.input;
-    log.logPrint(
-        log_sink,
-        "EVENT_TX name=input id={s} len={d} cursor={d}\n",
-        .{ input_id, st.value.items.len, st.cursor },
-    );
-    try protocol.writeInputEventJsonl(backend_in, input_id, st.value.items, st.cursor);
+    switch (widgets[idx].state) {
+        .input => |st| {
+            log.logPrint(
+                log_sink,
+                "EVENT_TX name=input id={s} len={d} cursor={d}\n",
+                .{ input_id, st.value.items.len, st.cursor },
+            );
+            try protocol.writeInputEventJsonl(backend_in, input_id, st.value.items, st.cursor);
+        },
+        .textarea => |st| {
+            log.logPrint(
+                log_sink,
+                "EVENT_TX name=input id={s} len={d} cursor={d}\n",
+                .{ input_id, st.value.items.len, st.cursor },
+            );
+            try protocol.writeInputEventJsonl(backend_in, input_id, st.value.items, st.cursor);
+        },
+        else => {},
+    }
 }

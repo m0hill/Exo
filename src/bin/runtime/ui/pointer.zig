@@ -61,6 +61,13 @@ pub const PointerEngine = struct {
         }
     }
 
+    pub fn activeId(self: *const PointerEngine) ?[]const u8 {
+        for (self.captures) |c| {
+            if (c.id) |id| return id;
+        }
+        return null;
+    }
+
     pub fn pruneAfterPatch(self: *PointerEngine, root: protocol.Node) void {
         for (&self.captures) |*c| {
             const id = c.id orelse continue;

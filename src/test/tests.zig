@@ -17,7 +17,8 @@ const markdown = tui.markdown;
 const hover = tui.hover;
 const keys = tui.keys;
 const kd = tui.key_decode;
-const pointer = @import("runtime_pointer");
+const runtime_ui = @import("runtime_ui");
+const pointer = runtime_ui.pointer;
 
 fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     const c = frame.rowSlice(row)[col];
@@ -368,6 +369,108 @@ test "protocol: parse mouseable field" {
     try std.testing.expect(t.mouseable);
 }
 
+test "protocol: write+parse widget state fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var child = protocol.Node{ .text = .{ .id = "t", .text = "" } };
+    const node = protocol.Node{ .box = .{
+        .id = "b",
+        .disabled = true,
+        .readonly = true,
+        .validation = .@"error",
+        .focusable = true,
+        .child = &child,
+    } };
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
+    try buf.appendSlice(std.testing.allocator, "}");
+
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"disabled\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"readonly\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"validation\":\"error\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"focusable\":true") != null);
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const b = switch (root) {
+        .box => |bb| bb,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(b.disabled);
+    try std.testing.expect(b.readonly);
+    try std.testing.expectEqual(protocol.ValidationState.@"error", b.validation);
+    try std.testing.expect(b.focusable);
+}
+
+test "protocol: write+parse textarea + list marker" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var children = [_]protocol.Node{.{ .text = .{ .id = "row", .text = "X" } }};
+    var root_children = [_]protocol.Node{
+        .{ .textarea = .{
+            .id = "ta",
+            .placeholder = "hello",
+            .readonly = true,
+            .validation = .warning,
+            .focusable = false,
+        } },
+        .{ .list = .{
+            .id = "l",
+            .marker = .none,
+            .children = children[0..],
+        } },
+    };
+    const node = protocol.Node{ .vbox = .{
+        .id = "root",
+        .children = root_children[0..],
+    } };
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
+    try buf.appendSlice(std.testing.allocator, "}");
+
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"type\":\"textarea\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"validation\":\"warning\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"focusable\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"marker\":\"none\"") != null);
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const v = switch (root) {
+        .vbox => |vv| vv,
+        else => return error.TestUnexpectedResult,
+    };
+    const ta = v.children[0].textarea;
+    try std.testing.expectEqualStrings("ta", ta.id);
+    try std.testing.expect(ta.readonly);
+    try std.testing.expectEqual(protocol.ValidationState.warning, ta.validation);
+    try std.testing.expect(!ta.focusable);
+
+    const l = v.children[1].list;
+    try std.testing.expectEqual(protocol.ListMarker.none, l.marker);
+}
+
 test "protocol: write+parse pointer event" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -559,6 +662,171 @@ test "render: box draws border" {
     try std.testing.expectEqualStrings("└", cellText(&frame, 2, 0));
     try std.testing.expectEqualStrings("─", cellText(&frame, 2, 1));
     try std.testing.expectEqualStrings("┘", cellText(&frame, 2, 4));
+}
+
+test "render: disabled overlay dims glyph" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 1);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .text = .{ .id = "t", .disabled = true, .text = "X" } };
+    render.renderToFrame(root, .{}, &frame);
+    const cell = frame.rowSlice(0)[0];
+    try std.testing.expect((cell.style.attrs & style.ATTR_DIM) != 0);
+}
+
+test "render: validation error overlays box border fg" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 3);
+    frame.clear(' ');
+
+    var child = protocol.Node{ .text = .{ .id = "t", .text = "" } };
+    const root = protocol.Node{ .box = .{ .id = "b", .validation = .@"error", .child = &child } };
+    render.renderToFrame(root, .{}, &frame);
+
+    const cell = frame.rowSlice(0)[0];
+    try std.testing.expectEqual(@as(u1, 1), cell.style.has_fg);
+    try std.testing.expectEqual(@as(u24, 0xef4444), cell.style.fg);
+}
+
+test "render: list marker none removes prefix" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 5);
+    frame.clear(' ');
+
+    var items = [_]protocol.Node{.{ .text = .{ .id = "row", .text = "X" } }};
+    const root = protocol.Node{ .list = .{ .id = "l", .marker = .none, .children = items[0..] } };
+    const st: render.ListState = .{ .id = "l", .selected_id = "row", .scroll = 0 };
+    render.renderToFrame(root, .{ .focused_id = "l", .lists = &.{st} }, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'X'), cellByte(&frame, 0, 0));
+    try std.testing.expect((frame.rowSlice(0)[0].style.attrs & style.ATTR_INVERSE) != 0);
+}
+
+test "render: overlay layer can anchor to prior layer node" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const base_text = try a.create(protocol.Node);
+    base_text.* = .{ .text = .{ .id = "a", .text = "AAA" } };
+
+    var base_children = try a.alloc(protocol.Node, 1);
+    base_children[0] = base_text.*;
+    const base_vbox = try a.create(protocol.Node);
+    base_vbox.* = .{ .vbox = .{ .id = "base", .children = base_children } };
+
+    const layer1_child_text = try a.create(protocol.Node);
+    layer1_child_text.* = .{ .text = .{ .id = "in-layer", .text = "X" } };
+    var layer1_children = try a.alloc(protocol.Node, 1);
+    layer1_children[0] = layer1_child_text.*;
+    const layer1_vbox = try a.create(protocol.Node);
+    layer1_vbox.* = .{ .vbox = .{ .id = "layer1", .children = layer1_children } };
+
+    const layer2_text = try a.create(protocol.Node);
+    layer2_text.* = .{ .text = .{ .id = "layer2", .text = "T" } };
+
+    var layers = try a.alloc(protocol.OverlayLayer, 2);
+    layers[0] = .{
+        .node = layer1_vbox,
+        .anchor = "a",
+        .placement = .below,
+        .align_ = .start,
+        .w = 10,
+        .h = 3,
+    };
+    layers[1] = .{
+        .node = layer2_text,
+        .anchor = "in-layer",
+        .placement = .right,
+        .align_ = .start,
+        .w = 5,
+        .h = 1,
+    };
+
+    const root = protocol.Node{ .overlay = .{
+        .id = "root",
+        .base = base_vbox,
+        .layers = layers,
+    } };
+
+    const r = render.findRectForId(root, 10, 40, "layer2") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 10), r.x);
+    try std.testing.expectEqual(@as(usize, 1), r.y);
+}
+
+test "render: textarea renders multiline + cursor" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 2, 3);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .textarea = .{ .id = "ta" } };
+    const st: render.TextareaState = .{ .id = "ta", .value = "a\nb", .cursor = 2, .scroll_y = 0 };
+    render.renderToFrame(root, .{ .focused_id = "ta", .textareas = &.{st} }, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'a'), cellByte(&frame, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'b'), cellByte(&frame, 1, 0));
+    const c = frame.cursor orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 2), c.row);
+    try std.testing.expectEqual(@as(usize, 1), c.col);
+}
+
+test "ui: textarea scroll_y keeps cursor visible" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    const enter_ev: keys.KeyEvent = .{ .key = .{ .named = .enter } };
+    _ = try runtime_ui.handleFocusedTextareaKey(
+        std.testing.allocator,
+        &widgets,
+        "ta",
+        enter_ev,
+        false,
+        2,
+        10,
+    );
+    _ = try runtime_ui.handleFocusedTextareaKey(
+        std.testing.allocator,
+        &widgets,
+        "ta",
+        enter_ev,
+        false,
+        2,
+        10,
+    );
+    _ = try runtime_ui.handleFocusedTextareaKey(
+        std.testing.allocator,
+        &widgets,
+        "ta",
+        enter_ev,
+        false,
+        2,
+        10,
+    );
+
+    var scroll_y: ?usize = null;
+    for (widgets.items) |w| {
+        if (!std.mem.eql(u8, w.id.items, "ta")) continue;
+        scroll_y = w.state.textarea.scroll_y;
+        break;
+    }
+    try std.testing.expect(scroll_y != null);
+    try std.testing.expectEqual(@as(usize, 2), scroll_y.?);
+
+    const changed = try runtime_ui.handleFocusedTextareaKey(
+        std.testing.allocator,
+        &widgets,
+        "ta",
+        enter_ev,
+        true,
+        2,
+        10,
+    );
+    try std.testing.expect(!changed);
 }
 
 test "render: box title truncates to inner width" {

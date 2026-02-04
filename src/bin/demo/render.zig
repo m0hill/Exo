@@ -4,6 +4,7 @@ const tui = @import("tui");
 const protocol = tui.protocol;
 const style = tui.style;
 const markdown = tui.markdown;
+const widget_kit = tui.widget_kit;
 
 const state = @import("state.zig");
 
@@ -23,6 +24,8 @@ pub fn emitInitialFull(
     lists: []const state.ListSlot,
     list_height: usize,
     popups: state.PopupInfo,
+    widgets: state.WidgetsState,
+    tick: u64,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"root\":");
     try writeRootNode(
@@ -42,6 +45,8 @@ pub fn emitInitialFull(
         false,
         list_height,
         popups,
+        widgets,
+        tick,
     );
     try writer.writeAll("}\n");
 }
@@ -63,6 +68,8 @@ pub fn emitRootMorphPatch(
     layout_alt: bool,
     list_height: usize,
     popups: state.PopupInfo,
+    widgets: state.WidgetsState,
+    tick: u64,
 ) !void {
     try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
     try writeRootNode(
@@ -82,6 +89,8 @@ pub fn emitRootMorphPatch(
         layout_alt,
         list_height,
         popups,
+        widgets,
+        tick,
     );
     try writer.writeAll("}\n");
 }
@@ -472,6 +481,266 @@ fn writeAlignmentPanelNode(writer: anytype) !void {
     try protocol.writeNodeJson(writer, box);
 }
 
+fn writeWidgetsPanelNode(
+    allocator: std.mem.Allocator,
+    writer: anytype,
+    widgets: state.WidgetsState,
+    tick: u64,
+) !void {
+    const panel_style: style.StyleOverride = .{
+        .bg = .{ .rgb = .{ .r = 0x0B, .g = 0x12, .b = 0x20 } },
+        .fg = .{ .rgb = .{ .r = 0x34, .g = 0xD3, .b = 0x99 } },
+    };
+
+    const body_style: style.StyleOverride = .{
+        .fg = .{ .rgb = .{ .r = 0xE5, .g = 0xE7, .b = 0xEB } },
+    };
+
+    const dim_style: style.StyleOverride = .{
+        .fg = .{ .rgb = .{ .r = 0x94, .g = 0xA3, .b = 0xB8 } },
+        .attrs_set = style.ATTR_DIM,
+        .attrs_values = style.ATTR_DIM,
+    };
+
+    const active_menu_style: style.StyleOverride = .{
+        .attrs_set = style.ATTR_BOLD | style.ATTR_UNDERLINE,
+        .attrs_values = style.ATTR_BOLD | style.ATTR_UNDERLINE,
+    };
+
+    const common_interactive: widget_kit.Common = .{ .hoverable = true, .mouseable = true };
+
+    var children: std.ArrayList(protocol.Node) = .empty;
+
+    const menu_file_style: ?style.StyleOverride = if (widgets.menu_open and widgets.menu_anchor == .file) active_menu_style else null;
+    const menu_help_style: ?style.StyleOverride = if (widgets.menu_open and widgets.menu_anchor == .help) active_menu_style else null;
+    const menu_bar = protocol.Node{ .hbox = .{
+        .id = "w-menubar",
+        .gap = 1,
+        .children = blk: {
+            var menu_children = try allocator.alloc(protocol.Node, 2);
+            menu_children[0] = try widget_kit.button(allocator, "w-menu-file", "File", false, .{
+                .hoverable = true,
+                .mouseable = true,
+                .style = menu_file_style,
+            });
+            menu_children[1] = try widget_kit.button(allocator, "w-menu-help", "Help", false, .{
+                .hoverable = true,
+                .mouseable = true,
+                .style = menu_help_style,
+            });
+            break :blk menu_children;
+        },
+    } };
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-menu", .h = 1, .style = dim_style, .text = "Menu (opens modal overlay):" } });
+    try children.append(allocator, menu_bar);
+
+    var btn_label_buf: [64]u8 = undefined;
+    const btn_label = try std.fmt.bufPrint(&btn_label_buf, "Button (clicks={d})", .{widgets.button_clicks});
+    var btn_children = try allocator.alloc(protocol.Node, 3);
+    btn_children[0] = try widget_kit.button(allocator, "w-btn", btn_label, true, common_interactive);
+    btn_children[1] = try widget_kit.button(allocator, "w-btn-disabled", "Disabled (skips tab)", true, .{
+        .disabled = true,
+        .hoverable = true,
+        .mouseable = true,
+    });
+    btn_children[2] = try widget_kit.button(allocator, "w-btn-error", "Validation error", true, .{
+        .validation = .@"error",
+        .hoverable = true,
+        .mouseable = true,
+    });
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-buttons", .h = 1, .style = dim_style, .text = "Buttons / action focus targets:" } });
+    try children.append(allocator, .{ .hbox = .{ .id = "w-buttons", .gap = 1, .children = btn_children } });
+
+    const checkbox_node = try widget_kit.checkbox(allocator, "w-checkbox", "Checkbox", widgets.checkbox_checked, common_interactive);
+    const toggle_node = try widget_kit.toggle(allocator, "w-toggle", "Toggle", widgets.toggle_on, .{
+        .hoverable = true,
+        .mouseable = true,
+        .validation = .success,
+    });
+    var ct_children = try allocator.alloc(protocol.Node, 2);
+    ct_children[0] = checkbox_node;
+    ct_children[1] = toggle_node;
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-check", .h = 1, .style = dim_style, .text = "Checkbox / toggle:" } });
+    try children.append(allocator, .{ .hbox = .{ .id = "w-check-row", .gap = 2, .children = ct_children } });
+
+    const radio_opts = [_]widget_kit.ListOption{
+        .{ .id = "w-radio-a", .label = "Alpha" },
+        .{ .id = "w-radio-b", .label = "Beta" },
+        .{ .id = "w-radio-c", .label = "Gamma" },
+    };
+    const selected_radio_id: []const u8 = switch (widgets.radio_choice) {
+        .alpha => "w-radio-a",
+        .beta => "w-radio-b",
+        .gamma => "w-radio-c",
+    };
+    var radio_node = try widget_kit.radioGroupList(
+        allocator,
+        "w-radio",
+        radio_opts[0..],
+        selected_radio_id,
+        .none,
+        common_interactive,
+    );
+    switch (radio_node) {
+        .list => |*l| l.height = radio_opts.len,
+        else => {},
+    }
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-radio", .h = 1, .style = dim_style, .text = "Radio group (list-based):" } });
+    try children.append(allocator, radio_node);
+
+    const tabs_spec = [_]widget_kit.Tab{
+        .{ .id = "w-tab-one", .label = "One" },
+        .{ .id = "w-tab-two", .label = "Two" },
+        .{ .id = "w-tab-three", .label = "Three" },
+    };
+    const active_tab_id: []const u8 = switch (widgets.active_tab) {
+        .one => "w-tab-one",
+        .two => "w-tab-two",
+        .three => "w-tab-three",
+    };
+    const tab_text: []const u8 = switch (widgets.active_tab) {
+        .one => "Tab one content",
+        .two => "Tab two content",
+        .three => "Tab three content",
+    };
+    var tab_body_children = [_]protocol.Node{.{ .text = .{ .id = "w-tab-body-text", .text = tab_text } }};
+    const tab_body = protocol.Node{ .vbox = .{ .id = "w-tab-body", .clip = true, .children = tab_body_children[0..] } };
+    const tabs_node = try widget_kit.tabs(allocator, "w-tabs", tabs_spec[0..], active_tab_id, tab_body);
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-tabs", .h = 1, .style = dim_style, .text = "Tabs (buttons + content):" } });
+    try children.append(allocator, tabs_node);
+
+    const table_cols = [_]widget_kit.TableColumn{
+        .{ .id = "w-table-col-id", .label = "ID", .width = 4 },
+        .{ .id = "w-table-col-name", .label = "Name", .width = 10 },
+        .{ .id = "w-table-col-status", .label = "Status", .width = 8 },
+    };
+    const row1_cells = [_][]const u8{ "1", "Alpha", "ok" };
+    const row2_cells = [_][]const u8{ "2", "Beta", "warn" };
+    const row3_cells = [_][]const u8{ "3", "Gamma", "err" };
+    const table_rows = [_]widget_kit.TableRow{
+        .{ .id = "w-table-row-1", .cells = row1_cells[0..] },
+        .{ .id = "w-table-row-2", .cells = row2_cells[0..] },
+        .{ .id = "w-table-row-3", .cells = row3_cells[0..] },
+    };
+    const table_node = try widget_kit.table(allocator, "w-table", table_cols[0..], table_rows[0..], 4, common_interactive);
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-table", .h = 1, .style = dim_style, .text = "Table (header + scroll->list):" } });
+    try children.append(allocator, table_node);
+
+    var tree_rows: std.ArrayList(widget_kit.TreeRow) = .empty;
+    try tree_rows.append(allocator, .{
+        .id = "w-tree-root",
+        .depth = 0,
+        .has_children = true,
+        .expanded = widgets.tree_root_expanded,
+        .label = "project",
+    });
+    if (widgets.tree_root_expanded) {
+        try tree_rows.append(allocator, .{
+            .id = "w-tree-src",
+            .depth = 1,
+            .has_children = true,
+            .expanded = widgets.tree_src_expanded,
+            .label = "src/",
+        });
+        if (widgets.tree_src_expanded) {
+            try tree_rows.append(allocator, .{ .id = "w-tree-src-main", .depth = 2, .label = "main.zig" });
+            try tree_rows.append(allocator, .{ .id = "w-tree-src-ui", .depth = 2, .label = "ui/mod.zig" });
+        }
+        try tree_rows.append(allocator, .{
+            .id = "w-tree-lib",
+            .depth = 1,
+            .has_children = true,
+            .expanded = widgets.tree_lib_expanded,
+            .label = "src/lib/",
+        });
+        if (widgets.tree_lib_expanded) {
+            try tree_rows.append(allocator, .{ .id = "w-tree-lib-protocol", .depth = 2, .label = "protocol/" });
+        }
+        try tree_rows.append(allocator, .{
+            .id = "w-tree-tests",
+            .depth = 1,
+            .has_children = true,
+            .expanded = widgets.tree_tests_expanded,
+            .label = "src/test/",
+        });
+        if (widgets.tree_tests_expanded) {
+            try tree_rows.append(allocator, .{ .id = "w-tree-tests-tests", .depth = 2, .label = "tests.zig" });
+        }
+    }
+    const tree_node = try widget_kit.tree(allocator, "w-tree", tree_rows.items, 6, common_interactive);
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-tree", .h = 1, .style = dim_style, .text = "Tree (scroll->list, activate toggles expand):" } });
+    try children.append(allocator, tree_node);
+
+    var textarea_node = widget_kit.textarea("w-textarea", "Textarea (multiline)…", .{
+        .hoverable = true,
+        .mouseable = true,
+        .validation = .success,
+    });
+    switch (textarea_node) {
+        .textarea => |*t| t.h = 5,
+        else => {},
+    }
+    var textarea_ro = widget_kit.textarea("w-textarea-ro", "Readonly textarea…", .{
+        .hoverable = true,
+        .mouseable = true,
+        .readonly = true,
+        .validation = .warning,
+    });
+    switch (textarea_ro) {
+        .textarea => |*t| t.h = 3,
+        else => {},
+    }
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-textarea", .h = 1, .style = dim_style, .text = "Textarea (runtime state):" } });
+    try children.append(allocator, textarea_node);
+    try children.append(allocator, textarea_ro);
+
+    const percent: usize = @intCast(tick % 101);
+    const progress = try widget_kit.progressBar(allocator, "w-progress", 12, percent, .{});
+    const spin = widget_kit.spinner("w-spinner", @intCast(tick), .{});
+    var prog_children = try allocator.alloc(protocol.Node, 3);
+    prog_children[0] = spin;
+    prog_children[1] = progress;
+    var prog_label_buf: [64]u8 = undefined;
+    const prog_label = try std.fmt.bufPrint(&prog_label_buf, " tick={d}", .{tick});
+    prog_children[2] = .{ .text = .{ .id = "w-progress-label", .text = prog_label, .style = dim_style } };
+    try children.append(allocator, .{ .text = .{ .id = "w-sec-progress", .h = 1, .style = dim_style, .text = "Progress / spinner:" } });
+    try children.append(allocator, .{ .hbox = .{ .id = "w-progress-row", .gap = 1, .children = prog_children } });
+
+    const body_children = try children.toOwnedSlice(allocator);
+    const body = protocol.Node{ .vbox = .{
+        .id = "panel-widgets-body",
+        .gap = 1,
+        .clip = true,
+        .style = body_style,
+        .children = body_children,
+    } };
+
+    const body_ptr = try allocator.create(protocol.Node);
+    body_ptr.* = body;
+
+    const scroll = protocol.Node{ .scroll = .{
+        .id = "panel-widgets-scroll",
+        .flex = 1,
+        .mouseable = true,
+        .focusable = false,
+        .child = body_ptr,
+    } };
+    const scroll_ptr = try allocator.create(protocol.Node);
+    scroll_ptr.* = scroll;
+
+    const box = protocol.Node{ .box = .{
+        .id = "panel-widgets",
+        .flex = 1,
+        .pad = 1,
+        .clip = true,
+        .style = panel_style,
+        .title = "Widgets",
+        .child = scroll_ptr,
+    } };
+
+    try protocol.writeNodeJson(writer, box);
+}
+
 fn writeRootNode(
     allocator: std.mem.Allocator,
     writer: anytype,
@@ -489,6 +758,8 @@ fn writeRootNode(
     layout_alt: bool,
     list_height: usize,
     popups: state.PopupInfo,
+    widgets: state.WidgetsState,
+    tick: u64,
 ) !void {
     try writer.writeAll("{\"type\":\"overlay\",\"id\":\"root\",\"base\":");
     try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root-base\",\"style\":{\"bg\":\"#020617\",\"fg\":\"#e2e8f0\"},\"children\":[");
@@ -669,6 +940,8 @@ fn writeRootNode(
     }
     try writer.writeByte(',');
     try writeAlignmentPanelNode(writer);
+    try writer.writeByte(',');
+    try writeWidgetsPanelNode(allocator, writer, widgets, tick);
     try writer.writeAll("]}");
 
     try writer.writeByte(',');
@@ -681,10 +954,10 @@ fn writeRootNode(
     if (popups.dropdown_open) {
         wrote_any = true;
         try writer.writeAll("{\"node\":");
-        try writer.writeAll("{\"type\":\"box\",\"id\":\"dropdown-box\",\"shadow\":true");
+        try writer.writeAll("{\"type\":\"box\",\"id\":\"dropdown-box\",\"shadow\":true,\"hoverable\":true,\"mouseable\":true");
         try writer.writeAll(",\"style\":{\"bg\":\"#111827\",\"fg\":\"#fbbf24\"}");
         try writer.writeAll(",\"child\":");
-        try writer.writeAll("{\"type\":\"list\",\"id\":\"dropdown\",\"mouseable\":true,\"height\":4,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
+        try writer.writeAll("{\"type\":\"list\",\"id\":\"dropdown\",\"hoverable\":true,\"mouseable\":true,\"marker\":\"none\",\"height\":4,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
         try writeTextNode(writer, "dropdown-a", "Dropdown: option A");
         try writer.writeByte(',');
         try writeTextNode(writer, "dropdown-b", "Dropdown: option B");
@@ -694,7 +967,65 @@ fn writeRootNode(
         try writeTextNode(writer, "dropdown-close", "Close dropdown");
         try writer.writeAll("]}");
         try writer.writeAll("}");
-        try writer.writeAll(",\"anchor\":\"query-a\",\"placement\":\"below\",\"align\":\"start\",\"w\":28}");
+        try writer.writeAll(",\"anchor\":\"query-a\",\"placement\":\"below\",\"align\":\"start\",\"w\":28,\"modal\":true}");
+    }
+
+    if (widgets.menu_open) {
+        if (wrote_any) try writer.writeByte(',') else wrote_any = true;
+
+        const anchor_id: []const u8 = switch (widgets.menu_anchor) {
+            .file => "w-menu-file",
+            .help => "w-menu-help",
+        };
+
+        var item_nodes: [4]protocol.Node = undefined;
+        var item_count: usize = 0;
+        if (widgets.menu_anchor == .file) {
+            item_nodes[item_count] = .{ .text = .{ .id = "w-menu-new", .text = "New" } };
+            item_count += 1;
+            item_nodes[item_count] = .{ .text = .{ .id = "w-menu-open", .text = "Open" } };
+            item_count += 1;
+            item_nodes[item_count] = .{ .text = .{ .id = "w-menu-quit", .text = "Quit" } };
+            item_count += 1;
+            item_nodes[item_count] = .{ .text = .{ .id = "w-menu-close", .text = "Close menu" } };
+            item_count += 1;
+        } else {
+            item_nodes[item_count] = .{ .text = .{ .id = "w-menu-about", .text = "About" } };
+            item_count += 1;
+            item_nodes[item_count] = .{ .text = .{ .id = "w-menu-close", .text = "Close menu" } };
+            item_count += 1;
+        }
+
+        const menu_list_style: style.StyleOverride = .{
+            .fg = .{ .rgb = .{ .r = 0xE5, .g = 0xE7, .b = 0xEB } },
+        };
+        const menu_box_style: style.StyleOverride = .{
+            .bg = .{ .rgb = .{ .r = 0x11, .g = 0x18, .b = 0x27 } },
+            .fg = .{ .rgb = .{ .r = 0xFB, .g = 0xBF, .b = 0x24 } },
+        };
+
+        var menu_list = protocol.Node{ .list = .{
+            .id = "w-menu-list",
+            .height = item_count,
+            .hoverable = true,
+            .mouseable = true,
+            .marker = .none,
+            .style = menu_list_style,
+            .children = item_nodes[0..item_count],
+        } };
+        const menu_box = protocol.Node{ .box = .{
+            .id = "w-menu-box",
+            .pad = 1,
+            .shadow = true,
+            .style = menu_box_style,
+            .child = &menu_list,
+        } };
+
+        try writer.writeAll("{\"node\":");
+        try protocol.writeNodeJson(writer, menu_box);
+        try writer.writeAll(",\"anchor\":");
+        try protocol.writeJsonString(writer, anchor_id);
+        try writer.writeAll(",\"placement\":\"below\",\"align\":\"start\",\"w\":24,\"modal\":true}");
     }
 
     if (popups.tooltip_on) {

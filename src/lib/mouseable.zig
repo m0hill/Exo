@@ -3,7 +3,23 @@ const std = @import("std");
 const protocol = @import("protocol/mod.zig");
 const tree = @import("tree.zig");
 
+fn nodeDisabled(node: protocol.Node) bool {
+    return switch (node) {
+        .vbox => |v| v.disabled,
+        .hbox => |h| h.disabled,
+        .box => |b| b.disabled,
+        .scroll => |s| s.disabled,
+        .overlay => |o| o.disabled,
+        .text => |t| t.disabled,
+        .styled_text => |t| t.disabled,
+        .input => |i| i.disabled,
+        .textarea => |t| t.disabled,
+        .list => |l| l.disabled,
+    };
+}
+
 fn nodeMouseable(node: protocol.Node) bool {
+    if (nodeDisabled(node)) return false;
     return switch (node) {
         .vbox => |v| v.mouseable,
         .hbox => |h| h.mouseable,
@@ -13,11 +29,13 @@ fn nodeMouseable(node: protocol.Node) bool {
         .text => |t| t.mouseable,
         .styled_text => |t| t.mouseable,
         .input => |i| i.mouseable,
+        .textarea => |t| t.mouseable,
         .list => |l| l.mouseable,
     };
 }
 
 pub fn treeHasMouseables(node: protocol.Node) bool {
+    if (nodeDisabled(node)) return false;
     if (nodeMouseable(node)) return true;
     return switch (node) {
         .overlay => |o| blk: {
@@ -63,6 +81,7 @@ fn collectMouseablesInto(
     out: *std.ArrayList([]const u8),
     node: protocol.Node,
 ) !void {
+    if (nodeDisabled(node)) return;
     if (nodeMouseable(node)) try out.append(allocator, tree.nodeId(node));
     switch (node) {
         .overlay => |o| {

@@ -75,6 +75,28 @@ fn isScrollLocalKey(ev: keys.KeyEvent) bool {
     return b == 'j' or b == 'k';
 }
 
+fn isTextareaLocalKey(ev: keys.KeyEvent) bool {
+    switch (ev.key) {
+        .text => return !ev.mods.ctrl and !ev.mods.shift,
+        .named => |k| switch (k) {
+            .left,
+            .right,
+            .up,
+            .down,
+            .home,
+            .end,
+            .page_up,
+            .page_down,
+            .delete,
+            .backspace,
+            .enter,
+            => return !ev.mods.ctrl and !ev.mods.shift,
+            else => return false,
+        },
+        else => return false,
+    }
+}
+
 fn sendKeyEventToBackend(log_sink: *log.LogSink, backend_in: anytype, ev: keys.KeyEvent) !void {
     var fbuf: [4]u8 = undefined;
     const key_str = keys.keyToString(ev.key, &fbuf);
@@ -200,6 +222,8 @@ pub fn run() !void {
     defer ui.deinitWidgetEntries(allocator, &widgets);
     var render_inputs: std.ArrayList(render.InputState) = .empty;
     defer render_inputs.deinit(allocator);
+    var render_textareas: std.ArrayList(render.TextareaState) = .empty;
+    defer render_textareas.deinit(allocator);
     var render_lists: std.ArrayList(render.ListState) = .empty;
     defer render_lists.deinit(allocator);
     var render_scrolls: std.ArrayList(render.ScrollState) = .empty;
@@ -363,11 +387,13 @@ pub fn run() !void {
                             .input => .input,
                             .list => .list,
                             .scroll => .scroll,
+                            .textarea => .textarea,
+                            .action => .action,
                         };
                     }
                     break :blk null;
                 };
-                const focused_is_input = focused_kind != null and focused_kind.? == .input;
+                const focused_is_text_edit = focused_kind != null and (focused_kind.? == .input or focused_kind.? == .textarea);
 
                 while (processed < max_stdin_events_per_iter) : (processed += 1) {
                     if (processed != 0) {
@@ -424,20 +450,45 @@ pub fn run() !void {
                             continue;
                         } else {},
                         .paste => |payload| {
-                            if (focused_is_input and current_root != null and focused_id != null) {
+                            if (focused_is_text_edit and current_root != null and focused_id != null and focused_kind != null) {
                                 const rows: usize = @as(usize, last_term_size.rows);
                                 const cols: usize = @as(usize, last_term_size.cols);
-                                var visible_cols: usize = ui.inputVisibleCols(cols);
-                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
-                                    visible_cols = ui.inputVisibleCols(r.w);
-                                }
-                                const changed = ui.handleFocusedInputPaste(
-                                    allocator,
-                                    &widgets,
-                                    focused_id.?,
-                                    payload,
-                                    visible_cols,
-                                ) catch |e| blk: {
+                                const changed = switch (focused_kind.?) {
+                                    .input => blk: {
+                                        var visible_cols: usize = ui.inputVisibleCols(cols);
+                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                            visible_cols = ui.inputVisibleCols(r.w);
+                                        }
+                                        const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
+                                        break :blk ui.handleFocusedInputPaste(
+                                            allocator,
+                                            &widgets,
+                                            focused_id.?,
+                                            payload,
+                                            readonly,
+                                            visible_cols,
+                                        );
+                                    },
+                                    .textarea => blk: {
+                                        var visible_rows: usize = rows;
+                                        var visible_cols: usize = cols;
+                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                            visible_rows = r.h;
+                                            visible_cols = r.w;
+                                        }
+                                        const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
+                                        break :blk ui.handleFocusedTextareaPaste(
+                                            allocator,
+                                            &widgets,
+                                            focused_id.?,
+                                            payload,
+                                            readonly,
+                                            visible_rows,
+                                            visible_cols,
+                                        );
+                                    },
+                                    else => false,
+                                } catch |e| blk: {
                                     log.logPrint(&log_sink, "INPUT_PASTE_ERR reason={s}\n", .{@errorName(e)});
                                     break :blk false;
                                 };
@@ -446,7 +497,7 @@ pub fn run() !void {
                                     requested_reason = .input;
                                 }
                             } else {
-                                log.logPrint(&log_sink, "PASTE_DROP reason=not_input bytes={d}\n", .{payload.len});
+                                log.logPrint(&log_sink, "PASTE_DROP reason=not_text_edit bytes={d}\n", .{payload.len});
                             }
                             continue;
                         },
@@ -468,7 +519,8 @@ pub fn run() !void {
 
                             if (!handled_input_this_iter and keyEventIsNamed(ev, .tab) and !ev.mods.alt and !ev.mods.ctrl) {
                                 if (current_root != null) {
-                                    const next_focus = try ui.cycleFocusInTree(allocator, current_root.?, focused_id);
+                                    const dir: isize = if (ev.mods.shift) -1 else 1;
+                                    const next_focus = try ui.cycleFocusInTreeDir(allocator, current_root.?, focused_id, dir);
                                     try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
                                 } else {
                                     try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
@@ -503,7 +555,7 @@ pub fn run() !void {
                                 break;
                             }
 
-                            if (keyEventIsText(ev, 'x') and !focused_is_input) {
+                            if (keyEventIsText(ev, 'x') and !focused_is_text_edit) {
                                 try sendKeyEventToBackend(&log_sink, child_in, ev);
                                 need_backend_flush = true;
                                 wait_child = false;
@@ -511,7 +563,7 @@ pub fn run() !void {
                                 break;
                             }
 
-                            if (keyEventIsText(ev, 'q') and !focused_is_input) {
+                            if (keyEventIsText(ev, 'q') and !focused_is_text_edit) {
                                 try sendKeyEventToBackend(&log_sink, child_in, ev);
                                 need_backend_flush = true;
                                 continue;
@@ -551,15 +603,46 @@ pub fn run() !void {
                                         if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
                                             visible_cols = ui.inputVisibleCols(r.w);
                                         }
+                                        const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
 
                                         const changed = ui.handleFocusedInputKey(
                                             allocator,
                                             &widgets,
                                             focused_id.?,
                                             ev,
+                                            readonly,
                                             visible_cols,
                                         ) catch |e| blk: {
                                             log.logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
+                                            break :blk false;
+                                        };
+                                        if (changed) {
+                                            pending_input_event = true;
+                                            requested_reason = .input;
+                                        }
+                                    },
+                                    .textarea => if (isTextareaLocalKey(ev)) {
+                                        consumed = true;
+                                        const rows: usize = @as(usize, last_term_size.rows);
+                                        const cols: usize = @as(usize, last_term_size.cols);
+                                        var visible_rows: usize = rows;
+                                        var visible_cols: usize = cols;
+                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                            visible_rows = r.h;
+                                            visible_cols = r.w;
+                                        }
+                                        const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
+
+                                        const changed = ui.handleFocusedTextareaKey(
+                                            allocator,
+                                            &widgets,
+                                            focused_id.?,
+                                            ev,
+                                            readonly,
+                                            visible_rows,
+                                            visible_cols,
+                                        ) catch |e| blk: {
+                                            log.logPrint(&log_sink, "TEXTAREA_ERR reason={s}\n", .{@errorName(e)});
                                             break :blk false;
                                         };
                                         if (changed) {
@@ -590,10 +673,23 @@ pub fn run() !void {
                                             requested_reason = .input;
                                         }
                                     },
+                                    .action => {
+                                        const pressed_space: bool = switch (ev.key) {
+                                            .text => |s| s.len == 1 and s[0] == ' ' and !ev.mods.ctrl and !ev.mods.alt and !ev.mods.shift,
+                                            else => false,
+                                        };
+                                        const pressed_enter: bool = keyEventIsNamed(ev, .enter) and !ev.mods.ctrl and !ev.mods.alt and !ev.mods.shift;
+                                        if (pressed_space or pressed_enter) {
+                                            consumed = true;
+                                            try ui.activateActionForId(&log_sink, child_in, focused_id.?);
+                                            need_backend_flush = true;
+                                            requested_reason = .input;
+                                        }
+                                    },
                                 };
                             }
 
-                            if (!consumed and !focused_is_input) {
+                            if (!consumed and !focused_is_text_edit) {
                                 try sendKeyEventToBackend(&log_sink, child_in, ev);
                                 need_backend_flush = true;
                             }
@@ -784,7 +880,18 @@ pub fn run() !void {
                     ui.clampLocalStateForResize(&widgets, current_root.?, last_term_size);
                 }
 
-                const rs = try ui.buildRenderState(allocator, widgets.items, &render_inputs, &render_lists, &render_scrolls, focused_id);
+                const rs = try ui.buildRenderState(
+                    allocator,
+                    widgets.items,
+                    &render_inputs,
+                    &render_textareas,
+                    &render_lists,
+                    &render_scrolls,
+                    focused_id,
+                    hover_id,
+                    hover_item,
+                    pointer_engine.activeId(),
+                );
                 try renderer.draw(&term, current_root.?, rs);
                 last_render_ns = timing.monotonicNowNs();
 

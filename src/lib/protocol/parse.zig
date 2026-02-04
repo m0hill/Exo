@@ -19,6 +19,8 @@ const Span = protocol.Span;
 const PointerKind = protocol.PointerKind;
 const PointerButton = protocol.PointerButton;
 const PointerEvent = protocol.PointerEvent;
+const ValidationState = protocol.ValidationState;
+const ListMarker = protocol.ListMarker;
 const ParseMsgError = protocol.ParseMsgError;
 
 pub fn parseMsgLeaky(allocator: std.mem.Allocator, line: []const u8) ParseMsgError!Msg {
@@ -221,6 +223,40 @@ fn parseMouseable(obj: std.json.ObjectMap) ParseMsgError!bool {
     return false;
 }
 
+fn parseDisabled(obj: std.json.ObjectMap) ParseMsgError!bool {
+    return try getOptionalBool(obj, "disabled") orelse false;
+}
+
+fn parseReadonly(obj: std.json.ObjectMap) ParseMsgError!bool {
+    return try getOptionalBool(obj, "readonly") orelse false;
+}
+
+fn parseValidation(obj: std.json.ObjectMap) ParseMsgError!ValidationState {
+    const s = try getOptionalString(obj, "validation") orelse return .none;
+    if (std.mem.eql(u8, s, "none")) return .none;
+    if (std.mem.eql(u8, s, "error")) return .@"error";
+    if (std.mem.eql(u8, s, "warning")) return .warning;
+    if (std.mem.eql(u8, s, "success")) return .success;
+    return error.UnknownValidationState;
+}
+
+fn parseFocusable(obj: std.json.ObjectMap, default: bool) ParseMsgError!bool {
+    if (obj.get("focusable")) |v| {
+        return switch (v) {
+            .bool => |b| b,
+            else => return error.WrongType,
+        };
+    }
+    return default;
+}
+
+fn parseListMarker(obj: std.json.ObjectMap) ParseMsgError!ListMarker {
+    const s = try getOptionalString(obj, "marker") orelse return .default;
+    if (std.mem.eql(u8, s, "default")) return .default;
+    if (std.mem.eql(u8, s, "none")) return .none;
+    return error.UnknownListMarker;
+}
+
 fn parsePointerKind(obj: std.json.ObjectMap) ParseMsgError!PointerKind {
     const s = try getRequiredString(obj, "kind");
     if (std.mem.eql(u8, s, "down")) return .down;
@@ -252,6 +288,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, false);
         const justify_content = try parseJustifyContent(obj);
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
@@ -272,6 +312,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .clip = clip,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .justify_content = justify_content,
             .align_items = align_items,
             .gap = gap,
@@ -288,6 +332,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, false);
         const justify_content = try parseJustifyContent(obj);
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
@@ -308,6 +356,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .clip = clip,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .justify_content = justify_content,
             .align_items = align_items,
             .gap = gap,
@@ -327,6 +379,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const shadow = try getOptionalBool(obj, "shadow") orelse false;
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, false);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
@@ -345,6 +401,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .shadow = shadow,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .align_self = align_self,
             .style = st,
             .child = child,
@@ -358,6 +418,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const clip = try getOptionalBool(obj, "clip") orelse true;
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, true);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
@@ -373,6 +437,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .clip = clip,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .align_self = align_self,
             .style = st,
             .child = child,
@@ -386,6 +454,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, false);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
 
@@ -410,6 +482,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .clip = clip,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .align_self = align_self,
             .style = st,
             .base = base,
@@ -423,6 +499,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, false);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
@@ -435,6 +515,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .ext_align = ext_align,
             .v_align = v_align,
             .style = st,
@@ -448,6 +532,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, false);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
@@ -465,6 +553,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .ext_align = ext_align,
             .v_align = v_align,
             .style = st,
@@ -478,6 +570,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, true);
         const content_align = try parseHorizontalAlignOrDefault(obj, "content_align", .left);
         const st = try getOptionalStyleOverride(obj, "style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
@@ -490,7 +586,42 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .content_align = content_align,
+            .style = st,
+            .placeholder_style = ph_st,
+            .placeholder = placeholder,
+        } };
+    } else if (std.mem.eql(u8, type_str, "textarea")) {
+        const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, true);
+        const st = try getOptionalStyleOverride(obj, "style");
+        const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
+        const placeholder = try getOptionalString(obj, "placeholder");
+        return .{ .textarea = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .align_self = align_self,
+            .hoverable = hoverable,
+            .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
             .style = st,
             .placeholder_style = ph_st,
             .placeholder = placeholder,
@@ -504,6 +635,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, true);
+        const marker = try parseListMarker(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -520,6 +656,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
+            .marker = marker,
             .style = st,
             .children = out,
         } };

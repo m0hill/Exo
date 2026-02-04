@@ -9,7 +9,23 @@ pub const HoverHit = struct {
     item: ?[]const u8,
 };
 
+fn nodeDisabled(node: protocol.Node) bool {
+    return switch (node) {
+        .vbox => |v| v.disabled,
+        .hbox => |h| h.disabled,
+        .box => |b| b.disabled,
+        .scroll => |s| s.disabled,
+        .overlay => |o| o.disabled,
+        .text => |t| t.disabled,
+        .styled_text => |t| t.disabled,
+        .input => |i| i.disabled,
+        .textarea => |t| t.disabled,
+        .list => |l| l.disabled,
+    };
+}
+
 fn nodeHoverable(node: protocol.Node) bool {
+    if (nodeDisabled(node)) return false;
     return switch (node) {
         .vbox => |v| v.hoverable,
         .hbox => |h| h.hoverable,
@@ -19,11 +35,13 @@ fn nodeHoverable(node: protocol.Node) bool {
         .text => |t| t.hoverable,
         .styled_text => |t| t.hoverable,
         .input => |i| i.hoverable,
+        .textarea => |t| t.hoverable,
         .list => |l| l.hoverable,
     };
 }
 
 pub fn treeHasHoverables(node: protocol.Node) bool {
+    if (nodeDisabled(node)) return false;
     if (nodeHoverable(node)) return true;
     return switch (node) {
         .overlay => |o| {
@@ -89,6 +107,7 @@ fn collectHoverables(allocator: std.mem.Allocator, root: protocol.Node) !std.Arr
 }
 
 fn collectHoverablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]const u8), node: protocol.Node) !void {
+    if (nodeDisabled(node)) return;
     if (nodeHoverable(node)) try out.append(allocator, tree.nodeId(node));
 
     switch (node) {

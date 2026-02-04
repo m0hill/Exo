@@ -43,6 +43,26 @@ pub const PointerInfo = struct {
     captured: bool,
 };
 
+pub const RadioChoice = enum { alpha, beta, gamma };
+pub const TabsChoice = enum { one, two, three };
+pub const MenuAnchor = enum { file, help };
+pub const MenuAction = enum { none, new, open, quit, about };
+
+pub const WidgetsState = struct {
+    button_clicks: usize = 0,
+    checkbox_checked: bool = false,
+    toggle_on: bool = false,
+    radio_choice: RadioChoice = .alpha,
+    active_tab: TabsChoice = .one,
+    menu_open: bool = false,
+    menu_anchor: MenuAnchor = .file,
+    last_menu_action: MenuAction = .none,
+    tree_root_expanded: bool = true,
+    tree_src_expanded: bool = true,
+    tree_lib_expanded: bool = false,
+    tree_tests_expanded: bool = false,
+};
+
 pub fn buildStatusText(
     allocator: std.mem.Allocator,
     buf: *std.ArrayList(u8),

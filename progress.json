@@ -730,4 +730,35 @@
       "Emergency exit chord remains: Ctrl-G then Ctrl-G"
     ]
   }
+  ,
+  {
+    "slice": 27,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Core Widget Kit + Uniform Widget State v1: per-node disabled/readonly/validation/focusable, expanded focus traversal + action targets, state-aware styling, list marker config, and a new runtime-owned `textarea` widget",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig: protocol v0.13 adds uniform node fields `disabled`, `readonly`, `validation`, `focusable`; adds `ValidationState`, `textarea` node type, and `list.marker` (`default|none`)",
+      "src/bin/runtime/ui/mod.zig + src/bin/runtime/app.zig: focus traversal includes any `focusable:true` node (action focus targets) and skips `disabled:true`; Enter/Space activates action targets via `activate` with `item:\"\"`; readonly enforced for input/textarea edits",
+      "src/lib/render/mod.zig + src/lib/render/theme.zig: uniform runtime overlays for validation/disabled/readonly/focused/hovered/active; renderer support for `textarea` and list marker none",
+      "src/lib/widget_kit/mod.zig + src/lib/tui.zig: backend-side widget kit (button/checkbox/toggle/radio/tabs/table/tree/textarea/progress/spinner) as compositions of protocol primitives",
+      "src/bin/demo/main.zig + src/bin/demo/render.zig + src/bin/demo/state.zig: Widgets panel showcasing button/checkbox/toggle/radio/tabs/menu overlay (modal), table, tree expand/collapse, textarea (incl readonly) and validation/disabled styling",
+      "src/test/tests.zig + build.zig: unit tests for protocol parse/write of new fields, textarea, list marker; render overlay behavior; textarea scroll/cursor behavior"
+    ],
+    "boundaries_hit": [
+      "Uniform widget-state model across all nodes without adding many new protocol node types",
+      "Runtime interaction gating: disabled blocks focus + pointer/hover hit-testing; readonly blocks edits for text-edit widgets only",
+      "Renderer overlays driven by runtime focus/hover/active plus node validation/disabled/readonly state"
+    ],
+    "timestamp": "2026-02-04",
+    "manual_repro": [
+      "zig build demo",
+      "In the Widgets panel, Tab/Shift-Tab through controls and confirm the disabled button is skipped",
+      "Focus Button/Checkbox/Toggle and press Enter/Space; confirm `activate id=<id> item:\"\"` events are logged and UI updates (button click count, checkbox/toggle state)",
+      "Open File/Help in the menubar; confirm a modal overlay appears and focus is trapped within it until Close menu (or pick an item)",
+      "Activate tree rows (project/src/lib/tests) and confirm they expand/collapse via backend patches",
+      "Edit the textarea: type multiple lines and confirm the cursor stays visible while scrolling; confirm readonly textarea blocks edits but allows cursor movement",
+      "Verify validation styles are visible (error/warning/success) and disabled styling dims the disabled control",
+      "Exit with 'x'"
+    ]
+  }
 ]
