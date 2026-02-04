@@ -131,6 +131,20 @@ pub fn main() !void {
     var hover_item: std.ArrayList(u8) = .empty;
     defer hover_item.deinit(allocator);
 
+    var pointer_have: bool = false;
+    var pointer_kind: protocol.PointerKind = .move;
+    var pointer_id: std.ArrayList(u8) = .empty;
+    defer pointer_id.deinit(allocator);
+    var pointer_item: std.ArrayList(u8) = .empty;
+    defer pointer_item.deinit(allocator);
+    var pointer_x: usize = 0;
+    var pointer_y: usize = 0;
+    var pointer_buttons: u8 = 0;
+    var pointer_mods: u8 = 0;
+    var pointer_clicks: u8 = 1;
+    var pointer_captured: bool = false;
+    var pointer_last_patch_ns: u64 = 0;
+
     var inputs = [_]state.InputSlot{
         .{ .id = "query-a" },
         .{ .id = "query-b" },
@@ -210,6 +224,7 @@ pub fn main() !void {
             term_cols,
             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+            null,
         );
         var title_buf: [128]u8 = undefined;
         var hint_buf: [512]u8 = undefined;
@@ -308,6 +323,17 @@ pub fn main() !void {
                 term_cols,
                 if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                 popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                if (pointer_have) .{
+                    .kind = pointer_kind,
+                    .id = pointer_id.items,
+                    .item = pointer_item.items,
+                    .x = pointer_x,
+                    .y = pointer_y,
+                    .buttons = pointer_buttons,
+                    .mods = pointer_mods,
+                    .clicks = pointer_clicks,
+                    .captured = pointer_captured,
+                } else null,
             );
 
             if ((tick % 4) == 0) {
@@ -479,6 +505,17 @@ pub fn main() !void {
                                 term_cols,
                                 if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                                 popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                if (pointer_have) .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                } else null,
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -502,6 +539,17 @@ pub fn main() !void {
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                            if (pointer_have) .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -542,6 +590,17 @@ pub fn main() !void {
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                            if (pointer_have) .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -564,6 +623,17 @@ pub fn main() !void {
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                            if (pointer_have) .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -585,6 +655,92 @@ pub fn main() !void {
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                            if (pointer_have) .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            } else null,
+                        );
+                        std.debug.print("PATCH_TX target=status\n", .{});
+                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                        try out.flush();
+                    },
+                    .pointer => |p| {
+                        if (p.kind != .move and p.kind != .drag) {
+                            std.debug.print(
+                                "EVENT_RX name=pointer kind={s} id={s} item={s} x={d} y={d} buttons={d} mods={d} clicks={d} captured={s}\n",
+                                .{
+                                    switch (p.kind) {
+                                        .down => "down",
+                                        .up => "up",
+                                        .move => "move",
+                                        .drag => "drag",
+                                        .scroll => "scroll",
+                                    },
+                                    p.id,
+                                    p.item orelse "",
+                                    p.x,
+                                    p.y,
+                                    p.buttons,
+                                    p.mods,
+                                    p.clicks,
+                                    if (p.captured) "true" else "false",
+                                },
+                            );
+                        }
+
+                        pointer_have = true;
+                        pointer_kind = p.kind;
+                        pointer_x = p.x;
+                        pointer_y = p.y;
+                        pointer_buttons = p.buttons;
+                        pointer_mods = p.mods;
+                        pointer_clicks = p.clicks;
+                        pointer_captured = p.captured;
+                        pointer_id.clearRetainingCapacity();
+                        if (p.id.len > 0) try pointer_id.appendSlice(allocator, p.id);
+                        pointer_item.clearRetainingCapacity();
+                        if (p.item) |it| {
+                            if (it.len > 0) try pointer_item.appendSlice(allocator, it);
+                        }
+
+                        const now_i = std.time.nanoTimestamp();
+                        const now_ns: u64 = if (now_i > 0) @as(u64, @intCast(now_i)) else 0;
+                        const debounce_ns: u64 = 50 * std.time.ns_per_ms;
+                        const should_patch =
+                            (p.kind != .move and p.kind != .drag) or pointer_last_patch_ns == 0 or
+                            now_ns > pointer_last_patch_ns + debounce_ns;
+                        if (!should_patch) continue;
+                        pointer_last_patch_ns = now_ns;
+
+                        const status_text = try state.buildStatusText(
+                            allocator,
+                            &status_buf,
+                            state_on,
+                            inputs[0..],
+                            lists[0..],
+                            focus_id.items,
+                            term_rows,
+                            term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                            .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            },
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -628,6 +784,17 @@ pub fn main() !void {
                                 hover_id.items,
                                 hover_item.items,
                             ),
+                            if (pointer_have) .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            } else null,
                         );
 
                         _ = arena_tx.reset(.retain_capacity);
@@ -721,6 +888,17 @@ pub fn main() !void {
                                 term_cols,
                                 if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                                 popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                if (pointer_have) .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                } else null,
                             );
 
                             const layout_alt = false;
@@ -942,6 +1120,17 @@ pub fn main() !void {
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                            if (pointer_have) .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -963,6 +1152,17 @@ pub fn main() !void {
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
                             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                            if (pointer_have) .{
+                                .kind = pointer_kind,
+                                .id = pointer_id.items,
+                                .item = pointer_item.items,
+                                .x = pointer_x,
+                                .y = pointer_y,
+                                .buttons = pointer_buttons,
+                                .mods = pointer_mods,
+                                .clicks = pointer_clicks,
+                                .captured = pointer_captured,
+                            } else null,
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");

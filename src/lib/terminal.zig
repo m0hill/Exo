@@ -9,8 +9,10 @@ pub const CrashRestoreState = struct {
     have_orig_termios: bool = false,
     raw_enabled: bool = false,
     screen_enabled: bool = false,
-    mouse_enabled: bool = false,
-    mouse_motion_enabled: bool = false,
+    mouse_enabled_1000: bool = false,
+    mouse_enabled_1006: bool = false,
+    mouse_enabled_1002: bool = false,
+    mouse_enabled_1003: bool = false,
 };
 
 var crash_state: CrashRestoreState = .{};
@@ -34,8 +36,10 @@ fn updateCrashStateFromTerminal(term: *const Terminal) void {
         .have_orig_termios = true,
         .raw_enabled = term.raw_enabled,
         .screen_enabled = term.screen_enabled,
-        .mouse_enabled = term.mouse_enabled,
-        .mouse_motion_enabled = term.mouse_motion_enabled,
+        .mouse_enabled_1000 = term.mouse_enabled_1000,
+        .mouse_enabled_1006 = term.mouse_enabled_1006,
+        .mouse_enabled_1002 = term.mouse_enabled_1002,
+        .mouse_enabled_1003 = term.mouse_enabled_1003,
     };
     crash_state_active = true;
 }
@@ -59,6 +63,7 @@ pub fn restoreBestEffort() void {
     // Try to leave the terminal in a reasonable state even if we don't know
     // what was enabled.
     writeAllBestEffort(st.stdout_fd, "\x1b[?1003l"); // disable mouse motion
+    writeAllBestEffort(st.stdout_fd, "\x1b[?1002l"); // disable mouse motion (button)
     writeAllBestEffort(st.stdout_fd, "\x1b[?1006l"); // disable SGR mouse
     writeAllBestEffort(st.stdout_fd, "\x1b[?1000l"); // disable mouse
     writeAllBestEffort(st.stdout_fd, "\x1b[?25h"); // show cursor
@@ -80,8 +85,10 @@ pub const Terminal = struct {
     orig_termios: std.posix.termios,
     raw_enabled: bool = false,
     screen_enabled: bool = false,
-    mouse_enabled: bool = false,
-    mouse_motion_enabled: bool = false,
+    mouse_enabled_1000: bool = false,
+    mouse_enabled_1006: bool = false,
+    mouse_enabled_1002: bool = false,
+    mouse_enabled_1003: bool = false,
 
     pub fn init() !Terminal {
         const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
@@ -136,39 +143,89 @@ pub const Terminal = struct {
 
         try t.writeAll("\x1b[?1049h"); // alt screen
         try t.writeAll("\x1b[?25l"); // hide cursor
-        // Enable SGR mouse reporting (Tracer 13).
-        try t.writeAll("\x1b[?1000h"); // basic mouse press/release
-        try t.writeAll("\x1b[?1006h"); // SGR extended coordinates
         t.screen_enabled = true;
-        t.mouse_enabled = true;
         updateCrashStateFromTerminal(&t);
         return t;
     }
 
-    pub fn enableMouseMotion(self: *Terminal) !void {
-        if (self.mouse_motion_enabled) return;
-        try self.writeAll("\x1b[?1003h");
-        self.mouse_motion_enabled = true;
+    pub fn enableMouseBase(self: *Terminal) !void {
+        if (!self.mouse_enabled_1000) {
+            try self.writeAll("\x1b[?1000h"); // basic mouse press/release + wheel
+            self.mouse_enabled_1000 = true;
+        }
+        if (!self.mouse_enabled_1006) {
+            try self.writeAll("\x1b[?1006h"); // SGR extended coordinates
+            self.mouse_enabled_1006 = true;
+        }
         updateCrashStateFromTerminal(self);
     }
 
-    pub fn disableMouseMotion(self: *Terminal) !void {
-        if (!self.mouse_motion_enabled) return;
-        try self.writeAll("\x1b[?1003l");
-        self.mouse_motion_enabled = false;
+    pub fn disableMouseBase(self: *Terminal) !void {
+        if (self.mouse_enabled_1006) {
+            try self.writeAll("\x1b[?1006l");
+            self.mouse_enabled_1006 = false;
+        }
+        if (self.mouse_enabled_1000) {
+            try self.writeAll("\x1b[?1000l");
+            self.mouse_enabled_1000 = false;
+        }
         updateCrashStateFromTerminal(self);
+    }
+
+    pub fn enableMouseMotionAny(self: *Terminal) !void {
+        if (self.mouse_enabled_1003) return;
+        try self.writeAll("\x1b[?1003h");
+        self.mouse_enabled_1003 = true;
+        updateCrashStateFromTerminal(self);
+    }
+
+    pub fn disableMouseMotionAny(self: *Terminal) !void {
+        if (!self.mouse_enabled_1003) return;
+        try self.writeAll("\x1b[?1003l");
+        self.mouse_enabled_1003 = false;
+        updateCrashStateFromTerminal(self);
+    }
+
+    pub fn enableMouseMotionWhileButton(self: *Terminal) !void {
+        if (self.mouse_enabled_1002) return;
+        try self.writeAll("\x1b[?1002h");
+        self.mouse_enabled_1002 = true;
+        updateCrashStateFromTerminal(self);
+    }
+
+    pub fn disableMouseMotionWhileButton(self: *Terminal) !void {
+        if (!self.mouse_enabled_1002) return;
+        try self.writeAll("\x1b[?1002l");
+        self.mouse_enabled_1002 = false;
+        updateCrashStateFromTerminal(self);
+    }
+
+    // Back-compat helpers used by earlier tracers.
+    pub fn enableMouseMotion(self: *Terminal) !void {
+        return self.enableMouseMotionAny();
+    }
+
+    pub fn disableMouseMotion(self: *Terminal) !void {
+        return self.disableMouseMotionAny();
     }
 
     pub fn deinit(self: *Terminal) void {
         if (self.screen_enabled) {
-            if (self.mouse_enabled) {
-                if (self.mouse_motion_enabled) {
-                    _ = self.writeAll("\x1b[?1003l") catch {};
-                    self.mouse_motion_enabled = false;
-                }
+            if (self.mouse_enabled_1003) {
+                _ = self.writeAll("\x1b[?1003l") catch {};
+                self.mouse_enabled_1003 = false;
+            }
+            if (self.mouse_enabled_1002) {
+                _ = self.writeAll("\x1b[?1002l") catch {};
+                self.mouse_enabled_1002 = false;
+            }
+            if (self.mouse_enabled_1006) {
                 _ = self.writeAll("\x1b[?1006l") catch {};
+                self.mouse_enabled_1006 = false;
+            }
+            if (self.mouse_enabled_1000) {
                 _ = self.writeAll("\x1b[?1000l") catch {};
-                self.mouse_enabled = false;
+                self.mouse_enabled_1000 = false;
             }
             _ = self.writeAll("\x1b[?25h") catch {};
             _ = self.writeAll("\x1b[?1049l") catch {};

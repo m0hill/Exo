@@ -25,6 +25,7 @@ pub const EventMsg = union(enum) {
     scroll: struct { id: []const u8, scroll_y: usize },
     resize: struct { rows: usize, cols: usize },
     hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null },
+    pointer: PointerEvent,
 };
 
 pub const Node = union(enum) {
@@ -75,6 +76,7 @@ pub const VBoxNode = struct {
     pad: usize = 0,
     clip: bool = false,
     hoverable: bool = false,
+    mouseable: bool = false,
     justify_content: JustifyContent = .start,
     align_items: AlignItems = .stretch,
     gap: usize = 0,
@@ -91,6 +93,7 @@ pub const HBoxNode = struct {
     pad: usize = 0,
     clip: bool = false,
     hoverable: bool = false,
+    mouseable: bool = false,
     justify_content: JustifyContent = .start,
     align_items: AlignItems = .stretch,
     gap: usize = 0,
@@ -111,6 +114,7 @@ pub const BoxNode = struct {
     clip: bool = true,
     shadow: bool = false,
     hoverable: bool = false,
+    mouseable: bool = false,
     align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     child: *Node,
@@ -125,6 +129,7 @@ pub const ScrollNode = struct {
     /// Defaults to true; backends may omit `clip` entirely.
     clip: bool = true,
     hoverable: bool = false,
+    mouseable: bool = false,
     align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     child: *Node,
@@ -165,6 +170,7 @@ pub const OverlayNode = struct {
     pad: usize = 0,
     clip: bool = false,
     hoverable: bool = false,
+    mouseable: bool = false,
     align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     base: *Node,
@@ -178,6 +184,7 @@ pub const TextNode = struct {
     flex: usize = 0,
     align_self: ?AlignItems = null,
     hoverable: bool = false,
+    mouseable: bool = false,
     ext_align: HorizontalAlign = .left,
     v_align: VerticalAlign = .top,
     style: ?style.StyleOverride = null,
@@ -196,6 +203,7 @@ pub const StyledTextNode = struct {
     flex: usize = 0,
     align_self: ?AlignItems = null,
     hoverable: bool = false,
+    mouseable: bool = false,
     ext_align: HorizontalAlign = .left,
     v_align: VerticalAlign = .top,
     style: ?style.StyleOverride = null,
@@ -209,6 +217,7 @@ pub const InputNode = struct {
     flex: usize = 0,
     align_self: ?AlignItems = null,
     hoverable: bool = false,
+    mouseable: bool = false,
     content_align: HorizontalAlign = .left,
     style: ?style.StyleOverride = null,
     placeholder_style: ?style.StyleOverride = null,
@@ -223,8 +232,41 @@ pub const ListNode = struct {
     height: ?usize = null,
     align_self: ?AlignItems = null,
     hoverable: bool = false,
+    mouseable: bool = false,
     style: ?style.StyleOverride = null,
     children: []Node,
+};
+
+pub const PointerKind = enum {
+    down,
+    up,
+    move,
+    drag,
+    scroll,
+};
+
+pub const PointerButton = enum {
+    left,
+    middle,
+    right,
+    none,
+};
+
+pub const PointerEvent = struct {
+    kind: PointerKind,
+    id: []const u8,
+    x: usize,
+    y: usize,
+    local_x: usize,
+    local_y: usize,
+    button: PointerButton = .none,
+    buttons: u8 = 0,
+    mods: u8 = 0,
+    clicks: u8 = 1,
+    scroll_dx: isize = 0,
+    scroll_dy: isize = 0,
+    item: ?[]const u8 = null,
+    captured: bool = false,
 };
 
 pub const ParseMsgError = error{
@@ -243,4 +285,6 @@ pub const ParseMsgError = error{
     UnknownAlignItems,
     UnknownHorizontalAlign,
     UnknownVerticalAlign,
+    UnknownPointerKind,
+    UnknownPointerButton,
 } || std.mem.Allocator.Error;

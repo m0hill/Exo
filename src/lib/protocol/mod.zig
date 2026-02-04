@@ -8,6 +8,10 @@ pub const PatchMode = types.PatchMode;
 pub const EventMsg = types.EventMsg;
 pub const Node = types.Node;
 
+pub const PointerKind = types.PointerKind;
+pub const PointerButton = types.PointerButton;
+pub const PointerEvent = types.PointerEvent;
+
 pub const JustifyContent = types.JustifyContent;
 pub const AlignItems = types.AlignItems;
 pub const HorizontalAlign = types.HorizontalAlign;
@@ -43,6 +47,7 @@ pub const writeActivateEventJsonl = write.writeActivateEventJsonl;
 pub const writeScrollEventJsonl = write.writeScrollEventJsonl;
 pub const writeResizeEventJsonl = write.writeResizeEventJsonl;
 pub const writeHoverEventJsonl = write.writeHoverEventJsonl;
+pub const writePointerEventJsonl = write.writePointerEventJsonl;
 pub const writeNodeJson = write.writeNodeJson;
 pub const writeSpanJson = write.writeSpanJson;
 pub const writeStyleOverrideJson = write.writeStyleOverrideJson;

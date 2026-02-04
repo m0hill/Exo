@@ -668,4 +668,36 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 25,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Mouse support v1 (full opt-in): `mouseable` nodes + unified `pointer` event with capture/double-click, SGR parsing upgrades, and dynamic terminal mouse mode gating",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig: protocol v0.11 adds `mouseable` node field + `pointer` event (down/up/move/drag/scroll)",
+      "src/lib/terminal.zig: full opt-in mouse mode management (1000/1006 base + 1003 motion) with crash-safe restore",
+      "src/lib/mouse.zig: robust SGR 1006 parsing (press/release/move/wheel + modifiers)",
+      "src/lib/mouseable.zig: tree traversal helpers for mouseable gating + hit-test candidate collection",
+      "src/bin/runtime/ui/pointer.zig + src/bin/runtime/app.zig: runtime pointer engine (hit-testing with overlays/modals/scroll offsets, capture, double-click, drag threshold, move/drag coalescing, patch-time refresh)",
+      "src/bin/runtime/ui/mod.zig: runtime-local click-to-focus/select + wheel scrolling gated by `mouseable:true`",
+      "src/bin/demo/render.zig + src/bin/demo/main.zig + src/bin/demo/state.zig: demo marks widgets mouseable and shows a debounced Pointer Debug status line",
+      "src/test/tests.zig: mouse parsing tests, pointer protocol tests, and pointer engine click/capture/leave test",
+      "README.md: document protocol v0.11 `mouseable` + `pointer` event schema"
+    ],
+    "boundaries_hit": [
+      "Full opt-in: terminal mouse modes disabled unless `mouseable:true` or `hoverable:true` exists in the effective tree",
+      "Unified pointer event stream (normalized buttons/mods/clicks + capture) to keep backend event surface extensible",
+      "Overlay/modal-aware hit-testing with scroll offset correctness and best-effort coalescing under rapid motion"
+    ],
+    "timestamp": "2026-02-04",
+    "manual_repro": [
+      "zig build demo",
+      "Move over mouseable widgets; confirm backend logs occasional `EVENT_RX name=pointer ...` and status shows a Pointer field (debounced for move/drag)",
+      "Click a mouseable input/list to focus/select; confirm behavior matches prior slices but only on mouseable targets",
+      "Wheel over a mouseable list/scroll; confirm local scrolling works and `pointer kind=scroll` events appear",
+      "Remove mouseable/hoverable from the tree (if experimenting in a custom backend) and confirm terminal text selection works normally",
+      "Exit with 'x'"
+    ]
+  }
 ]

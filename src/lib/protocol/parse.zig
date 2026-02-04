@@ -16,6 +16,9 @@ const OverlayPlacement = protocol.OverlayPlacement;
 const OverlayAlign = protocol.OverlayAlign;
 const OverlayLayer = protocol.OverlayLayer;
 const Span = protocol.Span;
+const PointerKind = protocol.PointerKind;
+const PointerButton = protocol.PointerButton;
+const PointerEvent = protocol.PointerEvent;
 const ParseMsgError = protocol.ParseMsgError;
 
 pub fn parseMsgLeaky(allocator: std.mem.Allocator, line: []const u8) ParseMsgError!Msg {
@@ -82,6 +85,41 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             const y = try getRequiredUsize(obj, "y");
             const item = try getOptionalString(obj, "item");
             return .{ .event = .{ .hover = .{ .id = id, .x = x, .y = y, .item = item } } };
+        } else if (std.mem.eql(u8, name, "pointer")) {
+            const kind = try parsePointerKind(obj);
+            const id = try getRequiredString(obj, "id");
+            const x = try getRequiredUsize(obj, "x");
+            const y = try getRequiredUsize(obj, "y");
+            const local_x = try getRequiredUsize(obj, "local_x");
+            const local_y = try getRequiredUsize(obj, "local_y");
+            const button = try parsePointerButton(obj);
+            const buttons = try getRequiredUsize(obj, "buttons");
+            if (buttons > std.math.maxInt(u8)) return error.WrongType;
+            const mods = try getRequiredUsize(obj, "mods");
+            if (mods > std.math.maxInt(u8)) return error.WrongType;
+            const clicks = try getRequiredUsize(obj, "clicks");
+            if (clicks > std.math.maxInt(u8)) return error.WrongType;
+            const scroll_dx = try getRequiredIsize(obj, "scroll_dx");
+            const scroll_dy = try getRequiredIsize(obj, "scroll_dy");
+            const item = try getOptionalString(obj, "item");
+            const captured = try getRequiredBool(obj, "captured");
+            const ev: PointerEvent = .{
+                .kind = kind,
+                .id = id,
+                .x = x,
+                .y = y,
+                .local_x = local_x,
+                .local_y = local_y,
+                .button = button,
+                .buttons = @as(u8, @intCast(buttons)),
+                .mods = @as(u8, @intCast(mods)),
+                .clicks = @as(u8, @intCast(clicks)),
+                .scroll_dx = scroll_dx,
+                .scroll_dy = scroll_dy,
+                .item = item,
+                .captured = captured,
+            };
+            return .{ .event = .{ .pointer = ev } };
         } else {
             return error.UnknownEventName;
         }
@@ -170,6 +208,35 @@ fn parseHoverable(obj: std.json.ObjectMap) ParseMsgError!bool {
     return false;
 }
 
+fn parseMouseable(obj: std.json.ObjectMap) ParseMsgError!bool {
+    if (obj.get("mouseable")) |v| {
+        return switch (v) {
+            .bool => |b| b,
+            else => return error.WrongType,
+        };
+    }
+    return false;
+}
+
+fn parsePointerKind(obj: std.json.ObjectMap) ParseMsgError!PointerKind {
+    const s = try getRequiredString(obj, "kind");
+    if (std.mem.eql(u8, s, "down")) return .down;
+    if (std.mem.eql(u8, s, "up")) return .up;
+    if (std.mem.eql(u8, s, "move")) return .move;
+    if (std.mem.eql(u8, s, "drag")) return .drag;
+    if (std.mem.eql(u8, s, "scroll")) return .scroll;
+    return error.UnknownPointerKind;
+}
+
+fn parsePointerButton(obj: std.json.ObjectMap) ParseMsgError!PointerButton {
+    const s = try getRequiredString(obj, "button");
+    if (std.mem.eql(u8, s, "left")) return .left;
+    if (std.mem.eql(u8, s, "middle")) return .middle;
+    if (std.mem.eql(u8, s, "right")) return .right;
+    if (std.mem.eql(u8, s, "none")) return .none;
+    return error.UnknownPointerButton;
+}
+
 fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Node {
     const obj = try asObject(v);
     const type_str = try getRequiredString(obj, "type");
@@ -181,6 +248,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const justify_content = try parseJustifyContent(obj);
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
@@ -200,6 +268,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .justify_content = justify_content,
             .align_items = align_items,
             .gap = gap,
@@ -215,6 +284,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const justify_content = try parseJustifyContent(obj);
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
@@ -234,6 +304,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .justify_content = justify_content,
             .align_items = align_items,
             .gap = gap,
@@ -252,6 +323,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const clip = try getOptionalBool(obj, "clip") orelse true;
         const shadow = try getOptionalBool(obj, "shadow") orelse false;
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
@@ -269,6 +341,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .clip = clip,
             .shadow = shadow,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .align_self = align_self,
             .style = st,
             .child = child,
@@ -281,6 +354,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse true;
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
@@ -295,6 +369,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .align_self = align_self,
             .style = st,
             .child = child,
@@ -307,6 +382,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
 
@@ -330,6 +406,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .align_self = align_self,
             .style = st,
             .base = base,
@@ -342,6 +419,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
@@ -353,6 +431,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .flex = flex,
             .align_self = align_self,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .ext_align = ext_align,
             .v_align = v_align,
             .style = st,
@@ -365,6 +444,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
@@ -381,6 +461,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .flex = flex,
             .align_self = align_self,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .ext_align = ext_align,
             .v_align = v_align,
             .style = st,
@@ -393,6 +474,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const content_align = try parseHorizontalAlignOrDefault(obj, "content_align", .left);
         const st = try getOptionalStyleOverride(obj, "style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
@@ -404,6 +486,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .flex = flex,
             .align_self = align_self,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .content_align = content_align,
             .style = st,
             .placeholder_style = ph_st,
@@ -417,6 +500,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const height = try getOptionalUsize(obj, "height");
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -432,6 +516,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .height = height,
             .align_self = align_self,
             .hoverable = hoverable,
+            .mouseable = mouseable,
             .style = st,
             .children = out,
         } };
@@ -577,6 +662,22 @@ fn getRequiredUsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!us
     const v = try getRequired(obj, field);
     return switch (v) {
         .integer => |n| if (n < 0) return error.WrongType else @as(usize, @intCast(n)),
+        else => error.WrongType,
+    };
+}
+
+fn getRequiredIsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!isize {
+    const v = try getRequired(obj, field);
+    return switch (v) {
+        .integer => |n| std.math.cast(isize, n) orelse return error.WrongType,
+        else => error.WrongType,
+    };
+}
+
+fn getRequiredBool(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!bool {
+    const v = try getRequired(obj, field);
+    return switch (v) {
+        .bool => |b| b,
         else => error.WrongType,
     };
 }

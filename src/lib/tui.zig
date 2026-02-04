@@ -16,3 +16,4 @@ pub const scheduler = @import("scheduler.zig");
 pub const mouse = @import("mouse.zig");
 pub const markdown = @import("markdown/mod.zig");
 pub const hover = @import("hover.zig");
+pub const mouseable = @import("mouseable.zig");

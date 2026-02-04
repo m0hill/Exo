@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const tui = @import("tui");
+const protocol = tui.protocol;
+
 pub const InputSlot = struct {
     id: []const u8,
     last: std.ArrayList(u8) = .empty,
@@ -28,6 +31,18 @@ pub const PopupInfo = struct {
     hover_item: []const u8,
 };
 
+pub const PointerInfo = struct {
+    kind: protocol.PointerKind,
+    id: []const u8,
+    item: []const u8,
+    x: usize,
+    y: usize,
+    buttons: u8,
+    mods: u8,
+    clicks: u8,
+    captured: bool,
+};
+
 pub fn buildStatusText(
     allocator: std.mem.Allocator,
     buf: *std.ArrayList(u8),
@@ -39,6 +54,7 @@ pub fn buildStatusText(
     term_cols: ?usize,
     scroll: ?ScrollInfo,
     popups: PopupInfo,
+    pointer: ?PointerInfo,
 ) ![]const u8 {
     buf.clearRetainingCapacity();
     const w = buf.writer(allocator);
@@ -89,6 +105,28 @@ pub fn buildStatusText(
         if (s.id.len > 0) {
             try w.print(" | Scroll: {s} y={d}", .{ s.id, s.scroll_y });
         }
+    }
+    if (pointer) |p| {
+        try w.print(
+            " | Pointer: {s} id={s} item={s} x={d} y={d} btns={d} mods={d} clicks={d} cap={s}",
+            .{
+                switch (p.kind) {
+                    .down => "down",
+                    .up => "up",
+                    .move => "move",
+                    .drag => "drag",
+                    .scroll => "scroll",
+                },
+                p.id,
+                p.item,
+                p.x,
+                p.y,
+                p.buttons,
+                p.mods,
+                p.clicks,
+                if (p.captured) "true" else "false",
+            },
+        );
     }
     return buf.items;
 }

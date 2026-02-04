@@ -49,6 +49,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     tests_mod.addImport("tui", tui_mod);
+    const runtime_pointer_mod = b.createModule(.{
+        .root_source_file = b.path("src/bin/runtime/ui/pointer.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    runtime_pointer_mod.addImport("tui", tui_mod);
+    tests_mod.addImport("runtime_pointer", runtime_pointer_mod);
 
     const tests = b.addTest(.{ .root_module = tests_mod });
     const run_tests = b.addRunArtifact(tests);

@@ -94,45 +94,16 @@ fn clampListScrollForNode(widgets: *std.ArrayList(WidgetEntry), l: protocol.List
 
 // cloneNodeLeaky/nodeId moved to ui_node_util.zig
 
-pub const FocusKind = enum {
-    input,
-    list,
-    scroll,
-};
+const widgets_mod = @import("widgets.zig");
+pub const FocusKind = widgets_mod.FocusKind;
+pub const WidgetEntry = widgets_mod.WidgetEntry;
+const WidgetState = widgets_mod.WidgetState;
 
 pub const HoverHit = hover.HoverHit;
 
 const Focusable = struct {
     id: []const u8,
     kind: FocusKind,
-};
-
-const InputWidgetState = struct {
-    value: std.ArrayList(u8) = .empty,
-    cursor: usize = 0,
-    scroll_x: usize = 0,
-};
-
-const ListWidgetState = struct {
-    selected_id: std.ArrayList(u8) = .empty,
-    scroll: usize = 0,
-};
-
-const ScrollWidgetState = struct {
-    scroll_y: usize = 0,
-    content_h: usize = 0,
-    viewport_h: usize = 0,
-};
-
-const WidgetState = union(enum) {
-    input: InputWidgetState,
-    list: ListWidgetState,
-    scroll: ScrollWidgetState,
-};
-
-pub const WidgetEntry = struct {
-    id: std.ArrayList(u8) = .empty,
-    state: WidgetState,
 };
 
 pub fn deinitWidgetEntries(allocator: std.mem.Allocator, widgets: *std.ArrayList(WidgetEntry)) void {
@@ -322,14 +293,14 @@ fn collectHitTestables(allocator: std.mem.Allocator, root: protocol.Node) !std.A
 
 fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]const u8), node: protocol.Node) !void {
     switch (node) {
-        .input => |i| try out.append(allocator, i.id),
-        .list => |l| try out.append(allocator, l.id),
+        .input => |i| if (i.mouseable) try out.append(allocator, i.id),
+        .list => |l| if (l.mouseable) try out.append(allocator, l.id),
         .box => |b| {
             try collectHitTestablesInto(allocator, out, b.child.*);
         },
         .scroll => |s| {
             // Put scroll before its children so leaf focusables win when hit-testing "topmost".
-            try out.append(allocator, s.id);
+            if (s.mouseable) try out.append(allocator, s.id);
             try collectHitTestablesInto(allocator, out, s.child.*);
         },
         .overlay => |o| {
@@ -677,44 +648,41 @@ pub fn handleMouseEvent(
 ) !bool {
     var changed: bool = false;
     switch (ev.kind) {
-        .down_left => changed = try handleMouseDownLeft(
-            allocator,
-            log_sink,
-            backend_in,
-            widgets,
-            focused_id_buf,
-            focused_id,
-            root,
-            rows,
-            cols,
-            ev.x,
-            ev.y,
-        ),
-        .wheel_up => changed = try handleMouseWheel(
-            allocator,
-            log_sink,
-            backend_in,
-            widgets,
-            root,
-            rows,
-            cols,
-            ev.x,
-            ev.y,
-            -1,
-        ),
-        .wheel_down => changed = try handleMouseWheel(
-            allocator,
-            log_sink,
-            backend_in,
-            widgets,
-            root,
-            rows,
-            cols,
-            ev.x,
-            ev.y,
-            1,
-        ),
-        .move => {},
+        .down => {
+            if (ev.button == .left) {
+                changed = try handleMouseDownLeft(
+                    allocator,
+                    log_sink,
+                    backend_in,
+                    widgets,
+                    focused_id_buf,
+                    focused_id,
+                    root,
+                    rows,
+                    cols,
+                    ev.x,
+                    ev.y,
+                );
+            }
+        },
+        .wheel => {
+            // Local wheel scrolling is strict opt-in via `mouseable:true`.
+            if (ev.wheel_dy != 0) {
+                changed = try handleMouseWheel(
+                    allocator,
+                    log_sink,
+                    backend_in,
+                    widgets,
+                    root,
+                    rows,
+                    cols,
+                    ev.x,
+                    ev.y,
+                    ev.wheel_dy,
+                );
+            }
+        },
+        .move, .up => {},
     }
     if (treeHasHoverables(root)) {
         // Only flush on hover changes; motion tracking makes `.move` events frequent.
@@ -1040,7 +1008,7 @@ fn findWidgetIndex(widgets: []const WidgetEntry, id: []const u8) ?usize {
     return null;
 }
 
-fn clampScrollState(st: *ScrollWidgetState) void {
+fn clampScrollState(st: anytype) void {
     st.scroll_y = state.clampScrollY(st.scroll_y, st.viewport_h, st.content_h);
 }
 

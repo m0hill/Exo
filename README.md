@@ -2,7 +2,7 @@
 
 This repository contains a minimal two-process tracer demo:
 
-- `tui_runtime`: spawns a backend, reads JSONL patches, renders, sends JSONL events (key/focus/input/select); mouse click-to-focus/select + wheel list scroll are handled in the runtime
+- `tui_runtime`: spawns a backend, reads JSONL patches, renders, sends JSONL events (key/focus/input/select/hover/pointer); mouse support is full opt-in via `mouseable:true` / `hoverable:true`
 - `backend_demo`: emits patches and reacts to key events
 
 ## Layout
@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.10)
+## Protocol (v0.11)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -124,6 +124,18 @@ Hovering a list row (includes `item` when the row maps to an item id):
 {"type":"event","name":"hover","id":"results","x":12,"y":3,"item":"results-1"}
 ```
 
+Pointer (strict opt-in via `mouseable:true`; emitted only for mouseable targets, plus change-only leave `id:""`):
+
+```json
+{"type":"event","name":"pointer","kind":"down","id":"results","x":12,"y":3,"local_x":2,"local_y":1,"button":"left","buttons":1,"mods":0,"clicks":1,"scroll_dx":0,"scroll_dy":0,"item":"results-1","captured":false}
+```
+
+Wheel/trackpad scroll (runtime emits `kind:"scroll"` with `scroll_dy` negative for up):
+
+```json
+{"type":"event","name":"pointer","kind":"scroll","id":"results","x":12,"y":3,"local_x":2,"local_y":1,"button":"none","buttons":0,"mods":0,"clicks":1,"scroll_dx":0,"scroll_dy":-1,"item":"results-1","captured":false}
+```
+
 ### Nodes
 
 - `vbox`: `{ "type":"vbox", "id":"...", "children":[ ... ] }`
@@ -167,6 +179,12 @@ Containers (`vbox`/`hbox`) may also include:
 Any node may include:
 
 - `hoverable` (bool, default false): strict opt-in for hover hit-testing + hover event emission. Hover events are emitted only when `(id,item)` changes; when hovering “nothing”, `id` is `""`. For lists, `item` is the row’s node id (when applicable).
+
+### Mouse / Pointer (optional)
+
+Any node may include:
+
+- `mouseable` (bool, default false): strict opt-in for pointer hit-testing + `pointer` event emission. Terminal mouse modes are enabled only when the effective tree contains any `mouseable:true` or `hoverable:true`. Runtime-local click-to-focus/select and wheel scrolling are also gated on `mouseable:true`.
 
 ### Alignment (optional)
 

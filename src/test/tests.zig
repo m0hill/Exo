@@ -15,6 +15,7 @@ const mouse = tui.mouse;
 const style = tui.style;
 const markdown = tui.markdown;
 const hover = tui.hover;
+const pointer = @import("runtime_pointer");
 
 fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     const c = frame.rowSlice(row)[col];
@@ -282,6 +283,7 @@ test "mouse: parse SGR move" {
     try std.testing.expectEqual(mouse.MouseEventKind.move, ev.kind);
     try std.testing.expectEqual(@as(usize, 9), ev.x);
     try std.testing.expectEqual(@as(usize, 4), ev.y);
+    try std.testing.expectEqual(@as(u8, 0), ev.mods);
 }
 
 test "protocol: parse hover event (no item)" {
@@ -342,6 +344,76 @@ test "protocol: parse hoverable field" {
         else => return error.TestUnexpectedResult,
     };
     try std.testing.expect(t.hoverable);
+}
+
+test "protocol: parse mouseable field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line = "{\"type\":\"patch\",\"root\":{\"type\":\"text\",\"id\":\"t\",\"mouseable\":true,\"text\":\"hi\"}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+    const t = switch (root) {
+        .text => |tt| tt,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(t.mouseable);
+}
+
+test "protocol: write+parse pointer event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writePointerEventJsonl(buf.writer(std.testing.allocator), .{
+        .kind = .down,
+        .id = "btn",
+        .x = 10,
+        .y = 5,
+        .local_x = 1,
+        .local_y = 2,
+        .button = .left,
+        .buttons = 1,
+        .mods = 7,
+        .clicks = 2,
+        .scroll_dx = 0,
+        .scroll_dy = 0,
+        .item = "row-1",
+        .captured = false,
+    });
+
+    const line = buf.items[0 .. buf.items.len - 1];
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const ev = switch (msg) {
+        .event => |e| e,
+        else => return error.TestUnexpectedResult,
+    };
+    const p = switch (ev) {
+        .pointer => |pp| pp,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(protocol.PointerKind.down, p.kind);
+    try std.testing.expectEqualStrings("btn", p.id);
+    try std.testing.expectEqual(@as(usize, 10), p.x);
+    try std.testing.expectEqual(@as(usize, 5), p.y);
+    try std.testing.expectEqual(@as(usize, 1), p.local_x);
+    try std.testing.expectEqual(@as(usize, 2), p.local_y);
+    try std.testing.expectEqual(protocol.PointerButton.left, p.button);
+    try std.testing.expectEqual(@as(u8, 1), p.buttons);
+    try std.testing.expectEqual(@as(u8, 7), p.mods);
+    try std.testing.expectEqual(@as(u8, 2), p.clicks);
+    try std.testing.expectEqual(@as(isize, 0), p.scroll_dx);
+    try std.testing.expectEqual(@as(isize, 0), p.scroll_dy);
+    try std.testing.expectEqualStrings("row-1", p.item orelse return error.TestUnexpectedResult);
+    try std.testing.expect(!p.captured);
 }
 
 test "ui: hover hit-test list item" {
@@ -1679,29 +1751,213 @@ test "scheduler: full patch supersedes earlier targets and flush applies full th
     try std.testing.expectEqualStrings("Tick: after", v.children[0].text.text);
 }
 
-test "mouse: parse SGR left click" {
-    const ev = mouse.parseSgrMouseSequence("\x1b[<0;10;5M") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(mouse.MouseEventKind.down_left, ev.kind);
-    try std.testing.expectEqual(@as(usize, 9), ev.x);
-    try std.testing.expectEqual(@as(usize, 4), ev.y);
+test "mouse: parse SGR press left/right/middle" {
+    const left = mouse.parseSgrMouseSequence("\x1b[<0;10;5M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.down, left.kind);
+    try std.testing.expectEqual(mouse.MouseButton.left, left.button);
+    try std.testing.expectEqual(@as(usize, 9), left.x);
+    try std.testing.expectEqual(@as(usize, 4), left.y);
+
+    const middle = mouse.parseSgrMouseSequence("<1;2;3M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.down, middle.kind);
+    try std.testing.expectEqual(mouse.MouseButton.middle, middle.button);
+    try std.testing.expectEqual(@as(usize, 1), middle.x);
+    try std.testing.expectEqual(@as(usize, 2), middle.y);
+
+    const right = mouse.parseSgrMouseSequence("<2;2;3M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.down, right.kind);
+    try std.testing.expectEqual(mouse.MouseButton.right, right.button);
+    try std.testing.expectEqual(@as(usize, 1), right.x);
+    try std.testing.expectEqual(@as(usize, 2), right.y);
+}
+
+test "mouse: parse SGR release" {
+    const up = mouse.parseSgrMouseSequence("<0;10;5m") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.up, up.kind);
+    try std.testing.expectEqual(mouse.MouseButton.left, up.button);
+    try std.testing.expectEqual(@as(usize, 9), up.x);
+    try std.testing.expectEqual(@as(usize, 4), up.y);
 }
 
 test "mouse: parse SGR wheel up/down" {
     const up = mouse.parseSgrMouseSequence("\x1b[<64;10;5M") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(mouse.MouseEventKind.wheel_up, up.kind);
+    try std.testing.expectEqual(mouse.MouseEventKind.wheel, up.kind);
+    try std.testing.expectEqual(@as(isize, 0), up.wheel_dx);
+    try std.testing.expectEqual(@as(isize, -1), up.wheel_dy);
     try std.testing.expectEqual(@as(usize, 9), up.x);
     try std.testing.expectEqual(@as(usize, 4), up.y);
 
     const down = mouse.parseSgrMouseSequence("<65;1;1M") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(mouse.MouseEventKind.wheel_down, down.kind);
+    try std.testing.expectEqual(mouse.MouseEventKind.wheel, down.kind);
+    try std.testing.expectEqual(@as(isize, 0), down.wheel_dx);
+    try std.testing.expectEqual(@as(isize, 1), down.wheel_dy);
     try std.testing.expectEqual(@as(usize, 0), down.x);
     try std.testing.expectEqual(@as(usize, 0), down.y);
 }
 
-test "mouse: modifiers ignored for left click" {
-    // shift modifier bit (4) should still decode as left click.
+test "mouse: parse SGR modifiers" {
+    // shift modifier bit (4) should be preserved.
     const ev = mouse.parseSgrMouseSequence("<4;2;3M") orelse return error.TestExpectedEqual;
-    try std.testing.expectEqual(mouse.MouseEventKind.down_left, ev.kind);
+    try std.testing.expectEqual(mouse.MouseEventKind.down, ev.kind);
+    try std.testing.expectEqual(mouse.MouseButton.left, ev.button);
+    try std.testing.expectEqual(@as(u8, 1), ev.mods);
     try std.testing.expectEqual(@as(usize, 1), ev.x);
     try std.testing.expectEqual(@as(usize, 2), ev.y);
+
+    // shift+alt+ctrl (4+8+16) => 1+2+4 = 7.
+    const ev2 = mouse.parseSgrMouseSequence("<28;2;3M") orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(mouse.MouseEventKind.down, ev2.kind);
+    try std.testing.expectEqual(mouse.MouseButton.left, ev2.button);
+    try std.testing.expectEqual(@as(u8, 7), ev2.mods);
+}
+
+test "pointer: click count + capture + leave" {
+    var engine: pointer.PointerEngine = .{};
+    defer engine.deinit(std.testing.allocator);
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "t", .h = 1, .mouseable = true, .text = "hi" } },
+        .{ .text = .{ .id = "u", .h = 1, .text = "pad" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+    const widgets = [_]pointer.widgets.WidgetEntry{};
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    // Hover over the target so leave can be observed later.
+    _ = try engine.handleMouseEvent(
+        std.testing.allocator,
+        buf.writer(std.testing.allocator),
+        widgets[0..],
+        root,
+        3,
+        10,
+        .{ .kind = .move, .x = 0, .y = 0 },
+        0,
+    );
+
+    // Click down.
+    _ = try engine.handleMouseEvent(
+        std.testing.allocator,
+        buf.writer(std.testing.allocator),
+        widgets[0..],
+        root,
+        3,
+        10,
+        .{ .kind = .down, .x = 0, .y = 0, .button = .left },
+        1,
+    );
+
+    // Drag outside the rect; capture should keep routing.
+    _ = try engine.handleMouseEvent(
+        std.testing.allocator,
+        buf.writer(std.testing.allocator),
+        widgets[0..],
+        root,
+        3,
+        10,
+        .{ .kind = .move, .x = 0, .y = 2 },
+        2,
+    );
+
+    // Release.
+    _ = try engine.handleMouseEvent(
+        std.testing.allocator,
+        buf.writer(std.testing.allocator),
+        widgets[0..],
+        root,
+        3,
+        10,
+        .{ .kind = .up, .x = 0, .y = 2, .button = .left },
+        3,
+    );
+
+    // Second click within double-click window.
+    _ = try engine.handleMouseEvent(
+        std.testing.allocator,
+        buf.writer(std.testing.allocator),
+        widgets[0..],
+        root,
+        3,
+        10,
+        .{ .kind = .down, .x = 0, .y = 0, .button = .left },
+        200 * std.time.ns_per_ms,
+    );
+
+    _ = try engine.handleMouseEvent(
+        std.testing.allocator,
+        buf.writer(std.testing.allocator),
+        widgets[0..],
+        root,
+        3,
+        10,
+        .{ .kind = .up, .x = 0, .y = 0, .button = .left },
+        201 * std.time.ns_per_ms,
+    );
+
+    // Move off any target: emits leave (id="") exactly once.
+    _ = try engine.handleMouseEvent(
+        std.testing.allocator,
+        buf.writer(std.testing.allocator),
+        widgets[0..],
+        root,
+        3,
+        10,
+        .{ .kind = .move, .x = 0, .y = 2 },
+        202 * std.time.ns_per_ms,
+    );
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var got_move_over: bool = false;
+    var got_down_1: bool = false;
+    var got_drag: bool = false;
+    var got_up: bool = false;
+    var got_down_2: bool = false;
+    var got_leave: bool = false;
+
+    var it = std.mem.splitScalar(u8, buf.items, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+        const ev = switch (msg) {
+            .event => |e| e,
+            else => return error.TestUnexpectedResult,
+        };
+        const p = switch (ev) {
+            .pointer => |pp| pp,
+            else => continue,
+        };
+        switch (p.kind) {
+            .move => {
+                if (std.mem.eql(u8, p.id, "t")) got_move_over = true;
+                if (p.id.len == 0) got_leave = true;
+            },
+            .down => {
+                if (p.clicks == 1) got_down_1 = true;
+                if (p.clicks == 2) got_down_2 = true;
+                try std.testing.expectEqual(protocol.PointerButton.left, p.button);
+            },
+            .drag => {
+                got_drag = true;
+                try std.testing.expect(p.captured);
+                try std.testing.expectEqualStrings("t", p.id);
+            },
+            .up => {
+                got_up = true;
+                try std.testing.expect(p.captured);
+                try std.testing.expectEqualStrings("t", p.id);
+            },
+            else => {},
+        }
+    }
+
+    try std.testing.expect(got_move_over);
+    try std.testing.expect(got_down_1);
+    try std.testing.expect(got_drag);
+    try std.testing.expect(got_up);
+    try std.testing.expect(got_down_2);
+    try std.testing.expect(got_leave);
 }

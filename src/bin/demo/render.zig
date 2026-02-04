@@ -185,7 +185,7 @@ fn writeInputNodeLayout(
     h: ?usize,
     flex: usize,
 ) !void {
-    try writeInputNodeLayoutStyled(writer, id, placeholder, w, h, flex, null, null, false);
+    try writeInputNodeLayoutStyled(writer, id, placeholder, w, h, flex, null, null, false, false);
 }
 
 fn writeInputNodeLayoutStyled(
@@ -198,6 +198,7 @@ fn writeInputNodeLayoutStyled(
     style_json: ?[]const u8,
     placeholder_style_json: ?[]const u8,
     hoverable: bool,
+    mouseable: bool,
 ) !void {
     try writer.writeAll("{\"type\":\"input\",\"id\":");
     try protocol.writeJsonString(writer, id);
@@ -213,6 +214,7 @@ fn writeInputNodeLayoutStyled(
         try writer.writeAll(sj);
     }
     if (hoverable) try writer.writeAll(",\"hoverable\":true");
+    if (mouseable) try writer.writeAll(",\"mouseable\":true");
     try writer.writeAll(",\"placeholder\":");
     try protocol.writeJsonString(writer, placeholder);
     try writer.writeByte('}');
@@ -225,6 +227,7 @@ fn writeListNode(
     items: []const u64,
     style_json: ?[]const u8,
     hoverable: bool,
+    mouseable: bool,
 ) !void {
     try writer.writeAll("{\"type\":\"list\",\"id\":");
     try protocol.writeJsonString(writer, id);
@@ -233,6 +236,7 @@ fn writeListNode(
         try writer.writeAll(sj);
     }
     if (hoverable) try writer.writeAll(",\"hoverable\":true");
+    if (mouseable) try writer.writeAll(",\"mouseable\":true");
     try writer.print(",\"height\":{d},\"children\":[", .{height});
     for (items, 0..) |it, idx| {
         if (idx != 0) try writer.writeByte(',');
@@ -249,7 +253,7 @@ pub fn emitListMorphPatch(writer: anytype, list_id: []const u8, items: []const u
     try writer.writeAll("{\"type\":\"patch\",\"target\":");
     try protocol.writeJsonString(writer, list_id);
     try writer.writeAll(",\"mode\":\"morph\",\"node\":");
-    try writeListNode(writer, list_id, height, items, null, true);
+    try writeListNode(writer, list_id, height, items, null, true, true);
     try writer.writeAll("}\n");
 }
 
@@ -355,9 +359,10 @@ fn writePanelNode(
         "{\"fg\":\"#f9fafb\"}",
         "{\"fg\":\"gray\",\"dim\":true}",
         true,
+        true,
     );
     try writer.writeByte(',');
-    try writeListNode(writer, list_id, list_height, items, "{\"fg\":\"#e5e7eb\"}", true);
+    try writeListNode(writer, list_id, list_height, items, "{\"fg\":\"#e5e7eb\"}", true, true);
     try writer.writeAll("]}");
     try writer.writeByte('}');
 }
@@ -499,7 +504,7 @@ fn writeRootNode(
     try writer.writeByte(',');
     try writeTextNodeLayoutStyled(writer, "clock", tick_text, null, 1, 0, "{\"fg\":\"#22c55e\",\"bold\":true}");
     try writer.writeByte(',');
-    try writer.writeAll("{\"type\":\"list\",\"id\":\"popups\",\"height\":3,\"children\":[");
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"popups\",\"mouseable\":true,\"height\":3,\"children\":[");
     try writeTextNode(writer, "popup-open-modal", "Popups: open modal");
     try writer.writeByte(',');
     try writeTextNode(writer, "popup-open-dropdown", "Popups: open dropdown");
@@ -569,9 +574,10 @@ fn writeRootNode(
         "{\"fg\":\"#f9fafb\"}",
         "{\"fg\":\"gray\",\"dim\":true}",
         false,
+        true,
     );
     try writer.writeByte(',');
-    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-actions\",\"height\":3,\"children\":[");
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-actions\",\"mouseable\":true,\"height\":3,\"children\":[");
     try writeTextNode(writer, "md-actions-start", "Start streaming");
     try writer.writeByte(',');
     try writeTextNode(writer, "md-actions-pause", "Pause / resume");
@@ -579,7 +585,7 @@ fn writeRootNode(
     try writeTextNode(writer, "md-actions-reset", "Reset");
     try writer.writeAll("]}");
     try writer.writeByte(',');
-    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-mode\",\"height\":3,\"children\":[");
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-mode\",\"mouseable\":true,\"height\":3,\"children\":[");
     try writeTextNode(writer, "md-mode-18", "Mode: Tracer 18 (full recompile)");
     try writer.writeByte(',');
     try writeTextNode(writer, "md-mode-19a", "Mode: Tracer 19A (finalize blocks)");
@@ -587,7 +593,7 @@ fn writeRootNode(
     try writeTextNode(writer, "md-mode-19b", "Mode: Tracer 19B (inline tail)");
     try writer.writeAll("]}");
     try writer.writeByte(',');
-    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-speed\",\"height\":4,\"children\":[");
+    try writer.writeAll("{\"type\":\"list\",\"id\":\"md-speed\",\"mouseable\":true,\"height\":4,\"children\":[");
     try writeTextNode(writer, "md-speed-faster", md_speed_faster_label);
     try writer.writeByte(',');
     try writeTextNode(writer, "md-speed-slower", md_speed_slower_label);
@@ -607,7 +613,7 @@ fn writeRootNode(
         },
         else => {},
     }
-    try writer.writeAll("{\"type\":\"scroll\",\"id\":\"md-scroll\",\"flex\":1,\"child\":");
+    try writer.writeAll("{\"type\":\"scroll\",\"id\":\"md-scroll\",\"mouseable\":true,\"flex\":1,\"child\":");
     try protocol.writeNodeJson(writer, md_stream_node_local);
     try writer.writeByte('}');
     try writer.writeAll("]}}");
@@ -676,7 +682,7 @@ fn writeRootNode(
         try writer.writeAll("{\"type\":\"box\",\"id\":\"dropdown-box\",\"shadow\":true");
         try writer.writeAll(",\"style\":{\"bg\":\"#111827\",\"fg\":\"#fbbf24\"}");
         try writer.writeAll(",\"child\":");
-        try writer.writeAll("{\"type\":\"list\",\"id\":\"dropdown\",\"height\":4,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
+        try writer.writeAll("{\"type\":\"list\",\"id\":\"dropdown\",\"mouseable\":true,\"height\":4,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
         try writeTextNode(writer, "dropdown-a", "Dropdown: option A");
         try writer.writeByte(',');
         try writeTextNode(writer, "dropdown-b", "Dropdown: option B");
@@ -756,9 +762,10 @@ fn writeRootNode(
             "{\"fg\":\"#f9fafb\"}",
             "{\"fg\":\"gray\",\"dim\":true}",
             false,
+            true,
         );
         try writer.writeByte(',');
-        try writer.writeAll("{\"type\":\"list\",\"id\":\"modal-actions\",\"height\":1,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
+        try writer.writeAll("{\"type\":\"list\",\"id\":\"modal-actions\",\"mouseable\":true,\"height\":1,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
         try writeTextNode(writer, "modal-close", "Close modal");
         try writer.writeAll("]}");
         try writer.writeAll("]}}");

@@ -15,6 +15,7 @@ const sigexit = @import("sigexit.zig");
 const sigwinch = @import("sigwinch.zig");
 const timing = @import("timing.zig");
 const ui = @import("ui/mod.zig");
+const pointer = @import("ui/pointer.zig");
 
 fn maybeSendPendingResizeEvent(
     log_sink: *log.LogSink,
@@ -112,6 +113,8 @@ pub fn run() !void {
     var hover_item_buf: std.ArrayList(u8) = .empty;
     defer hover_item_buf.deinit(allocator);
     var hover_item: ?[]const u8 = null;
+    var pointer_engine: pointer.PointerEngine = .{};
+    defer pointer_engine.deinit(allocator);
     var last_mouse_x: usize = 0;
     var last_mouse_y: usize = 0;
     var have_last_mouse_pos: bool = false;
@@ -305,6 +308,17 @@ pub fn run() !void {
                             cols,
                             decoded.mouse,
                         );
+                        const wrote_pointer = try pointer_engine.handleMouseEvent(
+                            allocator,
+                            child_in,
+                            widgets.items,
+                            current_root.?,
+                            rows,
+                            cols,
+                            decoded.mouse,
+                            timing.monotonicNowNs(),
+                        );
+                        if (wrote_pointer) try child_in.flush();
                         if (changed) requested_reason = .input;
                         handled_input_this_iter = true;
                         continue;
@@ -566,10 +580,20 @@ pub fn run() !void {
                 const rows: usize = @as(usize, last_term_size.rows);
                 const cols: usize = @as(usize, last_term_size.cols);
                 const has_hoverables = ui.treeHasHoverables(current_root.?);
-                if (has_hoverables) {
-                    try term.enableMouseMotion();
+                const has_mouseables = tui.mouseable.treeHasMouseables(current_root.?);
+                const mouse_needed = has_hoverables or has_mouseables;
+                const motion_needed = has_hoverables or has_mouseables;
+                if (mouse_needed) {
+                    try term.enableMouseBase();
+                    if (motion_needed) {
+                        try term.enableMouseMotionAny();
+                    } else {
+                        try term.disableMouseMotionAny();
+                    }
                 } else {
-                    try term.disableMouseMotion();
+                    try term.disableMouseMotionAny();
+                    try term.disableMouseMotionWhileButton();
+                    try term.disableMouseBase();
                 }
 
                 try ui.syncUiAfterPatch(
@@ -605,6 +629,19 @@ pub fn run() !void {
                 )) {
                     // fall through; flushed below
                 }
+                if (try pointer_engine.refreshAfterPatch(
+                    allocator,
+                    child_in,
+                    widgets.items,
+                    current_root.?,
+                    rows,
+                    cols,
+                    hover_x_opt,
+                    hover_y_opt,
+                )) {
+                    // fall through; flushed below
+                }
+                pointer_engine.pruneAfterPatch(current_root.?);
                 try child_in.flush();
 
                 if (resize_changed_this_iter) {
