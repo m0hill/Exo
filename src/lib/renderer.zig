@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const frame_mod = @import("frame.zig");
-const protocol = @import("protocol.zig");
-const render = @import("render.zig");
+const protocol = @import("protocol/mod.zig");
+const render = @import("render/mod.zig");
 const color = @import("color.zig");
 const style = @import("style.zig");
 const Size = @import("term_size.zig").Size;

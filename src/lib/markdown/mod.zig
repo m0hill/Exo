@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const protocol = @import("../protocol.zig");
+const protocol = @import("../protocol/mod.zig");
 
 const block = @import("block.zig");
 const inline_mod = @import("inline.zig");
-const stream = @import("stream.zig");
+const stream = @import("stream/mod.zig");
 const types = @import("types.zig");
 
 pub const Theme = types.Theme;

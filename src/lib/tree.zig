@@ -1,5 +1,5 @@
 const std = @import("std");
-const protocol = @import("protocol.zig");
+const protocol = @import("protocol/mod.zig");
 
 pub fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {

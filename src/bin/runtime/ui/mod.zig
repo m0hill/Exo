@@ -9,8 +9,9 @@ const state = tui.state;
 const terminal = tui.terminal;
 const unicode = tui.unicode;
 
-const key_decode = @import("key_decode.zig");
-const log = @import("log.zig");
+const key_decode = @import("../key_decode.zig");
+const log = @import("../log.zig");
+const node_util = @import("node_util.zig");
 
 pub fn effectiveTermSize(sz: terminal.Size) terminal.Size {
     var rows = sz.rows;
@@ -52,7 +53,7 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
         switch (e.state) {
             .list => {
                 const list_id = e.id.items;
-                const l = findListNodeById(root, list_id) orelse continue;
+                const l = node_util.findListNodeById(root, list_id) orelse continue;
                 var visible_height: usize = 0;
 
                 if (render.findRectForId(root, rows, cols, list_id)) |r| {
@@ -80,7 +81,7 @@ fn clampListScrollForNode(widgets: *std.ArrayList(WidgetEntry), l: protocol.List
     var selected_index: ?usize = null;
     if (st.selected_id.items.len > 0) {
         for (l.children, 0..) |child, child_idx| {
-            if (std.mem.eql(u8, nodeId(child), st.selected_id.items)) {
+            if (std.mem.eql(u8, node_util.nodeId(child), st.selected_id.items)) {
                 selected_index = child_idx;
                 break;
             }
@@ -90,174 +91,7 @@ fn clampListScrollForNode(widgets: *std.ArrayList(WidgetEntry), l: protocol.List
     st.scroll = state.clampListScroll(st.scroll, selected_index, visible_height, l.children.len);
 }
 
-fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.Node {
-    return switch (node) {
-        .text => |t| .{ .text = .{
-            .id = try allocator.dupe(u8, t.id),
-            .w = t.w,
-            .h = t.h,
-            .flex = t.flex,
-            .style = t.style,
-            .text = try allocator.dupe(u8, t.text),
-        } },
-        .styled_text => |t| blk: {
-            var spans = try allocator.alloc(protocol.Span, t.spans.len);
-            for (t.spans, 0..) |sp, idx| {
-                spans[idx] = .{
-                    .text = try allocator.dupe(u8, sp.text),
-                    .style = sp.style,
-                };
-            }
-            break :blk .{ .styled_text = .{
-                .id = try allocator.dupe(u8, t.id),
-                .w = t.w,
-                .h = t.h,
-                .flex = t.flex,
-                .style = t.style,
-                .spans = spans,
-            } };
-        },
-        .input => |i| .{ .input = .{
-            .id = try allocator.dupe(u8, i.id),
-            .w = i.w,
-            .h = i.h,
-            .flex = i.flex,
-            .style = i.style,
-            .placeholder_style = i.placeholder_style,
-            .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
-        } },
-        .vbox => |v| blk: {
-            var children = try allocator.alloc(protocol.Node, v.children.len);
-            for (v.children, 0..) |child, idx| {
-                children[idx] = try cloneNodeLeaky(allocator, child);
-            }
-            break :blk .{ .vbox = .{
-                .id = try allocator.dupe(u8, v.id),
-                .w = v.w,
-                .h = v.h,
-                .flex = v.flex,
-                .pad = v.pad,
-                .clip = v.clip,
-                .style = v.style,
-                .children = children,
-            } };
-        },
-        .hbox => |h| blk: {
-            var children = try allocator.alloc(protocol.Node, h.children.len);
-            for (h.children, 0..) |child, idx| {
-                children[idx] = try cloneNodeLeaky(allocator, child);
-            }
-            break :blk .{ .hbox = .{
-                .id = try allocator.dupe(u8, h.id),
-                .w = h.w,
-                .h = h.h,
-                .flex = h.flex,
-                .pad = h.pad,
-                .clip = h.clip,
-                .style = h.style,
-                .children = children,
-            } };
-        },
-        .box => |b| .{ .box = .{
-            .id = try allocator.dupe(u8, b.id),
-            .w = b.w,
-            .h = b.h,
-            .flex = b.flex,
-            .title = if (b.title) |t| try allocator.dupe(u8, t) else null,
-            .border = b.border,
-            .pad = b.pad,
-            .clip = b.clip,
-            .shadow = b.shadow,
-            .style = b.style,
-            .child = blk: {
-                const child_node = try cloneNodeLeaky(allocator, b.child.*);
-                const child = try allocator.create(protocol.Node);
-                child.* = child_node;
-                break :blk child;
-            },
-        } },
-        .scroll => |s| .{ .scroll = .{
-            .id = try allocator.dupe(u8, s.id),
-            .w = s.w,
-            .h = s.h,
-            .flex = s.flex,
-            .pad = s.pad,
-            .clip = s.clip,
-            .style = s.style,
-            .child = blk: {
-                const child_node = try cloneNodeLeaky(allocator, s.child.*);
-                const child = try allocator.create(protocol.Node);
-                child.* = child_node;
-                break :blk child;
-            },
-        } },
-        .overlay => |o| blk: {
-            const base_node = try cloneNodeLeaky(allocator, o.base.*);
-            const base = try allocator.create(protocol.Node);
-            base.* = base_node;
-
-            var layers = try allocator.alloc(protocol.OverlayLayer, o.layers.len);
-            for (o.layers, 0..) |layer, idx| {
-                const node_node = try cloneNodeLeaky(allocator, layer.node.*);
-                const layer_node = try allocator.create(protocol.Node);
-                layer_node.* = node_node;
-                layers[idx] = .{
-                    .node = layer_node,
-                    .anchor = if (layer.anchor) |a| try allocator.dupe(u8, a) else null,
-                    .placement = layer.placement,
-                    .align_ = layer.align_,
-                    .offset_x = layer.offset_x,
-                    .offset_y = layer.offset_y,
-                    .w = layer.w,
-                    .h = layer.h,
-                    .clip = layer.clip,
-                    .modal = layer.modal,
-                };
-            }
-
-            break :blk .{ .overlay = .{
-                .id = try allocator.dupe(u8, o.id),
-                .w = o.w,
-                .h = o.h,
-                .flex = o.flex,
-                .pad = o.pad,
-                .clip = o.clip,
-                .style = o.style,
-                .base = base,
-                .layers = layers,
-            } };
-        },
-        .list => |l| blk: {
-            var children = try allocator.alloc(protocol.Node, l.children.len);
-            for (l.children, 0..) |child, idx| {
-                children[idx] = try cloneNodeLeaky(allocator, child);
-            }
-            break :blk .{ .list = .{
-                .id = try allocator.dupe(u8, l.id),
-                .w = l.w,
-                .h = l.h,
-                .flex = l.flex,
-                .height = l.height,
-                .style = l.style,
-                .children = children,
-            } };
-        },
-    };
-}
-
-fn nodeId(node: protocol.Node) []const u8 {
-    return switch (node) {
-        .vbox => |v| v.id,
-        .hbox => |h| h.id,
-        .box => |b| b.id,
-        .scroll => |s| s.id,
-        .overlay => |o| o.id,
-        .text => |t| t.id,
-        .styled_text => |t| t.id,
-        .input => |i| i.id,
-        .list => |l| l.id,
-    };
-}
+// cloneNodeLeaky/nodeId moved to ui_node_util.zig
 
 pub const FocusKind = enum {
     input,
@@ -415,7 +249,7 @@ fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focus
 }
 
 fn treeContainsId(node: protocol.Node, id: []const u8) bool {
-    if (std.mem.eql(u8, nodeId(node), id)) return true;
+    if (std.mem.eql(u8, node_util.nodeId(node), id)) return true;
     return switch (node) {
         .vbox => |v| blk: {
             for (v.children) |child| {
@@ -682,7 +516,7 @@ fn listVisibleHeight(rect: render.Rect, l: protocol.ListNode) usize {
 fn findSelectedIndexInList(l: protocol.ListNode, selected_id: []const u8) ?usize {
     if (selected_id.len == 0) return null;
     for (l.children, 0..) |child, idx| {
-        if (std.mem.eql(u8, nodeId(child), selected_id)) return idx;
+        if (std.mem.eql(u8, node_util.nodeId(child), selected_id)) return idx;
     }
     return null;
 }
@@ -797,7 +631,7 @@ fn handleMouseDownLeft(
             if (st.cursor != before_cursor or st.scroll_x != before_scroll) changed = true;
         },
         .list => |*st| {
-            const l = findListNodeById(root, id) orelse {
+            const l = node_util.findListNodeById(root, id) orelse {
                 if (need_flush) try backend_in.flush();
                 return changed;
             };
@@ -825,7 +659,7 @@ fn handleMouseDownLeft(
                 return changed;
             }
 
-            const next_id = nodeId(l.children[item_idx]);
+            const next_id = node_util.nodeId(l.children[item_idx]);
             const selection_changed = !(st.selected_id.items.len > 0 and std.mem.eql(u8, st.selected_id.items, next_id));
             if (selection_changed) {
                 st.selected_id.clearRetainingCapacity();
@@ -895,7 +729,7 @@ fn handleMouseWheel(
 
     if (list_hit) |list_id| {
         const widx = findWidgetIndex(widgets.items, list_id) orelse return false;
-        const l = findListNodeById(root, list_id) orelse return false;
+        const l = node_util.findListNodeById(root, list_id) orelse return false;
         const visible_height = listVisibleHeight(list_hit_rect, l);
         if (visible_height == 0) return false;
 
@@ -1035,92 +869,12 @@ fn findWidgetIndex(widgets: []const WidgetEntry, id: []const u8) ?usize {
     return null;
 }
 
-fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
-    if (std.mem.eql(u8, nodeId(root), id)) {
-        return switch (root) {
-            .list => |l| l,
-            else => null,
-        };
-    }
-
-    return switch (root) {
-        .vbox => |v| blk: {
-            for (v.children) |child| {
-                if (findListNodeById(child, id)) |l| break :blk l;
-            }
-            break :blk null;
-        },
-        .hbox => |h| blk: {
-            for (h.children) |child| {
-                if (findListNodeById(child, id)) |l| break :blk l;
-            }
-            break :blk null;
-        },
-        .box => |b| return findListNodeById(b.child.*, id),
-        .scroll => |s| return findListNodeById(s.child.*, id),
-        .overlay => |o| blk: {
-            if (findListNodeById(o.base.*, id)) |l| break :blk l;
-            for (o.layers) |layer| {
-                if (findListNodeById(layer.node.*, id)) |l| break :blk l;
-            }
-            break :blk null;
-        },
-        .list => |l| blk: {
-            for (l.children) |child| {
-                if (findListNodeById(child, id)) |ll| break :blk ll;
-            }
-            break :blk null;
-        },
-        else => null,
-    };
-}
-
-fn findScrollNodeById(root: protocol.Node, id: []const u8) ?protocol.ScrollNode {
-    if (std.mem.eql(u8, nodeId(root), id)) {
-        return switch (root) {
-            .scroll => |s| s,
-            else => null,
-        };
-    }
-
-    return switch (root) {
-        .vbox => |v| blk: {
-            for (v.children) |child| {
-                if (findScrollNodeById(child, id)) |s| break :blk s;
-            }
-            break :blk null;
-        },
-        .hbox => |h| blk: {
-            for (h.children) |child| {
-                if (findScrollNodeById(child, id)) |s| break :blk s;
-            }
-            break :blk null;
-        },
-        .box => |b| return findScrollNodeById(b.child.*, id),
-        .scroll => |s| return findScrollNodeById(s.child.*, id),
-        .overlay => |o| blk: {
-            if (findScrollNodeById(o.base.*, id)) |s| break :blk s;
-            for (o.layers) |layer| {
-                if (findScrollNodeById(layer.node.*, id)) |s| break :blk s;
-            }
-            break :blk null;
-        },
-        .list => |l| blk: {
-            for (l.children) |child| {
-                if (findScrollNodeById(child, id)) |s| break :blk s;
-            }
-            break :blk null;
-        },
-        else => null,
-    };
-}
-
 fn clampScrollState(st: *ScrollWidgetState) void {
     st.scroll_y = state.clampScrollY(st.scroll_y, st.viewport_h, st.content_h);
 }
 
 fn syncScrollForId(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, rows: usize, cols: usize, scroll_id: []const u8) void {
-    const s = findScrollNodeById(root, scroll_id) orelse return;
+    const s = node_util.findScrollNodeById(root, scroll_id) orelse return;
     const idx = findWidgetIndex(widgets.items, scroll_id) orelse return;
     var st = &widgets.items[idx].state.scroll;
 
@@ -1144,7 +898,7 @@ fn scrollViewportById(
     scroll_id: []const u8,
     delta_rows: isize,
 ) !bool {
-    const s = findScrollNodeById(root, scroll_id) orelse return false;
+    const s = node_util.findScrollNodeById(root, scroll_id) orelse return false;
     const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
     var st = &widgets.items[idx].state.scroll;
 
@@ -1194,7 +948,7 @@ fn ensureVisibleForFocusImpl(
     focus_id: []const u8,
 ) !bool {
     const nearest = findNearestScrollAncestor(root, focus_id) orelse return false;
-    const s = findScrollNodeById(root, nearest) orelse return false;
+    const s = node_util.findScrollNodeById(root, nearest) orelse return false;
     const idx = try ensureWidgetKind(allocator, widgets, nearest, .scroll);
     var st = &widgets.items[idx].state.scroll;
 
@@ -1227,7 +981,7 @@ fn findNearestScrollAncestor(root: protocol.Node, target_id: []const u8) ?[]cons
 }
 
 fn findNearestScrollAncestorInto(node: protocol.Node, target_id: []const u8, out: *?[]const u8) bool {
-    if (std.mem.eql(u8, nodeId(node), target_id)) return true;
+    if (std.mem.eql(u8, node_util.nodeId(node), target_id)) return true;
 
     switch (node) {
         .scroll => |s| {
@@ -1277,7 +1031,7 @@ fn syncListForId(
     root: protocol.Node,
     list_id: []const u8,
 ) !void {
-    const l = findListNodeById(root, list_id) orelse return;
+    const l = node_util.findListNodeById(root, list_id) orelse return;
     if (l.children.len == 0) {
         if (findWidgetIndex(widgets.items, list_id)) |idx| {
             const st = &widgets.items[idx].state.list;
@@ -1293,7 +1047,7 @@ fn syncListForId(
     var selected_index: ?usize = null;
     if (st.selected_id.items.len > 0) {
         for (l.children, 0..) |child, child_idx| {
-            if (std.mem.eql(u8, nodeId(child), st.selected_id.items)) {
+            if (std.mem.eql(u8, node_util.nodeId(child), st.selected_id.items)) {
                 selected_index = child_idx;
                 break;
             }
@@ -1302,7 +1056,7 @@ fn syncListForId(
 
     var selection_changed = false;
     if (selected_index == null) {
-        const new_id = nodeId(l.children[0]);
+        const new_id = node_util.nodeId(l.children[0]);
         st.selected_id.clearRetainingCapacity();
         try st.selected_id.appendSlice(allocator, new_id);
         selected_index = 0;
@@ -1338,7 +1092,7 @@ pub fn moveListSelectionForId(
     list_id: []const u8,
     delta: isize,
 ) !bool {
-    const l = findListNodeById(root, list_id) orelse return false;
+    const l = node_util.findListNodeById(root, list_id) orelse return false;
     if (l.children.len == 0) return false;
 
     const idx = try ensureWidgetKind(allocator, widgets, list_id, .list);
@@ -1347,7 +1101,7 @@ pub fn moveListSelectionForId(
     var current_idx: usize = 0;
     if (st.selected_id.items.len > 0) {
         for (l.children, 0..) |child, child_idx| {
-            if (std.mem.eql(u8, nodeId(child), st.selected_id.items)) {
+            if (std.mem.eql(u8, node_util.nodeId(child), st.selected_id.items)) {
                 current_idx = child_idx;
                 break;
             }
@@ -1357,7 +1111,7 @@ pub fn moveListSelectionForId(
     const len: isize = @as(isize, @intCast(l.children.len));
     const next_idx_signed = @min(@max(@as(isize, @intCast(current_idx)) + delta, 0), len - 1);
     const next_idx: usize = @as(usize, @intCast(next_idx_signed));
-    const next_id = nodeId(l.children[next_idx]);
+    const next_id = node_util.nodeId(l.children[next_idx]);
     if (st.selected_id.items.len > 0 and std.mem.eql(u8, st.selected_id.items, next_id)) return false;
 
     st.selected_id.clearRetainingCapacity();
@@ -1475,7 +1229,7 @@ fn setScrollViewportYById(
     scroll_id: []const u8,
     next_scroll_y: usize,
 ) !bool {
-    const s = findScrollNodeById(root, scroll_id) orelse return false;
+    const s = node_util.findScrollNodeById(root, scroll_id) orelse return false;
     const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
     var st = &widgets.items[idx].state.scroll;
 

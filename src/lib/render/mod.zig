@@ -1,8 +1,9 @@
 const std = @import("std");
-const frame_mod = @import("frame.zig");
-const protocol = @import("protocol.zig");
-const style = @import("style.zig");
-const unicode = @import("unicode.zig");
+const frame_mod = @import("../frame.zig");
+const protocol = @import("../protocol/mod.zig");
+const style = @import("../style.zig");
+const unicode = @import("../unicode.zig");
+const render_text = @import("text.zig");
 
 const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
@@ -330,75 +331,11 @@ fn nodeClip(node: protocol.Node) bool {
     };
 }
 
-fn countWrappedLines(text: []const u8, cols: usize) usize {
-    var lines: usize = 1;
-    var col: usize = 0;
-
-    var i: usize = 0;
-    while (i < text.len) {
-        if (text[i] == '\n') {
-            lines += 1;
-            col = 0;
-            i += 1;
-            continue;
-        }
-
-        const g = unicode.nextGrapheme(text, i);
-        if (g.end <= i) break;
-
-        if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
-            lines += 1;
-            col = 0;
-            continue;
-        }
-
-        if (g.width <= cols or cols == 0) {
-            col += g.width;
-        }
-        i = g.end;
-    }
-    return lines;
-}
-
-fn countWrappedLinesSpans(spans: []const protocol.Span, cols: usize) usize {
-    var lines: usize = 1;
-    var col: usize = 0;
-
-    for (spans) |sp| {
-        const text = sp.text;
-        var i: usize = 0;
-        while (i < text.len) {
-            if (text[i] == '\n') {
-                lines += 1;
-                col = 0;
-                i += 1;
-                continue;
-            }
-
-            const g = unicode.nextGrapheme(text, i);
-            if (g.end <= i) break;
-
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
-                lines += 1;
-                col = 0;
-                continue;
-            }
-
-            if (g.width <= cols or cols == 0) {
-                col += g.width;
-            }
-            i = g.end;
-        }
-    }
-
-    return lines;
-}
-
 fn measureHeight(node: protocol.Node, avail_w: usize) usize {
     if (nodeHintH(node)) |h| return h;
     switch (node) {
-        .text => |t| return countWrappedLines(t.text, avail_w),
-        .styled_text => |t| return countWrappedLinesSpans(t.spans, avail_w),
+        .text => |t| return render_text.countWrappedLines(t.text, avail_w),
+        .styled_text => |t| return render_text.countWrappedLinesSpans(t.spans, avail_w),
         .input => return 1,
         .list => |l| return l.height orelse l.children.len,
         .box => |b| {
@@ -570,320 +507,6 @@ fn findContentYRangeForIdInto(
     }
 }
 
-fn putGraphemeClipped(
-    frame: *Frame,
-    row: isize,
-    col: isize,
-    bytes: []const u8,
-    width: u2,
-    clip: RectI,
-    st: style.PackedStyle,
-) void {
-    if (width == 0) return;
-    if (clip.w == 0 or clip.h == 0) return;
-    if (row < clip.y or row >= clip.y + @as(isize, @intCast(clip.h))) return;
-    if (col < clip.x or col + @as(isize, @intCast(width)) > clip.x + @as(isize, @intCast(clip.w))) return;
-    if (row < 0 or col < 0) return;
-    frame.putGraphemeStyled(
-        @as(usize, @intCast(row)),
-        @as(usize, @intCast(col)),
-        bytes,
-        width,
-        st,
-    );
-}
-
-fn drawWrappedTextInRect(frame: *Frame, rect: RectI, clip: RectI, text: []const u8, st: style.PackedStyle) void {
-    if (rect.w == 0 or rect.h == 0) return;
-
-    const max_rows: isize = rect.y + @as(isize, @intCast(rect.h));
-    const cols: usize = rect.w;
-
-    var row: isize = rect.y;
-    var col: usize = 0;
-    var i: usize = 0;
-
-    while (i < text.len and row < max_rows) {
-        if (text[i] == '\n') {
-            row += 1;
-            col = 0;
-            i += 1;
-            continue;
-        }
-
-        const g = unicode.nextGrapheme(text, i);
-        if (g.end <= i) break;
-
-        if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
-            row += 1;
-            col = 0;
-            continue;
-        }
-
-        if (g.width > 0 and cols != 0 and g.width > cols) {
-            // Too wide to fit anywhere in this rect; skip without corrupting the grid.
-            i = g.end;
-            continue;
-        }
-
-        if (g.width > 0) {
-            const abs_col: isize = rect.x + @as(isize, @intCast(col));
-            putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
-            col += g.width;
-        }
-        i = g.end;
-    }
-}
-
-fn drawWrappedStyledSpansInRect(
-    frame: *Frame,
-    rect: RectI,
-    clip: RectI,
-    spans: []const protocol.Span,
-    base: style.Style,
-    attrs_or: u8,
-) void {
-    if (rect.w == 0 or rect.h == 0) return;
-
-    const max_rows: isize = rect.y + @as(isize, @intCast(rect.h));
-    const cols: usize = rect.w;
-
-    var row: isize = rect.y;
-    var col: usize = 0;
-
-    for (spans) |sp| {
-        if (row >= max_rows) break;
-
-        const span_style = style.merge(base, sp.style);
-        var span_packed = style.pack(span_style);
-        span_packed.attrs |= attrs_or;
-
-        const text = sp.text;
-        var i: usize = 0;
-        while (i < text.len and row < max_rows) {
-            if (text[i] == '\n') {
-                row += 1;
-                col = 0;
-                i += 1;
-                continue;
-            }
-
-            const g = unicode.nextGrapheme(text, i);
-            if (g.end <= i) break;
-
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
-                row += 1;
-                col = 0;
-                continue;
-            }
-
-            if (g.width > 0 and cols != 0 and g.width > cols) {
-                i = g.end;
-                continue;
-            }
-
-            if (g.width > 0) {
-                const abs_col: isize = rect.x + @as(isize, @intCast(col));
-                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
-                col += g.width;
-            }
-            i = g.end;
-        }
-    }
-}
-
-fn drawWrappedTextInRectAligned(
-    frame: *Frame,
-    rect: RectI,
-    clip: RectI,
-    text: []const u8,
-    st: style.PackedStyle,
-    ext_align: protocol.HorizontalAlign,
-    v_align: protocol.VerticalAlign,
-) void {
-    if (rect.w == 0 or rect.h == 0) return;
-
-    const cols: usize = rect.w;
-    const total_lines: usize = countWrappedLines(text, cols);
-    const visible_lines: usize = @min(total_lines, rect.h);
-    const start_row: isize = rect.y + @as(isize, @intCast(vAlignOffset(rect.h, visible_lines, v_align)));
-    const max_rows: isize = start_row + @as(isize, @intCast(visible_lines));
-
-    var row: isize = start_row;
-    var i: usize = 0;
-
-    while (i < text.len and row < max_rows) : (row += 1) {
-        var j: usize = i;
-        var col: usize = 0;
-
-        while (j < text.len) {
-            if (text[j] == '\n') break;
-
-            const g = unicode.nextGrapheme(text, j);
-            if (g.end <= j) break;
-
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
-                break;
-            }
-
-            if (g.width > 0 and cols != 0 and g.width > cols) {
-                j = g.end;
-                continue;
-            }
-
-            if (g.width > 0) col += g.width;
-            j = g.end;
-        }
-
-        const x_off: usize = hAlignOffset(cols, col, ext_align);
-
-        var draw_col: usize = 0;
-        var k: usize = i;
-        while (k < j and draw_col < cols) {
-            const g = unicode.nextGrapheme(text, k);
-            if (g.end <= k) break;
-
-            if (g.width > 0 and cols != 0 and g.width > cols) {
-                k = g.end;
-                continue;
-            }
-
-            if (g.width > 0 and draw_col + g.width > cols) break;
-
-            if (g.width > 0) {
-                const abs_col: isize = rect.x + @as(isize, @intCast(x_off + draw_col));
-                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
-                draw_col += g.width;
-            }
-            k = g.end;
-        }
-
-        if (j < text.len and text[j] == '\n') {
-            i = j + 1;
-        } else {
-            i = j;
-        }
-    }
-}
-
-fn drawWrappedStyledSpansInRectAligned(
-    frame: *Frame,
-    rect: RectI,
-    clip: RectI,
-    spans: []const protocol.Span,
-    base: style.Style,
-    attrs_or: u8,
-    ext_align: protocol.HorizontalAlign,
-    v_align: protocol.VerticalAlign,
-) void {
-    if (rect.w == 0 or rect.h == 0) return;
-
-    const cols: usize = rect.w;
-    const total_lines: usize = countWrappedLinesSpans(spans, cols);
-    const visible_lines: usize = @min(total_lines, rect.h);
-    const start_row: isize = rect.y + @as(isize, @intCast(vAlignOffset(rect.h, visible_lines, v_align)));
-    const max_rows: isize = start_row + @as(isize, @intCast(visible_lines));
-
-    const SpanPos = struct { span: usize, idx: usize };
-    const eql = struct {
-        fn pos(a: SpanPos, b: SpanPos) bool {
-            return a.span == b.span and a.idx == b.idx;
-        }
-    }.pos;
-
-    var row: isize = start_row;
-    var pos: SpanPos = .{ .span = 0, .idx = 0 };
-
-    while (pos.span < spans.len and row < max_rows) : (row += 1) {
-        var scan: SpanPos = pos;
-        var col: usize = 0;
-        var end_pos: SpanPos = scan;
-        var next_pos: SpanPos = scan;
-
-        while (scan.span < spans.len) {
-            const s = spans[scan.span].text;
-            if (scan.idx >= s.len) {
-                scan.span += 1;
-                scan.idx = 0;
-                continue;
-            }
-            if (s[scan.idx] == '\n') {
-                end_pos = scan;
-                next_pos = .{ .span = scan.span, .idx = scan.idx + 1 };
-                break;
-            }
-
-            const g = unicode.nextGrapheme(s, scan.idx);
-            if (g.end <= scan.idx) break;
-
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
-                end_pos = scan;
-                next_pos = scan;
-                break;
-            }
-
-            if (g.width > 0 and cols != 0 and g.width > cols) {
-                scan.idx = g.end;
-                continue;
-            }
-
-            if (g.width > 0) col += g.width;
-            scan.idx = g.end;
-            end_pos = scan;
-            next_pos = scan;
-        }
-
-        const x_off: usize = hAlignOffset(cols, col, ext_align);
-
-        var draw_col: usize = 0;
-        var draw: SpanPos = pos;
-        while (!eql(draw, end_pos) and draw.span < spans.len and draw_col < cols) {
-            const sp = spans[draw.span];
-            const span_style = style.merge(base, sp.style);
-            var span_packed = style.pack(span_style);
-            span_packed.attrs |= attrs_or;
-
-            const s = sp.text;
-            while (draw.idx < s.len and draw_col < cols) {
-                if (eql(draw, end_pos)) break;
-                if (s[draw.idx] == '\n') break;
-
-                const g = unicode.nextGrapheme(s, draw.idx);
-                if (g.end <= draw.idx) break;
-
-                if (g.width > 0 and cols != 0 and g.width > cols) {
-                    draw.idx = g.end;
-                    continue;
-                }
-
-                if (g.width > 0 and draw_col + g.width > cols) break;
-
-                if (g.width > 0) {
-                    const abs_col: isize = rect.x + @as(isize, @intCast(x_off + draw_col));
-                    putGraphemeClipped(frame, row, abs_col, s[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
-                    draw_col += g.width;
-                }
-
-                draw.idx = g.end;
-            }
-
-            if (eql(draw, end_pos)) break;
-            if (draw.idx >= s.len) {
-                draw.span += 1;
-                draw.idx = 0;
-            } else {
-                break;
-            }
-        }
-
-        pos = next_pos;
-        while (pos.span < spans.len and pos.idx >= spans[pos.span].text.len) {
-            pos.span += 1;
-            pos.idx = 0;
-        }
-    }
-}
-
 fn drawInlineStyledSpansInRect(
     frame: *Frame,
     row: isize,
@@ -920,7 +543,7 @@ fn drawInlineStyledSpansInRect(
 
             if (g.width > 0) {
                 const abs_col: isize = rect.x + @as(isize, @intCast(used));
-                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
+                render_text.putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
                 used += g.width;
             }
             i = g.end;
@@ -955,7 +578,7 @@ fn renderLinePiecesInRectStyled(
 
             if (g.width > 0) {
                 const abs_col: isize = rect.x + @as(isize, @intCast(used));
-                putGraphemeClipped(frame, row, abs_col, p[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
+                render_text.putGraphemeClipped(frame, row, abs_col, p[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
                 used += g.width;
             }
             i = g.end;
@@ -986,7 +609,7 @@ fn drawInlineTextAt(
 
         if (g.width > 0) {
             const x: isize = col_abs + @as(isize, @intCast(used));
-            putGraphemeClipped(frame, row, x, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
+            render_text.putGraphemeClipped(frame, row, x, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
             used += g.width;
         }
         i = g.end;
@@ -1170,9 +793,9 @@ fn paintInput(
                 const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left));
                 const max_w: usize = if (visible_cols > pad_left) visible_cols - pad_left else 0;
                 const one: u2 = 1;
-                putGraphemeClipped(frame, row, col_abs, "[", one, clip, base_packed);
+                render_text.putGraphemeClipped(frame, row, col_abs, "[", one, clip, base_packed);
                 drawInlineTextAt(frame, row, col_abs + 1, clip, ph, if (max_w > 1) max_w - 1 else 0, ph_packed);
-                putGraphemeClipped(frame, row, col_abs + 1 + @as(isize, @intCast(ph_cols)), "]", one, clip, base_packed);
+                render_text.putGraphemeClipped(frame, row, col_abs + 1 + @as(isize, @intCast(ph_cols)), "]", one, clip, base_packed);
             }
         }
     } else {
@@ -1421,8 +1044,8 @@ fn paintNode(
     }
 
     switch (node) {
-        .text => |t| drawWrappedTextInRectAligned(frame, rect, node_clip, t.text, resolved_packed, t.ext_align, t.v_align),
-        .styled_text => |t| drawWrappedStyledSpansInRectAligned(frame, rect, node_clip, t.spans, resolved, 0, t.ext_align, t.v_align),
+        .text => |t| render_text.drawWrappedTextInRectAligned(frame, rect, node_clip, t.text, resolved_packed, t.ext_align, t.v_align),
+        .styled_text => |t| render_text.drawWrappedStyledSpansInRectAligned(frame, rect, node_clip, t.spans, resolved, 0, t.ext_align, t.v_align),
         .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i, resolved),
         .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved, mode),
@@ -1466,21 +1089,21 @@ fn paintBox(
         const y1: isize = rect.y + @as(isize, @intCast(rect.h)) - 1;
 
         const one: u2 = 1;
-        putGraphemeClipped(frame, y0, x0, "┌", one, node_clip, resolved_packed);
-        putGraphemeClipped(frame, y0, x1, "┐", one, node_clip, resolved_packed);
-        putGraphemeClipped(frame, y1, x0, "└", one, node_clip, resolved_packed);
-        putGraphemeClipped(frame, y1, x1, "┘", one, node_clip, resolved_packed);
+        render_text.putGraphemeClipped(frame, y0, x0, "┌", one, node_clip, resolved_packed);
+        render_text.putGraphemeClipped(frame, y0, x1, "┐", one, node_clip, resolved_packed);
+        render_text.putGraphemeClipped(frame, y1, x0, "└", one, node_clip, resolved_packed);
+        render_text.putGraphemeClipped(frame, y1, x1, "┘", one, node_clip, resolved_packed);
 
         var x: isize = x0 + 1;
         while (x < x1) : (x += 1) {
-            putGraphemeClipped(frame, y0, x, "─", one, node_clip, resolved_packed);
-            putGraphemeClipped(frame, y1, x, "─", one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y0, x, "─", one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y1, x, "─", one, node_clip, resolved_packed);
         }
 
         var y: isize = y0 + 1;
         while (y < y1) : (y += 1) {
-            putGraphemeClipped(frame, y, x0, "│", one, node_clip, resolved_packed);
-            putGraphemeClipped(frame, y, x1, "│", one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y, x0, "│", one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y, x1, "│", one, node_clip, resolved_packed);
         }
 
         if (b.title) |title| {

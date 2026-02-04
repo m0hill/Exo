@@ -14,7 +14,7 @@ const log = @import("log.zig");
 const sigexit = @import("sigexit.zig");
 const sigwinch = @import("sigwinch.zig");
 const timing = @import("timing.zig");
-const ui = @import("ui.zig");
+const ui = @import("ui/mod.zig");
 
 fn maybeSendPendingResizeEvent(
     log_sink: *log.LogSink,

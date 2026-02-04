@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const protocol = @import("../protocol.zig");
+const protocol = @import("../../protocol/mod.zig");
 
-const common = @import("common.zig");
-const inline_mod = @import("inline.zig");
-const types = @import("types.zig");
+const common = @import("../common.zig");
+const inline_mod = @import("../inline.zig");
+const types = @import("../types.zig");
 
 pub const StreamBlocks = struct {
     pub const TailPolicy = enum {
@@ -495,42 +495,6 @@ pub const StreamBlocks = struct {
         }
 
         return spans.toOwnedSlice(arena_tx);
-    }
-};
-
-pub const StreamInline = struct {
-    inner: StreamBlocks,
-
-    pub fn init(allocator: std.mem.Allocator, opts: types.Options, caps: StreamBlocks.Caps) StreamInline {
-        return .{ .inner = StreamBlocks.init(allocator, opts, caps, .inline_parse) };
-    }
-
-    pub fn deinit(self: *StreamInline) void {
-        self.inner.deinit();
-    }
-
-    pub fn reset(self: *StreamInline) void {
-        self.inner.reset();
-    }
-
-    pub fn push(self: *StreamInline, chunk: []const u8) types.CompileError!StreamBlocks.PushResult {
-        return self.inner.push(chunk);
-    }
-
-    pub fn finish(self: *StreamInline) types.CompileError!StreamBlocks.PushResult {
-        return self.inner.finish();
-    }
-
-    pub fn snapshotLeaky(self: *const StreamInline, arena_tx: std.mem.Allocator) types.CompileError!protocol.Node {
-        return self.inner.snapshotLeaky(arena_tx);
-    }
-
-    pub fn tailNodeLeaky(self: *const StreamInline, arena_tx: std.mem.Allocator) ?protocol.Node {
-        return self.inner.tailNodeLeaky(arena_tx);
-    }
-
-    pub fn tailKey(self: *const StreamInline) StreamBlocks.TailKey {
-        return self.inner.tailKey();
     }
 };
 

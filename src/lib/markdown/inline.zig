@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const protocol = @import("../protocol.zig");
+const protocol = @import("../protocol/mod.zig");
 const style = @import("../style.zig");
 
 const common = @import("common.zig");

@@ -1,5 +1,5 @@
 const std = @import("std");
-const protocol = @import("protocol.zig");
+const protocol = @import("protocol/mod.zig");
 const tree = @import("tree.zig");
 
 pub const Counts = struct {
