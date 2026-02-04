@@ -21,6 +21,12 @@ fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     return c.bytes[0];
 }
 
+fn cellText(frame: *const Frame, row: usize, col: usize) []const u8 {
+    const c = &frame.rowSlice(row)[col];
+    if (c.len == 0) return "";
+    return c.slice();
+}
+
 test "layout: padding offsets child origin" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
@@ -232,6 +238,135 @@ test "protocol: parse overlay node" {
     try std.testing.expectEqual(@as(isize, -2), layer.offset_y);
     try std.testing.expectEqual(@as(?usize, 10), layer.w);
     try std.testing.expect(layer.modal);
+}
+
+test "protocol: parse box node" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"patch\",\"root\":{\"type\":\"box\",\"id\":\"b\",\"child\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"hi\"}}}";
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const b = switch (root) {
+        .box => |bb| bb,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("b", b.id);
+    try std.testing.expect(b.border);
+    try std.testing.expect(b.clip);
+    try std.testing.expect(!b.shadow);
+    try std.testing.expectEqual(@as(usize, 0), b.pad);
+    try std.testing.expect(b.title == null);
+    try std.testing.expectEqualStrings("t", b.child.*.text.id);
+}
+
+test "render: box draws border" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 5);
+    frame.clear(' ');
+
+    var child = protocol.Node{ .text = .{ .id = "t", .text = "" } };
+    const root = protocol.Node{ .box = .{ .id = "b", .child = &child } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqualStrings("┌", cellText(&frame, 0, 0));
+    try std.testing.expectEqualStrings("─", cellText(&frame, 0, 1));
+    try std.testing.expectEqualStrings("┐", cellText(&frame, 0, 4));
+    try std.testing.expectEqualStrings("│", cellText(&frame, 1, 0));
+    try std.testing.expectEqualStrings("│", cellText(&frame, 1, 4));
+    try std.testing.expectEqualStrings("└", cellText(&frame, 2, 0));
+    try std.testing.expectEqualStrings("─", cellText(&frame, 2, 1));
+    try std.testing.expectEqualStrings("┘", cellText(&frame, 2, 4));
+}
+
+test "render: box title truncates to inner width" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 8);
+    frame.clear(' ');
+
+    var child = protocol.Node{ .text = .{ .id = "t", .text = "" } };
+    const root = protocol.Node{ .box = .{ .id = "b", .title = "HelloWorld", .child = &child } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqualStrings("┌", cellText(&frame, 0, 0));
+    try std.testing.expectEqualStrings("┐", cellText(&frame, 0, 7));
+    // inner width is 6: " " + "HelloWorld" + " " truncates to " Hello"
+    try std.testing.expectEqual(@as(u8, 'H'), cellByte(&frame, 0, 2));
+    try std.testing.expectEqual(@as(u8, 'o'), cellByte(&frame, 0, 6));
+}
+
+test "layout: box adds height for border + pad" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 6, 10);
+    frame.clear(' ');
+
+    var box_child = protocol.Node{ .text = .{ .id = "x", .text = "X" } };
+    const y = protocol.Node{ .text = .{ .id = "y", .text = "Y" } };
+    var children = [_]protocol.Node{
+        .{ .box = .{ .id = "b", .pad = 1, .child = &box_child } },
+        y,
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'Y'), cellByte(&frame, 5, 0));
+}
+
+test "layout: box shadow does not affect layout" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 6, 10);
+    frame.clear(' ');
+
+    var box_child = protocol.Node{ .text = .{ .id = "x", .text = "X" } };
+    const y = protocol.Node{ .text = .{ .id = "y", .text = "Y" } };
+    var children = [_]protocol.Node{
+        .{ .box = .{ .id = "b", .pad = 1, .shadow = true, .child = &box_child } },
+        y,
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'Y'), cellByte(&frame, 5, 0));
+}
+
+test "render: box shadow dims underlying cells" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 6, 10);
+    frame.clear(' ');
+
+    var base = protocol.Node{ .text = .{ .id = "bg", .text = "AAAAAAAAAA\nBBBBBBBBBB\nCCCCCCCCCC\nDDDDDDDDDD\nEEEEEEEEEE\nFFFFFFFFFF" } };
+    var inner = protocol.Node{ .text = .{ .id = "t", .text = "" } };
+    var box = protocol.Node{ .box = .{ .id = "bx", .shadow = true, .child = &inner } };
+    var layers = [_]protocol.OverlayLayer{
+        .{ .node = &box, .placement = .center, .w = 4, .h = 3 },
+    };
+    const root = protocol.Node{ .overlay = .{ .id = "ov", .base = &base, .layers = layers[0..] } };
+
+    render.renderToFrame(root, .{}, &frame);
+
+    // Center placement for 10x6 with w=4 h=3 => (x,y)=(3,1).
+    // Bottom shadow row is y+h=4, cols x+1..x+w => cols 4..7.
+    try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 4, 7));
+    const cell = frame.rowSlice(4)[7];
+    try std.testing.expect((cell.style.attrs & style.ATTR_DIM) != 0);
 }
 
 test "render: scroll viewport shifts visible content" {

@@ -133,6 +133,7 @@ fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,
         .text => |t| t.id,
@@ -146,6 +147,7 @@ fn nodeHintW(node: protocol.Node) ?usize {
     return switch (node) {
         .vbox => |v| v.w,
         .hbox => |h| h.w,
+        .box => |b| b.w,
         .scroll => |s| s.w,
         .overlay => |o| o.w,
         .text => |t| t.w,
@@ -159,6 +161,7 @@ fn nodeHintH(node: protocol.Node) ?usize {
     return switch (node) {
         .vbox => |v| v.h,
         .hbox => |h| h.h,
+        .box => |b| b.h,
         .scroll => |s| s.h,
         .overlay => |o| o.h,
         .text => |t| t.h,
@@ -172,6 +175,7 @@ fn nodeFlex(node: protocol.Node) usize {
     return switch (node) {
         .vbox => |v| v.flex,
         .hbox => |h| h.flex,
+        .box => |b| b.flex,
         .scroll => |s| s.flex,
         .overlay => |o| o.flex,
         .text => |t| t.flex,
@@ -185,6 +189,7 @@ fn nodePad(node: protocol.Node) usize {
     return switch (node) {
         .vbox => |v| v.pad,
         .hbox => |h| h.pad,
+        .box => |b| b.pad,
         .scroll => |s| s.pad,
         .overlay => |o| o.pad,
         else => 0,
@@ -195,6 +200,7 @@ fn nodeClip(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.clip,
         .hbox => |h| h.clip,
+        .box => |b| b.clip,
         .scroll => |s| s.clip,
         .overlay => |o| o.clip,
         else => false,
@@ -272,6 +278,12 @@ fn measureHeight(node: protocol.Node, avail_w: usize) usize {
         .styled_text => |t| return countWrappedLinesSpans(t.spans, avail_w),
         .input => return 1,
         .list => |l| return l.height orelse l.children.len,
+        .box => |b| {
+            const border_thickness: usize = if (b.border and avail_w >= 2) 1 else 0;
+            const chrome: usize = border_thickness + b.pad;
+            const inner_w: usize = if (avail_w > chrome * 2) avail_w - chrome * 2 else 0;
+            return measureHeight(b.child.*, inner_w) + chrome * 2;
+        },
         .scroll => |s| {
             const inner_w: usize = if (avail_w > s.pad * 2) avail_w - s.pad * 2 else 0;
             return measureHeight(s.child.*, inner_w) + s.pad * 2;
@@ -390,6 +402,12 @@ fn findContentYRangeForIdInto(
         .scroll => |s| {
             const inner_w: usize = if (avail_w > s.pad * 2) avail_w - s.pad * 2 else 0;
             return findContentYRangeForIdInto(s.child.*, inner_w, id, y_offset + s.pad, out);
+        },
+        .box => |b| {
+            const border_thickness: usize = if (b.border and avail_w >= 2) 1 else 0;
+            const chrome: usize = border_thickness + b.pad;
+            const inner_w: usize = if (avail_w > chrome * 2) avail_w - chrome * 2 else 0;
+            return findContentYRangeForIdInto(b.child.*, inner_w, id, y_offset + chrome, out);
         },
         .overlay => |o| {
             const inner_w: usize = if (avail_w > o.pad * 2) avail_w - o.pad * 2 else 0;
@@ -608,6 +626,7 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
     return switch (node) {
         .vbox => |v| v.style,
         .hbox => |h| h.style,
+        .box => |b| b.style,
         .scroll => |s| s.style,
         .overlay => |o| o.style,
         .text => |t| t.style,
@@ -617,11 +636,12 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
     };
 }
 
-fn fillRectStyle(frame: *Frame, rect: RectI, clip: RectI, st: style.PackedStyle) void {
-    const r = rectIntersect(rect, clip);
+fn shadowRect(frame: *Frame, rect: RectI, clip: RectI) void {
+    var r = rectIntersect(rect, clip);
+    r = rectIntersect(r, screenRect(frame));
     if (r.w == 0 or r.h == 0) return;
+    if (r.x < 0 or r.y < 0) return;
 
-    if (r.y < 0 or r.x < 0) return;
     const y0: usize = @as(usize, @intCast(r.y));
     const x0: usize = @as(usize, @intCast(r.x));
     const y_end: usize = y0 + r.h;
@@ -629,10 +649,31 @@ fn fillRectStyle(frame: *Frame, rect: RectI, clip: RectI, st: style.PackedStyle)
 
     var y: usize = y0;
     while (y < y_end) : (y += 1) {
-        var row = frame.rowSliceMut(y);
         var x: usize = x0;
         while (x < x_end) : (x += 1) {
-            row[x].style = st;
+            const st = frame.rowSlice(y)[x].style;
+            var next = st;
+            next.attrs |= style.ATTR_DIM;
+            frame.putGraphemeStyled(y, x, "", 1, next);
+        }
+    }
+}
+
+fn fillRectStyle(frame: *Frame, rect: RectI, clip: RectI, st: style.PackedStyle) void {
+    var r = rectIntersect(rect, clip);
+    r = rectIntersect(r, screenRect(frame));
+    if (r.w == 0 or r.h == 0) return;
+
+    const y0: usize = @as(usize, @intCast(r.y));
+    const x0: usize = @as(usize, @intCast(r.x));
+    const y_end: usize = y0 + r.h;
+    const x_end: usize = x0 + r.w;
+
+    var y: usize = y0;
+    while (y < y_end) : (y += 1) {
+        var x: usize = x0;
+        while (x < x_end) : (x += 1) {
+            frame.putGraphemeStyled(y, x, "", 1, st);
         }
     }
 }
@@ -939,8 +980,93 @@ fn paintNode(
         .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved, mode),
         .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h, resolved, mode),
+        .box => |b| paintBox(frame, rect, clip, state, cursor_out, b, resolved, mode),
         .scroll => |s| paintScroll(frame, rect, node_clip, state, cursor_out, s, resolved),
         .overlay => |o| paintOverlay(frame, rect, node_clip, state, cursor_out, o, resolved, mode),
+    }
+}
+
+fn paintBox(
+    frame: *Frame,
+    rect: RectI,
+    parent_clip: RectI,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+    b: protocol.BoxNode,
+    inherited: style.Style,
+    mode: VBoxMode,
+) void {
+    const node_clip = rectIntersect(parent_clip, rect);
+    if (node_clip.w == 0 or node_clip.h == 0) return;
+
+    const border_thickness: usize = if (b.border and rect.w >= 2 and rect.h >= 2) 1 else 0;
+    const chrome: usize = border_thickness + b.pad;
+
+    const inner = rectDeflate(rect, chrome);
+    const base_clip = node_clip;
+    const child_clip = if (b.clip) rectIntersect(base_clip, inner) else base_clip;
+
+    if (inner.w != 0 and inner.h != 0) {
+        paintNode(frame, b.child.*, inner, child_clip, state, cursor_out, inherited, mode);
+    }
+
+    const resolved_packed = style.pack(inherited);
+
+    if (border_thickness == 1) {
+        const x0: isize = rect.x;
+        const y0: isize = rect.y;
+        const x1: isize = rect.x + @as(isize, @intCast(rect.w)) - 1;
+        const y1: isize = rect.y + @as(isize, @intCast(rect.h)) - 1;
+
+        const one: u2 = 1;
+        putGraphemeClipped(frame, y0, x0, "┌", one, node_clip, resolved_packed);
+        putGraphemeClipped(frame, y0, x1, "┐", one, node_clip, resolved_packed);
+        putGraphemeClipped(frame, y1, x0, "└", one, node_clip, resolved_packed);
+        putGraphemeClipped(frame, y1, x1, "┘", one, node_clip, resolved_packed);
+
+        var x: isize = x0 + 1;
+        while (x < x1) : (x += 1) {
+            putGraphemeClipped(frame, y0, x, "─", one, node_clip, resolved_packed);
+            putGraphemeClipped(frame, y1, x, "─", one, node_clip, resolved_packed);
+        }
+
+        var y: isize = y0 + 1;
+        while (y < y1) : (y += 1) {
+            putGraphemeClipped(frame, y, x0, "│", one, node_clip, resolved_packed);
+            putGraphemeClipped(frame, y, x1, "│", one, node_clip, resolved_packed);
+        }
+
+        if (b.title) |title| {
+            if (title.len != 0 and rect.w > 2) {
+                const title_rect: RectI = .{ .x = x0 + 1, .y = y0, .w = rect.w - 2, .h = 1 };
+                const pieces = [_][]const u8{ " ", title, " " };
+                const styles = [_]style.PackedStyle{ resolved_packed, resolved_packed, resolved_packed };
+                renderLinePiecesInRectStyled(frame, y0, title_rect, node_clip, pieces[0..], styles[0..]);
+            }
+        }
+    }
+
+    if (b.shadow and rect.w != 0 and rect.h != 0) {
+        const right_x: isize = rect.x + @as(isize, @intCast(rect.w));
+        const bottom_y: isize = rect.y + @as(isize, @intCast(rect.h));
+
+        if (rect.h > 1) {
+            const right_shadow: RectI = .{
+                .x = right_x,
+                .y = rect.y + 1,
+                .w = 1,
+                .h = rect.h - 1,
+            };
+            shadowRect(frame, right_shadow, parent_clip);
+        }
+
+        const bottom_shadow: RectI = .{
+            .x = rect.x + 1,
+            .y = bottom_y,
+            .w = rect.w,
+            .h = 1,
+        };
+        shadowRect(frame, bottom_shadow, parent_clip);
     }
 }
 
@@ -1229,6 +1355,12 @@ fn findRectInNodeI(
             }
             return null;
         },
+        .box => |b| {
+            const border_thickness: usize = if (b.border and rect.w >= 2 and rect.h >= 2) 1 else 0;
+            const chrome: usize = border_thickness + b.pad;
+            const inner = rectDeflate(rect, chrome);
+            return findRectInNodeI(b.child.*, inner, id, scrolls, mode, screen);
+        },
         .scroll => |s| {
             const inner = rectDeflate(rect, s.pad);
             const st = findScrollStateUnsorted(scrolls, s.id);
@@ -1353,6 +1485,12 @@ fn findRectInNodeIBaseOnly(
                 x += @as(isize, @intCast(clamped_w));
             }
             return null;
+        },
+        .box => |b| {
+            const border_thickness: usize = if (b.border and rect.w >= 2 and rect.h >= 2) 1 else 0;
+            const chrome: usize = border_thickness + b.pad;
+            const inner = rectDeflate(rect, chrome);
+            return findRectInNodeIBaseOnly(b.child.*, inner, id, scrolls, mode);
         },
         .scroll => |s| {
             const inner = rectDeflate(rect, s.pad);

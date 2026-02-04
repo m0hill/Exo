@@ -216,9 +216,13 @@ fn writeInputNodeLayoutStyled(
     try writer.writeByte('}');
 }
 
-fn writeListNode(writer: anytype, id: []const u8, height: usize, items: []const u64) !void {
+fn writeListNode(writer: anytype, id: []const u8, height: usize, items: []const u64, style_json: ?[]const u8) !void {
     try writer.writeAll("{\"type\":\"list\",\"id\":");
     try protocol.writeJsonString(writer, id);
+    if (style_json) |sj| {
+        try writer.writeAll(",\"style\":");
+        try writer.writeAll(sj);
+    }
     try writer.print(",\"height\":{d},\"children\":[", .{height});
     for (items, 0..) |it, idx| {
         if (idx != 0) try writer.writeByte(',');
@@ -235,7 +239,7 @@ pub fn emitListMorphPatch(writer: anytype, list_id: []const u8, items: []const u
     try writer.writeAll("{\"type\":\"patch\",\"target\":");
     try protocol.writeJsonString(writer, list_id);
     try writer.writeAll(",\"mode\":\"morph\",\"node\":");
-    try writeListNode(writer, list_id, height, items);
+    try writeListNode(writer, list_id, height, items, null);
     try writer.writeAll("}\n");
 }
 
@@ -309,20 +313,28 @@ pub fn emitTextPatchByIdStyled(
 fn writePanelNode(
     writer: anytype,
     id: []const u8,
-    title_id: []const u8,
     title: []const u8,
+    accent_fg: []const u8,
     input_id: []const u8,
     list_id: []const u8,
     list_height: usize,
     items: []const u64,
 ) !void {
-    try writer.writeAll("{\"type\":\"vbox\",\"id\":");
+    var body_buf: [128]u8 = undefined;
+    const body_id = try std.fmt.bufPrint(&body_buf, "{s}-body", .{id});
+
+    try writer.writeAll("{\"type\":\"box\",\"id\":");
     try protocol.writeJsonString(writer, id);
     try writer.writeAll(",\"flex\":1,\"pad\":1,\"clip\":true");
-    try writer.writeAll(",\"style\":{\"bg\":\"#0b1220\",\"fg\":\"#e5e7eb\"}");
-    try writer.writeAll(",\"children\":[");
-    try writeTextNodeLayoutStyled(writer, title_id, title, null, 1, 0, "{\"bold\":true,\"fg\":\"brightwhite\"}");
-    try writer.writeByte(',');
+    try writer.writeAll(",\"style\":{\"bg\":\"#0b1220\",\"fg\":");
+    try protocol.writeJsonString(writer, accent_fg);
+    try writer.writeAll("}");
+    try writer.writeAll(",\"title\":");
+    try protocol.writeJsonString(writer, title);
+    try writer.writeAll(",\"child\":");
+    try writer.writeAll("{\"type\":\"vbox\",\"id\":");
+    try protocol.writeJsonString(writer, body_id);
+    try writer.writeAll(",\"clip\":true,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
     try writeInputNodeLayoutStyled(
         writer,
         input_id,
@@ -334,8 +346,9 @@ fn writePanelNode(
         "{\"fg\":\"gray\",\"dim\":true}",
     );
     try writer.writeByte(',');
-    try writeListNode(writer, list_id, list_height, items);
+    try writeListNode(writer, list_id, list_height, items, "{\"fg\":\"#e5e7eb\"}");
     try writer.writeAll("]}");
+    try writer.writeByte('}');
 }
 
 fn writeRootNode(
@@ -357,16 +370,17 @@ fn writeRootNode(
     popups: state.PopupInfo,
 ) !void {
     try writer.writeAll("{\"type\":\"overlay\",\"id\":\"root\",\"base\":");
-    try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root-base\",\"children\":[");
+    try writer.writeAll("{\"type\":\"vbox\",\"id\":\"root-base\",\"style\":{\"bg\":\"#020617\",\"fg\":\"#e2e8f0\"},\"children\":[");
     try writeTextNodeLayoutStyled(writer, "title", "Tracer Demo", null, 1, 0, "{\"bold\":true,\"fg\":\"brightwhite\"}");
     try writer.writeByte(',');
-    try writeTextNodeLayout(
+    try writeTextNodeLayoutStyled(
         writer,
         "hint",
         "Unicode demo: e\u{0301} 漢 🇯🇵 👩‍👩‍👧‍👦\nTab cycles focus by tree order. Mouse: click input/list to focus; click list row to select; wheel over list scrolls.\nArrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x or Ctrl-C exits.\nEmergency exit chord: Ctrl-G then Ctrl-G (restores terminal and exits immediately).\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
         null,
         3,
         0,
+        "{\"fg\":\"#94a3b8\",\"dim\":true}",
     );
     try writer.writeByte(',');
     try writeTextNodeLayoutStyled(writer, "clock", tick_text, null, 1, 0, "{\"fg\":\"#22c55e\",\"bold\":true}");
@@ -416,16 +430,19 @@ fn writeRootNode(
 
     // Placeholder container for Tracer 18 (backend-streamed markdown).
     // Use flex so the streaming output gets real vertical space.
-    try writer.writeAll("{\"type\":\"vbox\",\"id\":\"md-stream-wrap\",\"flex\":1,\"pad\":1,\"clip\":true,\"children\":[");
-    try writeTextNodeLayoutStyled(writer, "md-stream-title", md_stream_title, null, 1, 0, "{\"bold\":true}");
-    try writer.writeByte(',');
-    try writeTextNodeLayout(
+    try writer.writeAll("{\"type\":\"box\",\"id\":\"md-stream-wrap\",\"flex\":1,\"pad\":1,\"clip\":true");
+    try writer.writeAll(",\"style\":{\"bg\":\"#0b1220\",\"fg\":\"#34d399\"}");
+    try writer.writeAll(",\"title\":");
+    try protocol.writeJsonString(writer, md_stream_title);
+    try writer.writeAll(",\"child\":{\"type\":\"vbox\",\"id\":\"md-stream-body\",\"clip\":true,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
+    try writeTextNodeLayoutStyled(
         writer,
         "md-stream-hint",
         md_stream_hint,
         null,
         1,
         0,
+        "{\"fg\":\"#94a3b8\",\"dim\":true}",
     );
     try writer.writeByte(',');
     try writeInputNodeLayoutStyled(
@@ -478,7 +495,7 @@ fn writeRootNode(
     try writer.writeAll("{\"type\":\"scroll\",\"id\":\"md-scroll\",\"flex\":1,\"child\":");
     try protocol.writeNodeJson(writer, md_stream_node_local);
     try writer.writeByte('}');
-    try writer.writeAll("]}");
+    try writer.writeAll("]}}");
     try writer.writeByte(',');
 
     try writer.writeAll("{\"type\":\"hbox\",\"id\":\"body\",\"flex\":2,\"pad\":1,\"clip\":true,\"children\":[");
@@ -486,8 +503,8 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-a",
-            "panel-a-title",
             "Panel A",
+            "#93c5fd",
             inputs[0].id,
             lists[0].id,
             list_height,
@@ -497,8 +514,8 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-b",
-            "panel-b-title",
             "Panel B",
+            "#c4b5fd",
             inputs[1].id,
             lists[1].id,
             list_height,
@@ -508,8 +525,8 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-b",
-            "panel-b-title",
             "Panel B",
+            "#c4b5fd",
             inputs[1].id,
             lists[1].id,
             list_height,
@@ -519,8 +536,8 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-a",
-            "panel-a-title",
             "Panel A",
+            "#93c5fd",
             inputs[0].id,
             lists[0].id,
             list_height,
@@ -539,7 +556,10 @@ fn writeRootNode(
     if (popups.dropdown_open) {
         wrote_any = true;
         try writer.writeAll("{\"node\":");
-        try writer.writeAll("{\"type\":\"list\",\"id\":\"dropdown\",\"height\":4,\"children\":[");
+        try writer.writeAll("{\"type\":\"box\",\"id\":\"dropdown-box\",\"shadow\":true");
+        try writer.writeAll(",\"style\":{\"bg\":\"#111827\",\"fg\":\"#fbbf24\"}");
+        try writer.writeAll(",\"child\":");
+        try writer.writeAll("{\"type\":\"list\",\"id\":\"dropdown\",\"height\":4,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
         try writeTextNode(writer, "dropdown-a", "Dropdown: option A");
         try writer.writeByte(',');
         try writeTextNode(writer, "dropdown-b", "Dropdown: option B");
@@ -548,6 +568,7 @@ fn writeRootNode(
         try writer.writeByte(',');
         try writeTextNode(writer, "dropdown-close", "Close dropdown");
         try writer.writeAll("]}");
+        try writer.writeAll("}");
         try writer.writeAll(",\"anchor\":\"query-a\",\"placement\":\"below\",\"align\":\"start\",\"w\":28}");
     }
 
@@ -557,9 +578,12 @@ fn writeRootNode(
         var tip_buf: [128]u8 = undefined;
         const tip_text = try std.fmt.bufPrint(&tip_buf, "Tooltip for: {s}", .{anchor});
         try writer.writeAll("{\"node\":");
-        try writer.writeAll("{\"type\":\"text\",\"id\":\"tooltip\",\"text\":");
+        try writer.writeAll("{\"type\":\"box\",\"id\":\"tooltip-box\",\"shadow\":true");
+        try writer.writeAll(",\"style\":{\"bg\":\"#111827\",\"fg\":\"#fbbf24\"}");
+        try writer.writeAll(",\"child\":");
+        try writer.writeAll("{\"type\":\"text\",\"id\":\"tooltip\",\"style\":{\"fg\":\"#e5e7eb\"},\"text\":");
         try protocol.writeJsonString(writer, tip_text);
-        try writer.writeAll("}");
+        try writer.writeAll("}}");
         try writer.writeAll(",\"anchor\":");
         try protocol.writeJsonString(writer, anchor);
         try writer.writeAll(",\"placement\":\"right\",\"align\":\"center\",\"offset_x\":1,\"w\":26}");
@@ -568,9 +592,11 @@ fn writeRootNode(
     if (popups.modal_open) {
         if (wrote_any) try writer.writeByte(',') else wrote_any = true;
         try writer.writeAll("{\"node\":");
-        try writer.writeAll("{\"type\":\"vbox\",\"id\":\"modal\",\"pad\":1,\"clip\":true,\"style\":{\"bg\":\"#111827\",\"fg\":\"#e5e7eb\"},\"children\":[");
-        try writeTextNodeLayoutStyled(writer, "modal-title", "Modal dialog (focus is trapped)", null, 1, 0, "{\"bold\":true}");
-        try writer.writeByte(',');
+        try writer.writeAll("{\"type\":\"box\",\"id\":\"modal\",\"pad\":1,\"clip\":true,\"shadow\":true");
+        try writer.writeAll(",\"style\":{\"bg\":\"#111827\",\"fg\":\"#fbbf24\"}");
+        try writer.writeAll(",\"title\":");
+        try protocol.writeJsonString(writer, "Modal dialog (focus is trapped)");
+        try writer.writeAll(",\"child\":{\"type\":\"vbox\",\"id\":\"modal-body\",\"clip\":true,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
         try writeInputNodeLayoutStyled(
             writer,
             "modal-input",
@@ -582,10 +608,10 @@ fn writeRootNode(
             "{\"fg\":\"gray\",\"dim\":true}",
         );
         try writer.writeByte(',');
-        try writer.writeAll("{\"type\":\"list\",\"id\":\"modal-actions\",\"height\":1,\"children\":[");
+        try writer.writeAll("{\"type\":\"list\",\"id\":\"modal-actions\",\"height\":1,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");
         try writeTextNode(writer, "modal-close", "Close modal");
         try writer.writeAll("]}");
-        try writer.writeAll("]}");
+        try writer.writeAll("]}}");
         try writer.writeAll(",\"placement\":\"center\",\"modal\":true,\"w\":56}");
     }
 

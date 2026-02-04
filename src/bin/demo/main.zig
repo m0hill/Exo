@@ -78,6 +78,7 @@ fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,
         .text => |t| t.id,

@@ -5,6 +5,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,
         .text => |t| t.id,
@@ -29,6 +30,7 @@ pub fn treeContainsId(node: protocol.Node, id: []const u8) bool {
             }
             return false;
         },
+        .box => |b| treeContainsId(b.child.*, id),
         .scroll => |s| treeContainsId(s.child.*, id),
         .overlay => |o| {
             if (treeContainsId(o.base.*, id)) return true;
@@ -66,6 +68,7 @@ pub fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: pro
             }
             return false;
         },
+        .box => |*b| return applyPatchById(b.child, target, replacement),
         .scroll => |*s| return applyPatchById(s.child, target, replacement),
         .overlay => |*o| {
             if (applyPatchById(o.base, target, replacement)) return true;
@@ -117,6 +120,7 @@ pub fn morphPatchByIdLeaky(
             }
             return false;
         },
+        .box => |*b| return try morphPatchByIdLeaky(allocator, b.child, target, incoming, stats),
         .scroll => |*s| return try morphPatchByIdLeaky(allocator, s.child, target, incoming, stats),
         .overlay => |*o| {
             if (try morphPatchByIdLeaky(allocator, o.base, target, incoming, stats)) return true;
@@ -279,6 +283,26 @@ fn morphNodeLeaky(
 
             stats.removed += existing_children.len - matched;
             h.children = next_children;
+        },
+        .box => |*b| {
+            const inc = incoming.box;
+            b.w = inc.w;
+            b.h = inc.h;
+            b.flex = inc.flex;
+            b.title = inc.title;
+            b.border = inc.border;
+            b.pad = inc.pad;
+            b.clip = inc.clip;
+            b.shadow = inc.shadow;
+            b.style = inc.style;
+
+            if (std.meta.activeTag(b.child.*) == std.meta.activeTag(inc.child.*)) {
+                try morphNodeLeaky(allocator, b.child, inc.child.*, stats);
+            } else {
+                stats.type_mismatch += 1;
+                stats.replaced += 1;
+                b.child = inc.child;
+            }
         },
         .scroll => |*s| {
             const inc = incoming.scroll;

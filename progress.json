@@ -578,5 +578,34 @@
       "Activate 'Popups: toggle tooltip' and confirm the tooltip follows focus changes",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 22,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Box chrome: add a `box` node with borders/titles and an optional dim drop-shadow so panels + popups look intentional",
+    "deliverables": [
+      "src/lib/protocol.zig: protocol v0.8 adds `box` node (title/border/pad/clip/shadow + child)",
+      "src/lib/render.zig: render `box` borders, inline title, and 1-cell dim shadow without affecting layout",
+      "src/lib/tree.zig + src/lib/scheduler.zig: box traversal for patch-by-id/morph and deep cloning",
+      "src/bin/runtime/ui.zig: box traversal for focus collection, hit-testing, modal trapping, and scroll ancestor discovery",
+      "src/bin/demo/render.zig: wrap panels, dropdown, tooltip, and modal in `box` (modal becomes a dialog)",
+      "src/test/tests.zig: box border/title/shadow unit tests",
+      "README.md: document protocol v0.8 + `box` node"
+    ],
+    "boundaries_hit": [
+      "Chrome rendering (border/title) integrated with layout + clipping",
+      "Shadow dims existing cells without changing geometry",
+      "Overlay layers render as boxed popups/dialogs"
+    ],
+    "timestamp": "2026-02-03",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm Panel A/B render with borders and titles in the top border",
+      "Activate 'Popups: open modal' and confirm the dialog is boxed with a dim drop-shadow",
+      "Activate 'Popups: open dropdown' and confirm the dropdown is boxed (and shadowed)",
+      "Activate 'Popups: toggle tooltip' and confirm the tooltip is boxed (and shadowed)",
+      "Exit with 'x'"
+    ]
   }
 ]

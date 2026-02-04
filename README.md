@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.7)
+## Protocol (v0.8)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -110,6 +110,7 @@ Resize (runtime-generated):
 
 - `vbox`: `{ "type":"vbox", "id":"...", "children":[ ... ] }`
 - `hbox`: `{ "type":"hbox", "id":"...", "children":[ ... ] }`
+- `box`: `{ "type":"box", "id":"...", "title":"...?", "border":true, "pad":0, "clip":true, "shadow":false, "child": { ... } }` (renders a border/title around `child`; `shadow` dims underlying cells without affecting layout)
 - `scroll`: `{ "type":"scroll", "id":"...", "child": { ... } }`
 - `overlay`: `{ "type":"overlay", "id":"...", "base": { ... }, "layers":[ {"node": { ... }, "anchor":"...", "placement":"below|above|right|left|center", "align":"start|center|end", "offset_x":0, "offset_y":0, "w":24, "h":3, "clip":true, "modal":false} ] }`
 - `text`: `{ "type":"text", "id":"...", "text":"..." }`

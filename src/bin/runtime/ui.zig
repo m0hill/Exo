@@ -158,6 +158,24 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .children = children,
             } };
         },
+        .box => |b| .{ .box = .{
+            .id = try allocator.dupe(u8, b.id),
+            .w = b.w,
+            .h = b.h,
+            .flex = b.flex,
+            .title = if (b.title) |t| try allocator.dupe(u8, t) else null,
+            .border = b.border,
+            .pad = b.pad,
+            .clip = b.clip,
+            .shadow = b.shadow,
+            .style = b.style,
+            .child = blk: {
+                const child_node = try cloneNodeLeaky(allocator, b.child.*);
+                const child = try allocator.create(protocol.Node);
+                child.* = child_node;
+                break :blk child;
+            },
+        } },
         .scroll => |s| .{ .scroll = .{
             .id = try allocator.dupe(u8, s.id),
             .w = s.w,
@@ -231,6 +249,7 @@ fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,
         .text => |t| t.id,
@@ -370,6 +389,9 @@ fn collectFocusablesInto(allocator: std.mem.Allocator, out: *std.ArrayList(Focus
         .list => |l| {
             try out.append(allocator, .{ .id = l.id, .kind = .list });
         },
+        .box => |b| {
+            try collectFocusablesInto(allocator, out, b.child.*);
+        },
         .scroll => |s| {
             // Prefer leaf focusables (inputs/lists) under the pointer before the viewport itself.
             try collectFocusablesInto(allocator, out, s.child.*);
@@ -407,6 +429,7 @@ fn treeContainsId(node: protocol.Node, id: []const u8) bool {
             }
             break :blk false;
         },
+        .box => |b| treeContainsId(b.child.*, id),
         .scroll => |s| treeContainsId(s.child.*, id),
         .overlay => |o| blk: {
             if (treeContainsId(o.base.*, id)) break :blk true;
@@ -442,6 +465,7 @@ fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) v
         },
         .vbox => |v| for (v.children) |child| findTopmostModalLayerInto(child, out),
         .hbox => |h| for (h.children) |child| findTopmostModalLayerInto(child, out),
+        .box => |b| findTopmostModalLayerInto(b.child.*, out),
         .scroll => |s| findTopmostModalLayerInto(s.child.*, out),
         .list => |l| for (l.children) |child| findTopmostModalLayerInto(child, out),
         else => {},
@@ -459,6 +483,9 @@ fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]c
     switch (node) {
         .input => |i| try out.append(allocator, i.id),
         .list => |l| try out.append(allocator, l.id),
+        .box => |b| {
+            try collectHitTestablesInto(allocator, out, b.child.*);
+        },
         .scroll => |s| {
             // Put scroll before its children so leaf focusables win when hit-testing "topmost".
             try out.append(allocator, s.id);
@@ -1029,6 +1056,7 @@ fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
             }
             break :blk null;
         },
+        .box => |b| return findListNodeById(b.child.*, id),
         .scroll => |s| return findListNodeById(s.child.*, id),
         .overlay => |o| blk: {
             if (findListNodeById(o.base.*, id)) |l| break :blk l;
@@ -1068,6 +1096,7 @@ fn findScrollNodeById(root: protocol.Node, id: []const u8) ?protocol.ScrollNode 
             }
             break :blk null;
         },
+        .box => |b| return findScrollNodeById(b.child.*, id),
         .scroll => |s| return findScrollNodeById(s.child.*, id),
         .overlay => |o| blk: {
             if (findScrollNodeById(o.base.*, id)) |s| break :blk s;
@@ -1207,6 +1236,9 @@ fn findNearestScrollAncestorInto(node: protocol.Node, target_id: []const u8, out
                 return true;
             }
             return false;
+        },
+        .box => |b| {
+            return findNearestScrollAncestorInto(b.child.*, target_id, out);
         },
         .overlay => |o| {
             if (findNearestScrollAncestorInto(o.base.*, target_id, out)) return true;

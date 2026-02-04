@@ -29,6 +29,7 @@ pub const EventMsg = union(enum) {
 pub const Node = union(enum) {
     vbox: VBoxNode,
     hbox: HBoxNode,
+    box: BoxNode,
     scroll: ScrollNode,
     overlay: OverlayNode,
     text: TextNode,
@@ -57,6 +58,21 @@ pub const HBoxNode = struct {
     clip: bool = false,
     style: ?style.StyleOverride = null,
     children: []Node,
+};
+
+pub const BoxNode = struct {
+    id: []const u8,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
+    title: ?[]const u8 = null,
+    border: bool = true,
+    pad: usize = 0,
+    /// Defaults to true; backends may omit `clip` entirely.
+    clip: bool = true,
+    shadow: bool = false,
+    style: ?style.StyleOverride = null,
+    child: *Node,
 };
 
 pub const ScrollNode = struct {
@@ -277,6 +293,34 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
         return .{ .hbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .children = out } };
+    } else if (std.mem.eql(u8, type_str, "box")) {
+        const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const title = try getOptionalString(obj, "title");
+        const border = try getOptionalBool(obj, "border") orelse true;
+        const pad = try getOptionalUsize(obj, "pad") orelse 0;
+        const clip = try getOptionalBool(obj, "clip") orelse true;
+        const shadow = try getOptionalBool(obj, "shadow") orelse false;
+        const st = try getOptionalStyleOverride(obj, "style");
+        const child_val = try getRequired(obj, "child");
+        const child_node = try parseNodeLeaky(allocator, child_val);
+        const child = try allocator.create(Node);
+        child.* = child_node;
+        return .{ .box = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .title = title,
+            .border = border,
+            .pad = pad,
+            .clip = clip,
+            .shadow = shadow,
+            .style = st,
+            .child = child,
+        } };
     } else if (std.mem.eql(u8, type_str, "scroll")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
@@ -658,6 +702,28 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                 try writeNodeJson(writer, child);
             }
             try writer.writeAll("]}");
+        },
+        .box => |b| {
+            try writer.writeAll("{\"type\":\"box\",\"id\":");
+            try writeJsonString(writer, b.id);
+            if (b.w) |w| try writer.print(",\"w\":{d}", .{w});
+            if (b.h) |h| try writer.print(",\"h\":{d}", .{h});
+            if (b.flex != 0) try writer.print(",\"flex\":{d}", .{b.flex});
+            if (b.title) |t| {
+                try writer.writeAll(",\"title\":");
+                try writeJsonString(writer, t);
+            }
+            if (!b.border) try writer.writeAll(",\"border\":false");
+            if (b.pad != 0) try writer.print(",\"pad\":{d}", .{b.pad});
+            if (!b.clip) try writer.writeAll(",\"clip\":false");
+            if (b.shadow) try writer.writeAll(",\"shadow\":true");
+            if (b.style) |st| {
+                try writer.writeAll(",\"style\":");
+                try writeStyleOverrideJson(writer, st);
+            }
+            try writer.writeAll(",\"child\":");
+            try writeNodeJson(writer, b.child.*);
+            try writer.writeByte('}');
         },
         .scroll => |s| {
             try writer.writeAll("{\"type\":\"scroll\",\"id\":");
