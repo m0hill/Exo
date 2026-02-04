@@ -90,6 +90,129 @@ fn clampOverlayOrigin(screen: RectI, x: isize, y: isize, w: usize, h: usize) str
     return .{ .x = out_x, .y = out_y };
 }
 
+fn hAlignOffset(avail: usize, content: usize, align_mode: protocol.HorizontalAlign) usize {
+    if (content >= avail) return 0;
+    const extra: usize = avail - content;
+    return switch (align_mode) {
+        .left => 0,
+        .center => extra / 2,
+        .right => extra,
+    };
+}
+
+fn vAlignOffset(avail: usize, content: usize, align_mode: protocol.VerticalAlign) usize {
+    if (content >= avail) return 0;
+    const extra: usize = avail - content;
+    return switch (align_mode) {
+        .top => 0,
+        .center => extra / 2,
+        .bottom => extra,
+    };
+}
+
+fn nodeAlignSelf(node: protocol.Node) ?protocol.AlignItems {
+    return switch (node) {
+        .vbox => |v| v.align_self,
+        .hbox => |h| h.align_self,
+        .box => |b| b.align_self,
+        .scroll => |s| s.align_self,
+        .overlay => |o| o.align_self,
+        .text => |t| t.align_self,
+        .styled_text => |t| t.align_self,
+        .input => |i| i.align_self,
+        .list => |l| l.align_self,
+    };
+}
+
+fn alignItemsEffective(child: protocol.Node, parent: protocol.AlignItems) protocol.AlignItems {
+    return nodeAlignSelf(child) orelse parent;
+}
+
+fn slotSplit(extra_space: usize, slots: usize) struct { base: usize, rem: usize } {
+    if (slots == 0) return .{ .base = 0, .rem = 0 };
+    return .{ .base = extra_space / slots, .rem = extra_space % slots };
+}
+
+fn slotValue(base: usize, rem: usize, idx: usize) usize {
+    return base + @as(usize, @intFromBool(idx < rem));
+}
+
+fn justifyStartOffset(justify: protocol.JustifyContent, count: usize, extra_space: usize) usize {
+    if (count == 0) return 0;
+    return switch (justify) {
+        .start => 0,
+        .center => extra_space / 2,
+        .end => extra_space,
+        .space_between => 0,
+        .space_evenly => blk: {
+            const split = slotSplit(extra_space, count + 1);
+            break :blk slotValue(split.base, split.rem, 0);
+        },
+        .space_around => blk: {
+            const split = slotSplit(extra_space, count * 2);
+            break :blk slotValue(split.base, split.rem, 0);
+        },
+    };
+}
+
+fn justifyGapExtra(justify: protocol.JustifyContent, count: usize, extra_space: usize, gap_idx: usize) usize {
+    if (count < 2) return 0;
+    const gap_slots: usize = count - 1;
+    if (gap_idx >= gap_slots) return 0;
+
+    return switch (justify) {
+        .start, .center, .end => 0,
+        .space_between => blk: {
+            const split = slotSplit(extra_space, gap_slots);
+            break :blk slotValue(split.base, split.rem, gap_idx);
+        },
+        .space_evenly => blk: {
+            const split = slotSplit(extra_space, count + 1);
+            // Slot 0 is before first item; slot (gap_idx + 1) is between gap_idx and gap_idx+1.
+            break :blk slotValue(split.base, split.rem, gap_idx + 1);
+        },
+        .space_around => blk: {
+            const split = slotSplit(extra_space, count * 2);
+            // Slots: [0] before first, [1] after first, [2] before second, [3] after second, ...
+            const a = slotValue(split.base, split.rem, gap_idx * 2 + 1);
+            const b = slotValue(split.base, split.rem, gap_idx * 2 + 2);
+            break :blk a + b;
+        },
+    };
+}
+
+fn vboxChildWidth(inner_w: usize, parent_align: protocol.AlignItems, child: protocol.Node) usize {
+    const eff = alignItemsEffective(child, parent_align);
+    if (eff == .stretch) return inner_w;
+    const hinted: usize = nodeHintW(child) orelse inner_w;
+    return if (hinted > inner_w) inner_w else hinted;
+}
+
+fn vboxChildX(inner_x: isize, inner_w: usize, child_w: usize, align_mode: protocol.AlignItems) isize {
+    const dx: isize = @as(isize, @intCast(if (inner_w > child_w) inner_w - child_w else 0));
+    return switch (align_mode) {
+        .stretch, .start => inner_x,
+        .center => inner_x + @divTrunc(dx, 2),
+        .end => inner_x + dx,
+    };
+}
+
+fn hboxChildHeight(inner_h: usize, parent_align: protocol.AlignItems, child: protocol.Node) usize {
+    const eff = alignItemsEffective(child, parent_align);
+    if (eff == .stretch) return inner_h;
+    const hinted: usize = nodeHintH(child) orelse inner_h;
+    return if (hinted > inner_h) inner_h else hinted;
+}
+
+fn hboxChildY(inner_y: isize, inner_h: usize, child_h: usize, align_mode: protocol.AlignItems) isize {
+    const dy: isize = @as(isize, @intCast(if (inner_h > child_h) inner_h - child_h else 0));
+    return switch (align_mode) {
+        .stretch, .start => inner_y,
+        .center => inner_y + @divTrunc(dy, 2),
+        .end => inner_y + dy,
+    };
+}
+
 pub fn renderToFrame(root: protocol.Node, state: RenderState, frame: *Frame) void {
     const root_rect: RectI = .{
         .x = 0,
@@ -295,13 +418,17 @@ fn measureHeight(node: protocol.Node, avail_w: usize) usize {
         .vbox => |v| {
             const inner_w: usize = if (avail_w > v.pad * 2) avail_w - v.pad * 2 else 0;
             var total: usize = v.pad * 2;
+            if (v.children.len > 1) total += v.gap * (v.children.len - 1);
             for (v.children) |child| {
-                total += measureHeight(child, inner_w);
+                const child_w = vboxChildWidth(inner_w, v.align_items, child);
+                total += measureHeight(child, child_w);
             }
             return total;
         },
         .hbox => |h| {
-            const inner_w: usize = if (avail_w > h.pad * 2) avail_w - h.pad * 2 else 0;
+            const inner_w_raw: usize = if (avail_w > h.pad * 2) avail_w - h.pad * 2 else 0;
+            const gaps_total: usize = if (h.children.len > 1) h.gap * (h.children.len - 1) else 0;
+            const inner_w: usize = if (inner_w_raw > gaps_total) inner_w_raw - gaps_total else 0;
 
             var fixed_sum: usize = 0;
             var total_flex: usize = 0;
@@ -363,15 +490,19 @@ fn findContentYRangeForIdInto(
         .vbox => |v| {
             const inner_w: usize = if (avail_w > v.pad * 2) avail_w - v.pad * 2 else 0;
             var y: usize = y_offset + v.pad;
-            for (v.children) |child| {
-                const child_h: usize = measureHeight(child, inner_w);
-                if (findContentYRangeForIdInto(child, inner_w, id, y, out)) return true;
+            for (v.children, 0..) |child, idx| {
+                const child_w = vboxChildWidth(inner_w, v.align_items, child);
+                const child_h: usize = measureHeight(child, child_w);
+                if (findContentYRangeForIdInto(child, child_w, id, y, out)) return true;
                 y += child_h;
+                if (idx + 1 < v.children.len) y += v.gap;
             }
             return false;
         },
         .hbox => |h| {
-            const inner_w: usize = if (avail_w > h.pad * 2) avail_w - h.pad * 2 else 0;
+            const inner_w_raw: usize = if (avail_w > h.pad * 2) avail_w - h.pad * 2 else 0;
+            const gaps_total: usize = if (h.children.len > 1) h.gap * (h.children.len - 1) else 0;
+            const inner_w: usize = if (inner_w_raw > gaps_total) inner_w_raw - gaps_total else 0;
 
             var fixed_sum: usize = 0;
             var total_flex: usize = 0;
@@ -384,7 +515,9 @@ fn findContentYRangeForIdInto(
             }
 
             const remaining: usize = if (inner_w > fixed_sum) inner_w - fixed_sum else 0;
-            const y_child: usize = y_offset + h.pad;
+            const y_base: usize = y_offset + h.pad;
+
+            var inner_h: usize = 0;
 
             var carry: u128 = 0;
             for (h.children) |child| {
@@ -395,6 +528,26 @@ fn findContentYRangeForIdInto(
                     break :blk share;
                 } else 0;
 
+                const ch = measureHeight(child, child_w);
+                if (ch > inner_h) inner_h = ch;
+            }
+
+            carry = 0;
+            for (h.children) |child| {
+                const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
+                    const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                    const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
+                    carry = numer % @as(u128, total_flex);
+                    break :blk share;
+                } else 0;
+
+                const eff = alignItemsEffective(child, h.align_items);
+                const child_h = hboxChildHeight(inner_h, h.align_items, child);
+                const y_child: usize = y_base + vAlignOffset(inner_h, child_h, switch (eff) {
+                    .stretch, .start => .top,
+                    .center => .center,
+                    .end => .bottom,
+                });
                 if (findContentYRangeForIdInto(child, child_w, id, y_child, out)) return true;
             }
             return false;
@@ -539,6 +692,198 @@ fn drawWrappedStyledSpansInRect(
     }
 }
 
+fn drawWrappedTextInRectAligned(
+    frame: *Frame,
+    rect: RectI,
+    clip: RectI,
+    text: []const u8,
+    st: style.PackedStyle,
+    ext_align: protocol.HorizontalAlign,
+    v_align: protocol.VerticalAlign,
+) void {
+    if (rect.w == 0 or rect.h == 0) return;
+
+    const cols: usize = rect.w;
+    const total_lines: usize = countWrappedLines(text, cols);
+    const visible_lines: usize = @min(total_lines, rect.h);
+    const start_row: isize = rect.y + @as(isize, @intCast(vAlignOffset(rect.h, visible_lines, v_align)));
+    const max_rows: isize = start_row + @as(isize, @intCast(visible_lines));
+
+    var row: isize = start_row;
+    var i: usize = 0;
+
+    while (i < text.len and row < max_rows) : (row += 1) {
+        var j: usize = i;
+        var col: usize = 0;
+
+        while (j < text.len) {
+            if (text[j] == '\n') break;
+
+            const g = unicode.nextGrapheme(text, j);
+            if (g.end <= j) break;
+
+            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+                break;
+            }
+
+            if (g.width > 0 and cols != 0 and g.width > cols) {
+                j = g.end;
+                continue;
+            }
+
+            if (g.width > 0) col += g.width;
+            j = g.end;
+        }
+
+        const x_off: usize = hAlignOffset(cols, col, ext_align);
+
+        var draw_col: usize = 0;
+        var k: usize = i;
+        while (k < j and draw_col < cols) {
+            const g = unicode.nextGrapheme(text, k);
+            if (g.end <= k) break;
+
+            if (g.width > 0 and cols != 0 and g.width > cols) {
+                k = g.end;
+                continue;
+            }
+
+            if (g.width > 0 and draw_col + g.width > cols) break;
+
+            if (g.width > 0) {
+                const abs_col: isize = rect.x + @as(isize, @intCast(x_off + draw_col));
+                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
+                draw_col += g.width;
+            }
+            k = g.end;
+        }
+
+        if (j < text.len and text[j] == '\n') {
+            i = j + 1;
+        } else {
+            i = j;
+        }
+    }
+}
+
+fn drawWrappedStyledSpansInRectAligned(
+    frame: *Frame,
+    rect: RectI,
+    clip: RectI,
+    spans: []const protocol.Span,
+    base: style.Style,
+    attrs_or: u8,
+    ext_align: protocol.HorizontalAlign,
+    v_align: protocol.VerticalAlign,
+) void {
+    if (rect.w == 0 or rect.h == 0) return;
+
+    const cols: usize = rect.w;
+    const total_lines: usize = countWrappedLinesSpans(spans, cols);
+    const visible_lines: usize = @min(total_lines, rect.h);
+    const start_row: isize = rect.y + @as(isize, @intCast(vAlignOffset(rect.h, visible_lines, v_align)));
+    const max_rows: isize = start_row + @as(isize, @intCast(visible_lines));
+
+    const SpanPos = struct { span: usize, idx: usize };
+    const eql = struct {
+        fn pos(a: SpanPos, b: SpanPos) bool {
+            return a.span == b.span and a.idx == b.idx;
+        }
+    }.pos;
+
+    var row: isize = start_row;
+    var pos: SpanPos = .{ .span = 0, .idx = 0 };
+
+    while (pos.span < spans.len and row < max_rows) : (row += 1) {
+        var scan: SpanPos = pos;
+        var col: usize = 0;
+        var end_pos: SpanPos = scan;
+        var next_pos: SpanPos = scan;
+
+        while (scan.span < spans.len) {
+            const s = spans[scan.span].text;
+            if (scan.idx >= s.len) {
+                scan.span += 1;
+                scan.idx = 0;
+                continue;
+            }
+            if (s[scan.idx] == '\n') {
+                end_pos = scan;
+                next_pos = .{ .span = scan.span, .idx = scan.idx + 1 };
+                break;
+            }
+
+            const g = unicode.nextGrapheme(s, scan.idx);
+            if (g.end <= scan.idx) break;
+
+            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+                end_pos = scan;
+                next_pos = scan;
+                break;
+            }
+
+            if (g.width > 0 and cols != 0 and g.width > cols) {
+                scan.idx = g.end;
+                continue;
+            }
+
+            if (g.width > 0) col += g.width;
+            scan.idx = g.end;
+            end_pos = scan;
+            next_pos = scan;
+        }
+
+        const x_off: usize = hAlignOffset(cols, col, ext_align);
+
+        var draw_col: usize = 0;
+        var draw: SpanPos = pos;
+        while (!eql(draw, end_pos) and draw.span < spans.len and draw_col < cols) {
+            const sp = spans[draw.span];
+            const span_style = style.merge(base, sp.style);
+            var span_packed = style.pack(span_style);
+            span_packed.attrs |= attrs_or;
+
+            const s = sp.text;
+            while (draw.idx < s.len and draw_col < cols) {
+                if (eql(draw, end_pos)) break;
+                if (s[draw.idx] == '\n') break;
+
+                const g = unicode.nextGrapheme(s, draw.idx);
+                if (g.end <= draw.idx) break;
+
+                if (g.width > 0 and cols != 0 and g.width > cols) {
+                    draw.idx = g.end;
+                    continue;
+                }
+
+                if (g.width > 0 and draw_col + g.width > cols) break;
+
+                if (g.width > 0) {
+                    const abs_col: isize = rect.x + @as(isize, @intCast(x_off + draw_col));
+                    putGraphemeClipped(frame, row, abs_col, s[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
+                    draw_col += g.width;
+                }
+
+                draw.idx = g.end;
+            }
+
+            if (eql(draw, end_pos)) break;
+            if (draw.idx >= s.len) {
+                draw.span += 1;
+                draw.idx = 0;
+            } else {
+                break;
+            }
+        }
+
+        pos = next_pos;
+        while (pos.span < spans.len and pos.idx >= spans[pos.span].text.len) {
+            pos.span += 1;
+            pos.idx = 0;
+        }
+    }
+}
+
 fn drawInlineStyledSpansInRect(
     frame: *Frame,
     row: isize,
@@ -615,6 +960,36 @@ fn renderLinePiecesInRectStyled(
             }
             i = g.end;
         }
+    }
+}
+
+fn drawInlineTextAt(
+    frame: *Frame,
+    row: isize,
+    col_abs: isize,
+    clip: RectI,
+    text: []const u8,
+    max_w: usize,
+    st: style.PackedStyle,
+) void {
+    var used: usize = 0;
+    var i: usize = 0;
+    while (i < text.len and used < max_w) {
+        const g = unicode.nextGrapheme(text, i);
+        if (g.end <= i) break;
+
+        if (g.width > 0 and max_w != 0 and g.width > max_w) {
+            i = g.end;
+            continue;
+        }
+        if (g.width > 0 and used + g.width > max_w) break;
+
+        if (g.width > 0) {
+            const x: isize = col_abs + @as(isize, @intCast(used));
+            putGraphemeClipped(frame, row, x, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
+            used += g.width;
+        }
+        i = g.end;
     }
 }
 
@@ -723,14 +1098,20 @@ fn paintInput(
 
     if (st.value.len > 0) {
         var start: usize = unicode.clampGraphemeBoundary(st.value, @min(st.scroll_x, st.value.len));
-        if (visible_cols == 0 or unicode.displayWidth(st.value) <= visible_cols) start = 0;
+        const full_fits: bool = visible_cols != 0 and unicode.displayWidth(st.value) <= visible_cols;
+        if (visible_cols == 0 or full_fits) start = 0;
 
         const end: usize = unicode.sliceEndByWidth(st.value, start, visible_cols);
         const visible = if (start < end) st.value[start..end] else "";
 
+        const pad_left: usize = if (st.scroll_x == 0 and start == 0 and full_fits)
+            hAlignOffset(visible_cols, unicode.displayWidth(visible), i.content_align)
+        else
+            0;
+
         if (focused and cursor_out.* == null and cols != 0) {
             const cursor_cols: usize = if (effective_cursor <= start) 0 else unicode.displayWidth(st.value[start..effective_cursor]);
-            var col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + cursor_cols));
+            var col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left + cursor_cols));
             const rect_x2: isize = rect.x + @as(isize, @intCast(cols));
             if (col_abs >= rect_x2 and cols != 0) col_abs = rect_x2 - 1;
             if (row >= clip.y and row < clip.y + @as(isize, @intCast(clip.h)) and col_abs >= clip.x and col_abs < clip.x + @as(isize, @intCast(clip.w)) and row >= 0 and col_abs >= 0) {
@@ -741,14 +1122,25 @@ fn paintInput(
             }
         }
 
-        renderLinePiecesInRectStyled(frame, row, rect, clip, &.{ prefix, visible }, &.{ base_packed, base_packed });
+        renderLinePiecesInRectStyled(frame, row, rect, clip, &.{prefix}, &.{base_packed});
+        if (visible_cols != 0) {
+            const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left));
+            const max_w: usize = if (visible_cols > pad_left) visible_cols - pad_left else 0;
+            drawInlineTextAt(frame, row, col_abs, clip, visible, max_w, base_packed);
+        }
         return;
     }
 
     if (i.placeholder) |ph| {
+        const ph_cols: usize = unicode.displayWidth(ph);
         if (focused) {
             if (cursor_out.* == null and cols != 0) {
-                const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols));
+                const content_cols: usize = ph_cols;
+                const pad_left: usize = if (st.scroll_x == 0 and visible_cols != 0 and content_cols <= visible_cols)
+                    hAlignOffset(visible_cols, content_cols, i.content_align)
+                else
+                    0;
+                const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left));
                 if (row >= clip.y and row < clip.y + @as(isize, @intCast(clip.h)) and col_abs >= clip.x and col_abs < clip.x + @as(isize, @intCast(clip.w)) and row >= 0 and col_abs >= 0) {
                     cursor_out.* = .{
                         .row = @as(usize, @intCast(row + 1)),
@@ -756,9 +1148,32 @@ fn paintInput(
                     };
                 }
             }
-            renderLinePiecesInRectStyled(frame, row, rect, clip, &.{ prefix, ph }, &.{ base_packed, ph_packed });
+            renderLinePiecesInRectStyled(frame, row, rect, clip, &.{prefix}, &.{base_packed});
+            if (visible_cols != 0) {
+                const content_cols: usize = ph_cols;
+                const pad_left: usize = if (st.scroll_x == 0 and content_cols <= visible_cols)
+                    hAlignOffset(visible_cols, content_cols, i.content_align)
+                else
+                    0;
+                const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left));
+                const max_w: usize = if (visible_cols > pad_left) visible_cols - pad_left else 0;
+                drawInlineTextAt(frame, row, col_abs, clip, ph, max_w, ph_packed);
+            }
         } else {
-            renderLinePiecesInRectStyled(frame, row, rect, clip, &.{ prefix, "[", ph, "]" }, &.{ base_packed, base_packed, ph_packed, base_packed });
+            renderLinePiecesInRectStyled(frame, row, rect, clip, &.{prefix}, &.{base_packed});
+            if (visible_cols != 0) {
+                const content_cols: usize = 2 + ph_cols;
+                const pad_left: usize = if (st.scroll_x == 0 and content_cols <= visible_cols)
+                    hAlignOffset(visible_cols, content_cols, i.content_align)
+                else
+                    0;
+                const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left));
+                const max_w: usize = if (visible_cols > pad_left) visible_cols - pad_left else 0;
+                const one: u2 = 1;
+                putGraphemeClipped(frame, row, col_abs, "[", one, clip, base_packed);
+                drawInlineTextAt(frame, row, col_abs + 1, clip, ph, if (max_w > 1) max_w - 1 else 0, ph_packed);
+                putGraphemeClipped(frame, row, col_abs + 1 + @as(isize, @intCast(ph_cols)), "]", one, clip, base_packed);
+            }
         }
     } else {
         if (focused and cursor_out.* == null and cols != 0) {
@@ -850,7 +1265,12 @@ fn paintVBox(
     const y_end: isize = inner.y + @as(isize, @intCast(inner.h));
     const clip_y_end: isize = child_clip.y + @as(isize, @intCast(child_clip.h));
 
-    var fixed_sum: usize = 0;
+    const count: usize = v.children.len;
+    if (count == 0) return;
+
+    const gaps_total: usize = if (count > 1) v.gap * (count - 1) else 0;
+
+    var fixed_sum: usize = gaps_total;
     var total_flex: usize = 0;
     if (mode == .bounded) {
         for (v.children) |child| {
@@ -859,36 +1279,42 @@ fn paintVBox(
             } else if (nodeFlex(child) > 0) {
                 total_flex += nodeFlex(child);
             } else {
-                fixed_sum += measureHeight(child, inner.w);
+                const child_w = vboxChildWidth(inner.w, v.align_items, child);
+                fixed_sum += measureHeight(child, child_w);
             }
         }
     }
 
-    const remaining: usize = if (mode == .bounded and inner.h > fixed_sum) inner.h - fixed_sum else 0;
+    const remaining_for_flex: usize = if (mode == .bounded and inner.h > fixed_sum) inner.h - fixed_sum else 0;
+    const extra_space: usize = if (mode == .bounded and total_flex == 0) remaining_for_flex else 0;
 
-    var y: isize = inner.y;
+    var y: isize = inner.y + @as(isize, @intCast(justifyStartOffset(v.justify_content, count, extra_space)));
     var carry: u128 = 0;
 
-    for (v.children) |child| {
+    for (v.children, 0..) |child, idx| {
         if (y >= y_end) break;
         if (child_clip.h != 0 and y >= clip_y_end) break;
+
+        const eff_align = alignItemsEffective(child, v.align_items);
+        const child_w = vboxChildWidth(inner.w, v.align_items, child);
+        const child_x = vboxChildX(inner.x, inner.w, child_w, eff_align);
 
         const child_h: usize = blk: {
             if (nodeHintH(child)) |h| break :blk h;
             if (mode == .bounded and nodeFlex(child) > 0 and total_flex > 0) {
-                const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                const numer: u128 = @as(u128, remaining_for_flex) * @as(u128, nodeFlex(child)) + carry;
                 const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
                 carry = numer % @as(u128, total_flex);
                 break :blk share;
             }
-            break :blk measureHeight(child, inner.w);
+            break :blk measureHeight(child, child_w);
         };
 
         const child_y2: isize = y + @as(isize, @intCast(child_h));
         const clamped_h: usize = if (child_y2 <= y_end) child_h else if (y_end > y) @as(usize, @intCast(y_end - y)) else 0;
         if (clamped_h == 0) break;
 
-        const child_rect: RectI = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
+        const child_rect: RectI = .{ .x = child_x, .y = y, .w = child_w, .h = clamped_h };
         const rect_y2: isize = child_rect.y + @as(isize, @intCast(child_rect.h));
 
         if (child_clip.h != 0 and rect_y2 <= child_clip.y) {
@@ -898,6 +1324,11 @@ fn paintVBox(
 
         paintNode(frame, child, child_rect, child_clip, state, cursor_out, inherited, mode);
         y += @as(isize, @intCast(clamped_h));
+
+        if (idx + 1 < count) {
+            const gap = v.gap + justifyGapExtra(v.justify_content, count, extra_space, idx);
+            y += @as(isize, @intCast(gap));
+        }
     }
 }
 
@@ -916,7 +1347,12 @@ fn paintHBox(
     const base_clip = rectIntersect(clip, rect);
     const child_clip = if (h.clip) rectIntersect(base_clip, inner) else base_clip;
 
-    var fixed_sum: usize = 0;
+    const count: usize = h.children.len;
+    if (count == 0) return;
+
+    const gaps_total: usize = if (count > 1) h.gap * (count - 1) else 0;
+
+    var fixed_sum: usize = gaps_total;
     var total_flex: usize = 0;
 
     for (h.children) |child| {
@@ -927,17 +1363,18 @@ fn paintHBox(
         }
     }
 
-    const remaining: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+    const remaining_for_flex: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+    const extra_space: usize = if (mode == .bounded and total_flex == 0) remaining_for_flex else 0;
 
-    var x: isize = inner.x;
+    var x: isize = inner.x + @as(isize, @intCast(justifyStartOffset(h.justify_content, count, extra_space)));
     var carry: u128 = 0;
 
-    for (h.children) |child| {
-        const x_end: isize = inner.x + @as(isize, @intCast(inner.w));
+    const x_end: isize = inner.x + @as(isize, @intCast(inner.w));
+    for (h.children, 0..) |child, idx| {
         if (x >= x_end) break;
 
         const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
-            const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+            const numer: u128 = @as(u128, remaining_for_flex) * @as(u128, nodeFlex(child)) + carry;
             const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
             carry = numer % @as(u128, total_flex);
             break :blk share;
@@ -946,9 +1383,19 @@ fn paintHBox(
         const child_x2: isize = x + @as(isize, @intCast(child_w));
         const clamped_w: usize = if (child_x2 <= x_end) child_w else if (x_end > x) @as(usize, @intCast(x_end - x)) else 0;
         if (clamped_w == 0) break;
-        const child_rect: RectI = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
+
+        const eff_align = alignItemsEffective(child, h.align_items);
+        const child_h = hboxChildHeight(inner.h, h.align_items, child);
+        const child_y = hboxChildY(inner.y, inner.h, child_h, eff_align);
+
+        const child_rect: RectI = .{ .x = x, .y = child_y, .w = clamped_w, .h = child_h };
         paintNode(frame, child, child_rect, child_clip, state, cursor_out, inherited, mode);
         x += @as(isize, @intCast(clamped_w));
+
+        if (idx + 1 < count) {
+            const gap = h.gap + justifyGapExtra(h.justify_content, count, extra_space, idx);
+            x += @as(isize, @intCast(gap));
+        }
     }
 }
 
@@ -974,8 +1421,8 @@ fn paintNode(
     }
 
     switch (node) {
-        .text => |t| drawWrappedTextInRect(frame, rect, node_clip, t.text, resolved_packed),
-        .styled_text => |t| drawWrappedStyledSpansInRect(frame, rect, node_clip, t.spans, resolved, 0),
+        .text => |t| drawWrappedTextInRectAligned(frame, rect, node_clip, t.text, resolved_packed, t.ext_align, t.v_align),
+        .styled_text => |t| drawWrappedStyledSpansInRectAligned(frame, rect, node_clip, t.spans, resolved, 0, t.ext_align, t.v_align),
         .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i, resolved),
         .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved, mode),
@@ -1272,7 +1719,12 @@ fn findRectInNodeI(
             const inner = rectDeflate(rect, v.pad);
             const y_end: isize = inner.y + @as(isize, @intCast(inner.h));
 
-            var fixed_sum: usize = 0;
+            const count: usize = v.children.len;
+            if (count == 0) return null;
+
+            const gaps_total: usize = if (count > 1) v.gap * (count - 1) else 0;
+
+            var fixed_sum: usize = gaps_total;
             var total_flex: usize = 0;
             if (mode == .bounded) {
                 for (v.children) |child| {
@@ -1281,37 +1733,48 @@ fn findRectInNodeI(
                     } else if (nodeFlex(child) > 0) {
                         total_flex += nodeFlex(child);
                     } else {
-                        fixed_sum += measureHeight(child, inner.w);
+                        const child_w = vboxChildWidth(inner.w, v.align_items, child);
+                        fixed_sum += measureHeight(child, child_w);
                     }
                 }
             }
 
-            const remaining: usize = if (mode == .bounded and inner.h > fixed_sum) inner.h - fixed_sum else 0;
+            const remaining_for_flex: usize = if (mode == .bounded and inner.h > fixed_sum) inner.h - fixed_sum else 0;
+            const extra_space: usize = if (mode == .bounded and total_flex == 0) remaining_for_flex else 0;
 
-            var y: isize = inner.y;
+            var y: isize = inner.y + @as(isize, @intCast(justifyStartOffset(v.justify_content, count, extra_space)));
             var carry: u128 = 0;
 
-            for (v.children) |child| {
+            for (v.children, 0..) |child, idx| {
                 if (y >= y_end) break;
+
+                const eff_align = alignItemsEffective(child, v.align_items);
+                const child_w = vboxChildWidth(inner.w, v.align_items, child);
+                const child_x = vboxChildX(inner.x, inner.w, child_w, eff_align);
 
                 const child_h: usize = blk: {
                     if (nodeHintH(child)) |h| break :blk h;
                     if (mode == .bounded and nodeFlex(child) > 0 and total_flex > 0) {
-                        const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                        const numer: u128 = @as(u128, remaining_for_flex) * @as(u128, nodeFlex(child)) + carry;
                         const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
                         carry = numer % @as(u128, total_flex);
                         break :blk share;
                     }
-                    break :blk measureHeight(child, inner.w);
+                    break :blk measureHeight(child, child_w);
                 };
 
                 const child_y2: isize = y + @as(isize, @intCast(child_h));
                 const clamped_h: usize = if (child_y2 <= y_end) child_h else if (y_end > y) @as(usize, @intCast(y_end - y)) else 0;
                 if (clamped_h == 0) break;
 
-                const child_rect: RectI = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
+                const child_rect: RectI = .{ .x = child_x, .y = y, .w = child_w, .h = clamped_h };
                 if (findRectInNodeI(child, child_rect, id, scrolls, mode, screen)) |r| return r;
                 y += @as(isize, @intCast(clamped_h));
+
+                if (idx + 1 < count) {
+                    const gap = v.gap + justifyGapExtra(v.justify_content, count, extra_space, idx);
+                    y += @as(isize, @intCast(gap));
+                }
             }
             return null;
         },
@@ -1319,7 +1782,12 @@ fn findRectInNodeI(
             const inner = rectDeflate(rect, h.pad);
             const x_end: isize = inner.x + @as(isize, @intCast(inner.w));
 
-            var fixed_sum: usize = 0;
+            const count: usize = h.children.len;
+            if (count == 0) return null;
+
+            const gaps_total: usize = if (count > 1) h.gap * (count - 1) else 0;
+
+            var fixed_sum: usize = gaps_total;
             var total_flex: usize = 0;
 
             for (h.children) |child| {
@@ -1330,16 +1798,17 @@ fn findRectInNodeI(
                 }
             }
 
-            const remaining: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+            const remaining_for_flex: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+            const extra_space: usize = if (mode == .bounded and total_flex == 0) remaining_for_flex else 0;
 
-            var x: isize = inner.x;
+            var x: isize = inner.x + @as(isize, @intCast(justifyStartOffset(h.justify_content, count, extra_space)));
             var carry: u128 = 0;
 
-            for (h.children) |child| {
+            for (h.children, 0..) |child, idx| {
                 if (x >= x_end) break;
 
                 const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
-                    const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                    const numer: u128 = @as(u128, remaining_for_flex) * @as(u128, nodeFlex(child)) + carry;
                     const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
                     carry = numer % @as(u128, total_flex);
                     break :blk share;
@@ -1349,9 +1818,18 @@ fn findRectInNodeI(
                 const clamped_w: usize = if (child_x2 <= x_end) child_w else if (x_end > x) @as(usize, @intCast(x_end - x)) else 0;
                 if (clamped_w == 0) break;
 
-                const child_rect: RectI = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
+                const eff_align = alignItemsEffective(child, h.align_items);
+                const child_h = hboxChildHeight(inner.h, h.align_items, child);
+                const child_y = hboxChildY(inner.y, inner.h, child_h, eff_align);
+
+                const child_rect: RectI = .{ .x = x, .y = child_y, .w = clamped_w, .h = child_h };
                 if (findRectInNodeI(child, child_rect, id, scrolls, mode, screen)) |r| return r;
                 x += @as(isize, @intCast(clamped_w));
+
+                if (idx + 1 < count) {
+                    const gap = h.gap + justifyGapExtra(h.justify_content, count, extra_space, idx);
+                    x += @as(isize, @intCast(gap));
+                }
             }
             return null;
         },
@@ -1403,7 +1881,12 @@ fn findRectInNodeIBaseOnly(
             const inner = rectDeflate(rect, v.pad);
             const y_end: isize = inner.y + @as(isize, @intCast(inner.h));
 
-            var fixed_sum: usize = 0;
+            const count: usize = v.children.len;
+            if (count == 0) return null;
+
+            const gaps_total: usize = if (count > 1) v.gap * (count - 1) else 0;
+
+            var fixed_sum: usize = gaps_total;
             var total_flex: usize = 0;
             if (mode == .bounded) {
                 for (v.children) |child| {
@@ -1412,37 +1895,48 @@ fn findRectInNodeIBaseOnly(
                     } else if (nodeFlex(child) > 0) {
                         total_flex += nodeFlex(child);
                     } else {
-                        fixed_sum += measureHeight(child, inner.w);
+                        const child_w = vboxChildWidth(inner.w, v.align_items, child);
+                        fixed_sum += measureHeight(child, child_w);
                     }
                 }
             }
 
-            const remaining: usize = if (mode == .bounded and inner.h > fixed_sum) inner.h - fixed_sum else 0;
+            const remaining_for_flex: usize = if (mode == .bounded and inner.h > fixed_sum) inner.h - fixed_sum else 0;
+            const extra_space: usize = if (mode == .bounded and total_flex == 0) remaining_for_flex else 0;
 
-            var y: isize = inner.y;
+            var y: isize = inner.y + @as(isize, @intCast(justifyStartOffset(v.justify_content, count, extra_space)));
             var carry: u128 = 0;
 
-            for (v.children) |child| {
+            for (v.children, 0..) |child, idx| {
                 if (y >= y_end) break;
+
+                const eff_align = alignItemsEffective(child, v.align_items);
+                const child_w = vboxChildWidth(inner.w, v.align_items, child);
+                const child_x = vboxChildX(inner.x, inner.w, child_w, eff_align);
 
                 const child_h: usize = blk: {
                     if (nodeHintH(child)) |h| break :blk h;
                     if (mode == .bounded and nodeFlex(child) > 0 and total_flex > 0) {
-                        const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                        const numer: u128 = @as(u128, remaining_for_flex) * @as(u128, nodeFlex(child)) + carry;
                         const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
                         carry = numer % @as(u128, total_flex);
                         break :blk share;
                     }
-                    break :blk measureHeight(child, inner.w);
+                    break :blk measureHeight(child, child_w);
                 };
 
                 const child_y2: isize = y + @as(isize, @intCast(child_h));
                 const clamped_h: usize = if (child_y2 <= y_end) child_h else if (y_end > y) @as(usize, @intCast(y_end - y)) else 0;
                 if (clamped_h == 0) break;
 
-                const child_rect: RectI = .{ .x = inner.x, .y = y, .w = inner.w, .h = clamped_h };
+                const child_rect: RectI = .{ .x = child_x, .y = y, .w = child_w, .h = clamped_h };
                 if (findRectInNodeIBaseOnly(child, child_rect, id, scrolls, mode)) |r| return r;
                 y += @as(isize, @intCast(clamped_h));
+
+                if (idx + 1 < count) {
+                    const gap = v.gap + justifyGapExtra(v.justify_content, count, extra_space, idx);
+                    y += @as(isize, @intCast(gap));
+                }
             }
             return null;
         },
@@ -1450,7 +1944,12 @@ fn findRectInNodeIBaseOnly(
             const inner = rectDeflate(rect, h.pad);
             const x_end: isize = inner.x + @as(isize, @intCast(inner.w));
 
-            var fixed_sum: usize = 0;
+            const count: usize = h.children.len;
+            if (count == 0) return null;
+
+            const gaps_total: usize = if (count > 1) h.gap * (count - 1) else 0;
+
+            var fixed_sum: usize = gaps_total;
             var total_flex: usize = 0;
 
             for (h.children) |child| {
@@ -1461,16 +1960,17 @@ fn findRectInNodeIBaseOnly(
                 }
             }
 
-            const remaining: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+            const remaining_for_flex: usize = if (inner.w > fixed_sum) inner.w - fixed_sum else 0;
+            const extra_space: usize = if (mode == .bounded and total_flex == 0) remaining_for_flex else 0;
 
-            var x: isize = inner.x;
+            var x: isize = inner.x + @as(isize, @intCast(justifyStartOffset(h.justify_content, count, extra_space)));
             var carry: u128 = 0;
 
-            for (h.children) |child| {
+            for (h.children, 0..) |child, idx| {
                 if (x >= x_end) break;
 
                 const child_w: usize = if (nodeHintW(child)) |w| w else if (nodeFlex(child) > 0 and total_flex > 0) blk: {
-                    const numer: u128 = @as(u128, remaining) * @as(u128, nodeFlex(child)) + carry;
+                    const numer: u128 = @as(u128, remaining_for_flex) * @as(u128, nodeFlex(child)) + carry;
                     const share: usize = @as(usize, @intCast(numer / @as(u128, total_flex)));
                     carry = numer % @as(u128, total_flex);
                     break :blk share;
@@ -1480,9 +1980,18 @@ fn findRectInNodeIBaseOnly(
                 const clamped_w: usize = if (child_x2 <= x_end) child_w else if (x_end > x) @as(usize, @intCast(x_end - x)) else 0;
                 if (clamped_w == 0) break;
 
-                const child_rect: RectI = .{ .x = x, .y = inner.y, .w = clamped_w, .h = inner.h };
+                const eff_align = alignItemsEffective(child, h.align_items);
+                const child_h = hboxChildHeight(inner.h, h.align_items, child);
+                const child_y = hboxChildY(inner.y, inner.h, child_h, eff_align);
+
+                const child_rect: RectI = .{ .x = x, .y = child_y, .w = clamped_w, .h = child_h };
                 if (findRectInNodeIBaseOnly(child, child_rect, id, scrolls, mode)) |r| return r;
                 x += @as(isize, @intCast(clamped_w));
+
+                if (idx + 1 < count) {
+                    const gap = h.gap + justifyGapExtra(h.justify_content, count, extra_space, idx);
+                    x += @as(isize, @intCast(gap));
+                }
             }
             return null;
         },

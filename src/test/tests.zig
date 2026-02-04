@@ -81,6 +81,76 @@ test "layout: clipping prevents hbox child bleed" {
     try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 0, 19));
 }
 
+test "layout: vbox gap offsets siblings" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .text = "A" } },
+        .{ .text = .{ .id = "b", .text = "B" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .gap = 1, .children = children[0..] } };
+    const r = render.findRectForId(root, 10, 10, "b") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 2), r.y);
+}
+
+test "layout: vbox justify_content center offsets start" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .h = 1, .text = "A" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .justify_content = .center, .children = children[0..] } };
+    const r = render.findRectForId(root, 5, 10, "a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 2), r.y);
+}
+
+test "layout: vbox align_self centers fixed-width child" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .w = 4, .align_self = .center, .text = "A" } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+    const r = render.findRectForId(root, 3, 10, "a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 3), r.x);
+    try std.testing.expectEqual(@as(usize, 4), r.w);
+}
+
+test "layout: hbox gap offsets siblings" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .w = 2, .text = "AA" } },
+        .{ .text = .{ .id = "b", .w = 2, .text = "BB" } },
+    };
+    const root = protocol.Node{ .hbox = .{ .id = "root", .gap = 1, .children = children[0..] } };
+    const r = render.findRectForId(root, 1, 10, "b") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 3), r.x);
+}
+
+test "layout: hbox justify_content end offsets start" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .w = 2, .text = "AA" } },
+        .{ .text = .{ .id = "b", .w = 2, .text = "BB" } },
+    };
+    const root = protocol.Node{ .hbox = .{ .id = "root", .justify_content = .end, .children = children[0..] } };
+    const r = render.findRectForId(root, 1, 10, "a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 6), r.x);
+}
+
+test "layout: hbox align_items end places short child at bottom" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .w = 1, .h = 1, .text = "A" } },
+    };
+    const root = protocol.Node{ .hbox = .{ .id = "root", .align_items = .end, .children = children[0..] } };
+    const r = render.findRectForId(root, 3, 5, "a") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 2), r.y);
+    try std.testing.expectEqual(@as(usize, 1), r.h);
+}
+
+test "layout: hbox justify space_between distributes extra" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .w = 1, .text = "A" } },
+        .{ .text = .{ .id = "b", .w = 1, .text = "B" } },
+        .{ .text = .{ .id = "c", .w = 1, .text = "C" } },
+    };
+    const root = protocol.Node{ .hbox = .{ .id = "root", .justify_content = .space_between, .children = children[0..] } };
+    const r = render.findRectForId(root, 1, 7, "c") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 6), r.x);
+}
+
 test "render: focused input shows cursor + placeholder" {
     var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 80 });
     defer term.deinit();
@@ -269,6 +339,49 @@ test "protocol: parse box node" {
     try std.testing.expectEqualStrings("t", b.child.*.text.id);
 }
 
+test "protocol: parse alignment fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"patch\",\"root\":{\"type\":\"vbox\",\"id\":\"root\",\"justify_content\":\"center\",\"align_items\":\"center\",\"gap\":2,\"children\":[" ++
+        "{\"type\":\"text\",\"id\":\"t\",\"w\":10,\"h\":3,\"align_self\":\"end\",\"ext_align\":\"right\",\"v_align\":\"center\",\"text\":\"hi\"}," ++
+        "{\"type\":\"input\",\"id\":\"i\",\"content_align\":\"center\",\"placeholder\":\"p\"}" ++
+        "]}}";
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const v = switch (root) {
+        .vbox => |vv| vv,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(protocol.JustifyContent.center, v.justify_content);
+    try std.testing.expectEqual(protocol.AlignItems.center, v.align_items);
+    try std.testing.expectEqual(@as(usize, 2), v.gap);
+
+    const t = switch (v.children[0]) {
+        .text => |tt| tt,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(t.align_self != null);
+    try std.testing.expectEqual(protocol.AlignItems.end, t.align_self.?);
+    try std.testing.expectEqual(protocol.HorizontalAlign.right, t.ext_align);
+    try std.testing.expectEqual(protocol.VerticalAlign.center, t.v_align);
+
+    const inp = switch (v.children[1]) {
+        .input => |ii| ii,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(protocol.HorizontalAlign.center, inp.content_align);
+}
+
 test "render: box draws border" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
@@ -306,6 +419,64 @@ test "render: box title truncates to inner width" {
     // inner width is 6: " " + "HelloWorld" + " " truncates to " Hello"
     try std.testing.expectEqual(@as(u8, 'H'), cellByte(&frame, 0, 2));
     try std.testing.expectEqual(@as(u8, 'o'), cellByte(&frame, 0, 6));
+}
+
+test "render: text ext_align right places glyph at end" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 5);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .text = .{ .id = "t", .ext_align = .right, .text = "X" } };
+    render.renderToFrame(root, .{}, &frame);
+    try std.testing.expectEqual(@as(u8, 'X'), cellByte(&frame, 0, 4));
+    try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 0, 0));
+}
+
+test "render: text v_align center uses middle row" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 5);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .text = .{ .id = "t", .v_align = .center, .text = "X" } };
+    render.renderToFrame(root, .{}, &frame);
+    try std.testing.expectEqual(@as(u8, 'X'), cellByte(&frame, 1, 0));
+    try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 0, 0));
+    try std.testing.expectEqual(@as(u8, ' '), cellByte(&frame, 2, 0));
+}
+
+test "render: styled_text ext_align right places glyph at end" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 5);
+    frame.clear(' ');
+
+    var spans = [_]protocol.Span{.{ .text = "X" }};
+    const root = protocol.Node{ .styled_text = .{ .id = "t", .ext_align = .right, .spans = spans[0..] } };
+    render.renderToFrame(root, .{}, &frame);
+    try std.testing.expectEqual(@as(u8, 'X'), cellByte(&frame, 0, 4));
+}
+
+test "render: input content_align center pads short value" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 12);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .input = .{ .id = "i", .content_align = .center, .placeholder = "p" } };
+    render.renderToFrame(root, .{
+        .focused_id = "i",
+        .inputs = &.{.{ .id = "i", .value = "hi", .cursor = 2, .scroll_x = 0 }},
+    }, &frame);
+
+    try std.testing.expectEqual(@as(u8, '>'), cellByte(&frame, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'h'), cellByte(&frame, 0, 6));
+    try std.testing.expectEqual(@as(u8, 'i'), cellByte(&frame, 0, 7));
+
+    const cur = frame.cursor orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), cur.row);
+    try std.testing.expectEqual(@as(usize, 9), cur.col);
 }
 
 test "layout: box adds height for border + pad" {

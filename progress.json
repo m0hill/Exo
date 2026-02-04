@@ -607,5 +607,34 @@
       "Activate 'Popups: toggle tooltip' and confirm the tooltip is boxed (and shadowed)",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 23,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Alignment settings: add flexbox-ish alignment + gaps for vbox/hbox, plus text/input alignment controls",
+    "deliverables": [
+      "src/lib/protocol.zig: protocol v0.9 adds alignment fields (justify_content/align_items/gap, align_self, ext_align/v_align, content_align)",
+      "src/lib/render.zig: layout engine supports justify_content/align_items/gap; text ext_align/v_align; input content_align (ignored while scrolling)",
+      "src/lib/tree.zig + src/lib/scheduler.zig: preserve alignment fields across morphing and deep cloning",
+      "src/bin/demo/render.zig: add Alignment panel showcasing new settings",
+      "README.md: document protocol v0.9 alignment fields"
+    ],
+    "boundaries_hit": [
+      "Discrete-cell justify/spacing math across bounded/unbounded layout modes",
+      "Cross-axis alignment with per-child override (align_self) without changing sizing defaults",
+      "Text wrapping alignment (per visual line) and vertical centering within fixed-height rects",
+      "Input rendering alignment that coexists with horizontal scrolling/cursor math"
+    ],
+    "timestamp": "2026-02-04",
+    "manual_repro": [
+      "zig build demo",
+      "In the new 'Alignment' panel, confirm vbox gap spacing is visible between rows",
+      "Confirm the 'justify=center' block is vertically centered within its fixed-height area",
+      "Confirm the 'ext_align=right' text is right-aligned and vertically centered within its 3-row height",
+      "Tab to focus the 'align-input' input and confirm its placeholder is right-aligned after the '> ' prefix",
+      "In the hbox demo, confirm items A/B/C are spaced across the row (space_between) and aligned to the bottom (align_items=end)",
+      "Exit with 'x'"
+    ]
   }
 ]

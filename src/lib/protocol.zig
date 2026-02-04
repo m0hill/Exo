@@ -38,6 +38,34 @@ pub const Node = union(enum) {
     list: ListNode,
 };
 
+pub const JustifyContent = enum {
+    start,
+    center,
+    end,
+    space_between,
+    space_around,
+    space_evenly,
+};
+
+pub const AlignItems = enum {
+    start,
+    center,
+    end,
+    stretch,
+};
+
+pub const HorizontalAlign = enum {
+    left,
+    center,
+    right,
+};
+
+pub const VerticalAlign = enum {
+    top,
+    center,
+    bottom,
+};
+
 pub const VBoxNode = struct {
     id: []const u8,
     w: ?usize = null,
@@ -45,6 +73,10 @@ pub const VBoxNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    justify_content: JustifyContent = .start,
+    align_items: AlignItems = .stretch,
+    gap: usize = 0,
+    align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     children: []Node,
 };
@@ -56,6 +88,10 @@ pub const HBoxNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    justify_content: JustifyContent = .start,
+    align_items: AlignItems = .stretch,
+    gap: usize = 0,
+    align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     children: []Node,
 };
@@ -71,6 +107,7 @@ pub const BoxNode = struct {
     /// Defaults to true; backends may omit `clip` entirely.
     clip: bool = true,
     shadow: bool = false,
+    align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     child: *Node,
 };
@@ -83,6 +120,7 @@ pub const ScrollNode = struct {
     pad: usize = 0,
     /// Defaults to true; backends may omit `clip` entirely.
     clip: bool = true,
+    align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     child: *Node,
 };
@@ -121,6 +159,7 @@ pub const OverlayNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     base: *Node,
     layers: []OverlayLayer,
@@ -131,6 +170,9 @@ pub const TextNode = struct {
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
+    align_self: ?AlignItems = null,
+    ext_align: HorizontalAlign = .left,
+    v_align: VerticalAlign = .top,
     style: ?style.StyleOverride = null,
     text: []const u8,
 };
@@ -145,6 +187,9 @@ pub const StyledTextNode = struct {
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
+    align_self: ?AlignItems = null,
+    ext_align: HorizontalAlign = .left,
+    v_align: VerticalAlign = .top,
     style: ?style.StyleOverride = null,
     spans: []Span,
 };
@@ -154,6 +199,8 @@ pub const InputNode = struct {
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
+    align_self: ?AlignItems = null,
+    content_align: HorizontalAlign = .left,
     style: ?style.StyleOverride = null,
     placeholder_style: ?style.StyleOverride = null,
     placeholder: ?[]const u8 = null,
@@ -165,6 +212,7 @@ pub const ListNode = struct {
     h: ?usize = null,
     flex: usize = 0,
     height: ?usize = null,
+    align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     children: []Node,
 };
@@ -181,6 +229,10 @@ pub const ParseMsgError = error{
     InvalidColor,
     UnknownOverlayPlacement,
     UnknownOverlayAlign,
+    UnknownJustifyContent,
+    UnknownAlignItems,
+    UnknownHorizontalAlign,
+    UnknownVerticalAlign,
 } || std.mem.Allocator.Error;
 
 pub fn parseMsgLeaky(allocator: std.mem.Allocator, line: []const u8) ParseMsgError!Msg {
@@ -260,6 +312,59 @@ fn parsePatchMode(obj: std.json.ObjectMap) ParseMsgError!PatchMode {
     return error.UnknownPatchMode;
 }
 
+fn parseJustifyContent(obj: std.json.ObjectMap) ParseMsgError!JustifyContent {
+    const s = try getOptionalString(obj, "justify_content") orelse return .start;
+    if (std.mem.eql(u8, s, "start")) return .start;
+    if (std.mem.eql(u8, s, "center")) return .center;
+    if (std.mem.eql(u8, s, "end")) return .end;
+    if (std.mem.eql(u8, s, "space_between")) return .space_between;
+    if (std.mem.eql(u8, s, "space_around")) return .space_around;
+    if (std.mem.eql(u8, s, "space_evenly")) return .space_evenly;
+    return error.UnknownJustifyContent;
+}
+
+fn parseAlignItemsString(s: []const u8) ParseMsgError!AlignItems {
+    if (std.mem.eql(u8, s, "start")) return .start;
+    if (std.mem.eql(u8, s, "center")) return .center;
+    if (std.mem.eql(u8, s, "end")) return .end;
+    if (std.mem.eql(u8, s, "stretch")) return .stretch;
+    return error.UnknownAlignItems;
+}
+
+fn parseAlignItemsOrDefault(obj: std.json.ObjectMap, field: []const u8, default: AlignItems) ParseMsgError!AlignItems {
+    const s = try getOptionalString(obj, field) orelse return default;
+    return parseAlignItemsString(s);
+}
+
+fn parseAlignItemsOptional(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?AlignItems {
+    const s = try getOptionalString(obj, field) orelse return null;
+    return try parseAlignItemsString(s);
+}
+
+fn parseHorizontalAlignString(s: []const u8) ParseMsgError!HorizontalAlign {
+    if (std.mem.eql(u8, s, "left")) return .left;
+    if (std.mem.eql(u8, s, "center")) return .center;
+    if (std.mem.eql(u8, s, "right")) return .right;
+    return error.UnknownHorizontalAlign;
+}
+
+fn parseHorizontalAlignOrDefault(obj: std.json.ObjectMap, field: []const u8, default: HorizontalAlign) ParseMsgError!HorizontalAlign {
+    const s = try getOptionalString(obj, field) orelse return default;
+    return parseHorizontalAlignString(s);
+}
+
+fn parseVerticalAlignString(s: []const u8) ParseMsgError!VerticalAlign {
+    if (std.mem.eql(u8, s, "top")) return .top;
+    if (std.mem.eql(u8, s, "center")) return .center;
+    if (std.mem.eql(u8, s, "bottom")) return .bottom;
+    return error.UnknownVerticalAlign;
+}
+
+fn parseVerticalAlignOrDefault(obj: std.json.ObjectMap, field: []const u8, default: VerticalAlign) ParseMsgError!VerticalAlign {
+    const s = try getOptionalString(obj, field) orelse return default;
+    return parseVerticalAlignString(s);
+}
+
 fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Node {
     const obj = try asObject(v);
     const type_str = try getRequiredString(obj, "type");
@@ -270,6 +375,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
+        const justify_content = try parseJustifyContent(obj);
+        const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
+        const gap = try getOptionalUsize(obj, "gap") orelse 0;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -277,7 +386,20 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .vbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .children = out } };
+        return .{ .vbox = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .pad = pad,
+            .clip = clip,
+            .justify_content = justify_content,
+            .align_items = align_items,
+            .gap = gap,
+            .align_self = align_self,
+            .style = st,
+            .children = out,
+        } };
     } else if (std.mem.eql(u8, type_str, "hbox")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
@@ -285,6 +407,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
+        const justify_content = try parseJustifyContent(obj);
+        const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
+        const gap = try getOptionalUsize(obj, "gap") orelse 0;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -292,7 +418,20 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .hbox = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .children = out } };
+        return .{ .hbox = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .pad = pad,
+            .clip = clip,
+            .justify_content = justify_content,
+            .align_items = align_items,
+            .gap = gap,
+            .align_self = align_self,
+            .style = st,
+            .children = out,
+        } };
     } else if (std.mem.eql(u8, type_str, "box")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
@@ -303,6 +442,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse true;
         const shadow = try getOptionalBool(obj, "shadow") orelse false;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
         const child_node = try parseNodeLeaky(allocator, child_val);
@@ -318,6 +458,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .pad = pad,
             .clip = clip,
             .shadow = shadow,
+            .align_self = align_self,
             .style = st,
             .child = child,
         } };
@@ -328,12 +469,23 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse true;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
         const child_node = try parseNodeLeaky(allocator, child_val);
         const child = try allocator.create(Node);
         child.* = child_node;
-        return .{ .scroll = .{ .id = id, .w = w, .h = h, .flex = flex, .pad = pad, .clip = clip, .style = st, .child = child } };
+        return .{ .scroll = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .pad = pad,
+            .clip = clip,
+            .align_self = align_self,
+            .style = st,
+            .child = child,
+        } };
     } else if (std.mem.eql(u8, type_str, "overlay")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
@@ -341,6 +493,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
 
         const base_val = try getRequired(obj, "base");
@@ -362,6 +515,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .flex = flex,
             .pad = pad,
             .clip = clip,
+            .align_self = align_self,
             .style = st,
             .base = base,
             .layers = layers,
@@ -371,14 +525,30 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
+        const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
         const text = try getRequiredString(obj, "text");
-        return .{ .text = .{ .id = id, .w = w, .h = h, .flex = flex, .style = st, .text = text } };
+        return .{ .text = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .align_self = align_self,
+            .ext_align = ext_align,
+            .v_align = v_align,
+            .style = st,
+            .text = text,
+        } };
     } else if (std.mem.eql(u8, type_str, "styled_text")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
+        const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
         const spans_val = try getRequired(obj, "spans");
         const spans_arr = try asArray(spans_val);
@@ -386,22 +556,45 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         for (spans_arr.items, 0..) |span_val, i| {
             spans_out[i] = try parseSpanLeaky(allocator, span_val);
         }
-        return .{ .styled_text = .{ .id = id, .w = w, .h = h, .flex = flex, .style = st, .spans = spans_out } };
+        return .{ .styled_text = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .align_self = align_self,
+            .ext_align = ext_align,
+            .v_align = v_align,
+            .style = st,
+            .spans = spans_out,
+        } };
     } else if (std.mem.eql(u8, type_str, "input")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const content_align = try parseHorizontalAlignOrDefault(obj, "content_align", .left);
         const st = try getOptionalStyleOverride(obj, "style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
         const placeholder = try getOptionalString(obj, "placeholder");
-        return .{ .input = .{ .id = id, .w = w, .h = h, .flex = flex, .style = st, .placeholder_style = ph_st, .placeholder = placeholder } };
+        return .{ .input = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .align_self = align_self,
+            .content_align = content_align,
+            .style = st,
+            .placeholder_style = ph_st,
+            .placeholder = placeholder,
+        } };
     } else if (std.mem.eql(u8, type_str, "list")) {
         const id = try getRequiredString(obj, "id");
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
         const height = try getOptionalUsize(obj, "height");
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -409,7 +602,16 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         for (children_arr.items, 0..) |child_val, i| {
             out[i] = try parseNodeLeaky(allocator, child_val);
         }
-        return .{ .list = .{ .id = id, .w = w, .h = h, .flex = flex, .height = height, .style = st, .children = out } };
+        return .{ .list = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .height = height,
+            .align_self = align_self,
+            .style = st,
+            .children = out,
+        } };
     } else {
         return error.UnknownNodeType;
     }
@@ -673,6 +875,36 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (v.flex != 0) try writer.print(",\"flex\":{d}", .{v.flex});
             if (v.pad != 0) try writer.print(",\"pad\":{d}", .{v.pad});
             if (v.clip) try writer.writeAll(",\"clip\":true");
+            if (v.justify_content != .start) {
+                try writer.writeAll(",\"justify_content\":");
+                try writeJsonString(writer, switch (v.justify_content) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .space_between => "space_between",
+                    .space_around => "space_around",
+                    .space_evenly => "space_evenly",
+                });
+            }
+            if (v.align_items != .stretch) {
+                try writer.writeAll(",\"align_items\":");
+                try writeJsonString(writer, switch (v.align_items) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
+            if (v.gap != 0) try writer.print(",\"gap\":{d}", .{v.gap});
+            if (v.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
             if (v.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -692,6 +924,36 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (h.flex != 0) try writer.print(",\"flex\":{d}", .{h.flex});
             if (h.pad != 0) try writer.print(",\"pad\":{d}", .{h.pad});
             if (h.clip) try writer.writeAll(",\"clip\":true");
+            if (h.justify_content != .start) {
+                try writer.writeAll(",\"justify_content\":");
+                try writeJsonString(writer, switch (h.justify_content) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .space_between => "space_between",
+                    .space_around => "space_around",
+                    .space_evenly => "space_evenly",
+                });
+            }
+            if (h.align_items != .stretch) {
+                try writer.writeAll(",\"align_items\":");
+                try writeJsonString(writer, switch (h.align_items) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
+            if (h.gap != 0) try writer.print(",\"gap\":{d}", .{h.gap});
+            if (h.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
             if (h.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -717,6 +979,15 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (b.pad != 0) try writer.print(",\"pad\":{d}", .{b.pad});
             if (!b.clip) try writer.writeAll(",\"clip\":false");
             if (b.shadow) try writer.writeAll(",\"shadow\":true");
+            if (b.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
             if (b.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -733,6 +1004,15 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (s.flex != 0) try writer.print(",\"flex\":{d}", .{s.flex});
             if (s.pad != 0) try writer.print(",\"pad\":{d}", .{s.pad});
             if (!s.clip) try writer.writeAll(",\"clip\":false");
+            if (s.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
             if (s.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -749,6 +1029,15 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (o.flex != 0) try writer.print(",\"flex\":{d}", .{o.flex});
             if (o.pad != 0) try writer.print(",\"pad\":{d}", .{o.pad});
             if (o.clip) try writer.writeAll(",\"clip\":true");
+            if (o.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
             if (o.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -796,6 +1085,31 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (t.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (t.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (t.flex != 0) try writer.print(",\"flex\":{d}", .{t.flex});
+            if (t.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
+            if (t.ext_align != .left) {
+                try writer.writeAll(",\"ext_align\":");
+                try writeJsonString(writer, switch (t.ext_align) {
+                    .left => "left",
+                    .center => "center",
+                    .right => "right",
+                });
+            }
+            if (t.v_align != .top) {
+                try writer.writeAll(",\"v_align\":");
+                try writeJsonString(writer, switch (t.v_align) {
+                    .top => "top",
+                    .center => "center",
+                    .bottom => "bottom",
+                });
+            }
             if (t.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -810,6 +1124,31 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (t.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (t.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (t.flex != 0) try writer.print(",\"flex\":{d}", .{t.flex});
+            if (t.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
+            if (t.ext_align != .left) {
+                try writer.writeAll(",\"ext_align\":");
+                try writeJsonString(writer, switch (t.ext_align) {
+                    .left => "left",
+                    .center => "center",
+                    .right => "right",
+                });
+            }
+            if (t.v_align != .top) {
+                try writer.writeAll(",\"v_align\":");
+                try writeJsonString(writer, switch (t.v_align) {
+                    .top => "top",
+                    .center => "center",
+                    .bottom => "bottom",
+                });
+            }
             if (t.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -827,6 +1166,23 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (inp.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (inp.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (inp.flex != 0) try writer.print(",\"flex\":{d}", .{inp.flex});
+            if (inp.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
+            if (inp.content_align != .left) {
+                try writer.writeAll(",\"content_align\":");
+                try writeJsonString(writer, switch (inp.content_align) {
+                    .left => "left",
+                    .center => "center",
+                    .right => "right",
+                });
+            }
             if (inp.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -848,6 +1204,15 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (l.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (l.flex != 0) try writer.print(",\"flex\":{d}", .{l.flex});
             if (l.height) |height| try writer.print(",\"height\":{d}", .{height});
+            if (l.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
             if (l.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);

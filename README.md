@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.8)
+## Protocol (v0.9)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -135,14 +135,35 @@ Runtime selects a color mode automatically (and degrades gracefully). You can fo
 
 Any node may include:
 
-- `w` (int): fixed width (used when the parent is an `hbox`)
-- `h` (int): fixed height (used when the parent is a `vbox`)
+- `w` (int): fixed width (used when the parent is an `hbox`; also used for centering when a parent container is not stretching children)
+- `h` (int): fixed height (used when the parent is a `vbox`; also used for vertical centering in an `hbox`)
 - `flex` (int, default 0): share of remaining space along the parent's main axis
 
 Containers (`vbox`/`hbox`) may also include:
 
 - `pad` (int, default 0): uniform padding (in cells)
 - `clip` (bool, default false): clip child rendering to the padded inner rect
+
+### Alignment (optional)
+
+Containers (`vbox`/`hbox`) may also include:
+
+- `justify_content`: `start|center|end|space_between|space_around|space_evenly`
+- `align_items`: `start|center|end|stretch`
+- `gap` (int, default 0): spacing between children along the main axis
+
+Any node may include:
+
+- `align_self`: `start|center|end|stretch` (overrides the parent container's `align_items` for that node)
+
+Text nodes (`text`/`styled_text`) may include:
+
+- `ext_align`: `left|center|right` (horizontal alignment of wrapped text within the node's rect)
+- `v_align`: `top|center|bottom` (vertical alignment within the node's rect)
+
+Input nodes may include:
+
+- `content_align`: `left|center|right` (horizontal alignment of the value/placeholder within the input's rect; ignored while horizontally scrolling)
 
 Runtime owns `input.value` + `input.cursor` (patches must not clobber local editing state).
 

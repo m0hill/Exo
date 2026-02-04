@@ -351,6 +351,109 @@ fn writePanelNode(
     try writer.writeByte('}');
 }
 
+fn writeAlignmentPanelNode(writer: anytype) !void {
+    const panel_style: style.StyleOverride = .{
+        .bg = .{ .rgb = .{ .r = 0x0B, .g = 0x12, .b = 0x20 } },
+        .fg = .{ .rgb = .{ .r = 0xFB, .g = 0x71, .b = 0x85 } },
+    };
+
+    const body_style: style.StyleOverride = .{
+        .fg = .{ .rgb = .{ .r = 0xE5, .g = 0xE7, .b = 0xEB } },
+    };
+
+    const dim_style: style.StyleOverride = .{
+        .fg = .{ .rgb = .{ .r = 0x94, .g = 0xA3, .b = 0xB8 } },
+        .attrs_set = style.ATTR_DIM,
+        .attrs_values = style.ATTR_DIM,
+    };
+
+    const label_style: style.StyleOverride = .{
+        .fg = .{ .rgb = .{ .r = 0xF9, .g = 0xFA, .b = 0xFB } },
+        .attrs_set = style.ATTR_BOLD,
+        .attrs_values = style.ATTR_BOLD,
+    };
+
+    var hbox_children = [_]protocol.Node{
+        .{ .text = .{ .id = "align-hbox-a", .w = 6, .h = 1, .ext_align = .center, .text = "A" } },
+        .{ .text = .{ .id = "align-hbox-b", .w = 6, .h = 1, .ext_align = .center, .text = "B" } },
+        .{ .text = .{ .id = "align-hbox-c", .w = 6, .h = 1, .ext_align = .center, .text = "C" } },
+    };
+    const demo_hbox = protocol.Node{ .hbox = .{
+        .id = "align-hbox",
+        .h = 3,
+        .gap = 1,
+        .justify_content = .space_between,
+        .align_items = .end,
+        .children = hbox_children[0..],
+    } };
+
+    var justify_children = [_]protocol.Node{
+        .{ .text = .{
+            .id = "align-justify-item",
+            .w = 18,
+            .ext_align = .center,
+            .style = label_style,
+            .text = "justify=center",
+        } },
+    };
+    const justify_block = protocol.Node{ .vbox = .{
+        .id = "align-justify",
+        .h = 5,
+        .justify_content = .center,
+        .align_items = .center,
+        .children = justify_children[0..],
+    } };
+
+    const text_block = protocol.Node{ .text = .{
+        .id = "align-text",
+        .w = 24,
+        .h = 3,
+        .align_self = .center,
+        .ext_align = .right,
+        .v_align = .center,
+        .style = label_style,
+        .text = "ext_align=right",
+    } };
+
+    const input_block = protocol.Node{ .input = .{
+        .id = "align-input",
+        .w = 24,
+        .align_self = .center,
+        .content_align = .right,
+        .placeholder = "content_align=right",
+        .placeholder_style = dim_style,
+    } };
+
+    var body_children = [_]protocol.Node{
+        .{ .text = .{ .id = "align-title", .h = 1, .style = label_style, .text = "Alignment showcase" } },
+        .{ .text = .{ .id = "align-gap", .h = 1, .style = dim_style, .text = "gap=1 + align_self + justify_content" } },
+        justify_block,
+        text_block,
+        input_block,
+        .{ .text = .{ .id = "align-hbox-hint", .h = 1, .style = dim_style, .text = "hbox: space_between + align_items=end" } },
+        demo_hbox,
+    };
+    var body = protocol.Node{ .vbox = .{
+        .id = "panel-align-body",
+        .gap = 1,
+        .clip = true,
+        .style = body_style,
+        .children = body_children[0..],
+    } };
+
+    const box = protocol.Node{ .box = .{
+        .id = "panel-align",
+        .flex = 1,
+        .pad = 1,
+        .clip = true,
+        .style = panel_style,
+        .title = "Alignment",
+        .child = &body,
+    } };
+
+    try protocol.writeNodeJson(writer, box);
+}
+
 fn writeRootNode(
     allocator: std.mem.Allocator,
     writer: anytype,
@@ -544,6 +647,8 @@ fn writeRootNode(
             lists[0].items.items,
         );
     }
+    try writer.writeByte(',');
+    try writeAlignmentPanelNode(writer);
     try writer.writeAll("]}");
 
     try writer.writeByte(',');

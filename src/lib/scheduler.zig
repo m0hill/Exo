@@ -255,6 +255,9 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .w = t.w,
             .h = t.h,
             .flex = t.flex,
+            .align_self = t.align_self,
+            .ext_align = t.ext_align,
+            .v_align = t.v_align,
             .style = t.style,
             .text = try allocator.dupe(u8, t.text),
         } },
@@ -271,6 +274,9 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .w = t.w,
                 .h = t.h,
                 .flex = t.flex,
+                .align_self = t.align_self,
+                .ext_align = t.ext_align,
+                .v_align = t.v_align,
                 .style = t.style,
                 .spans = spans,
             } };
@@ -280,6 +286,8 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .w = i.w,
             .h = i.h,
             .flex = i.flex,
+            .align_self = i.align_self,
+            .content_align = i.content_align,
             .style = i.style,
             .placeholder_style = i.placeholder_style,
             .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
@@ -296,6 +304,10 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .flex = v.flex,
                 .pad = v.pad,
                 .clip = v.clip,
+                .justify_content = v.justify_content,
+                .align_items = v.align_items,
+                .gap = v.gap,
+                .align_self = v.align_self,
                 .style = v.style,
                 .children = children,
             } };
@@ -312,6 +324,10 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .flex = h.flex,
                 .pad = h.pad,
                 .clip = h.clip,
+                .justify_content = h.justify_content,
+                .align_items = h.align_items,
+                .gap = h.gap,
+                .align_self = h.align_self,
                 .style = h.style,
                 .children = children,
             } };
@@ -326,6 +342,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .pad = b.pad,
             .clip = b.clip,
             .shadow = b.shadow,
+            .align_self = b.align_self,
             .style = b.style,
             .child = blk: {
                 const child_node = try cloneNodeLeaky(allocator, b.child.*);
@@ -341,6 +358,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .flex = s.flex,
             .pad = s.pad,
             .clip = s.clip,
+            .align_self = s.align_self,
             .style = s.style,
             .child = blk: {
                 const child_node = try cloneNodeLeaky(allocator, s.child.*);
@@ -380,6 +398,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .flex = o.flex,
                 .pad = o.pad,
                 .clip = o.clip,
+                .align_self = o.align_self,
                 .style = o.style,
                 .base = base,
                 .layers = layers,
@@ -396,6 +415,7 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .h = l.h,
                 .flex = l.flex,
                 .height = l.height,
+                .align_self = l.align_self,
                 .style = l.style,
                 .children = children,
             } };

@@ -158,6 +158,9 @@ fn morphNodeLeaky(
             t.w = inc.w;
             t.h = inc.h;
             t.flex = inc.flex;
+            t.align_self = inc.align_self;
+            t.ext_align = inc.ext_align;
+            t.v_align = inc.v_align;
             t.style = inc.style;
             t.text = inc.text;
         },
@@ -166,6 +169,9 @@ fn morphNodeLeaky(
             t.w = inc.w;
             t.h = inc.h;
             t.flex = inc.flex;
+            t.align_self = inc.align_self;
+            t.ext_align = inc.ext_align;
+            t.v_align = inc.v_align;
             t.style = inc.style;
             t.spans = inc.spans;
         },
@@ -174,6 +180,8 @@ fn morphNodeLeaky(
             i.w = inc.w;
             i.h = inc.h;
             i.flex = inc.flex;
+            i.align_self = inc.align_self;
+            i.content_align = inc.content_align;
             i.style = inc.style;
             i.placeholder_style = inc.placeholder_style;
             i.placeholder = inc.placeholder;
@@ -187,6 +195,10 @@ fn morphNodeLeaky(
             v.flex = inc.flex;
             v.pad = inc.pad;
             v.clip = inc.clip;
+            v.justify_content = inc.justify_content;
+            v.align_items = inc.align_items;
+            v.gap = inc.gap;
+            v.align_self = inc.align_self;
             v.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
@@ -240,6 +252,10 @@ fn morphNodeLeaky(
             h.flex = inc.flex;
             h.pad = inc.pad;
             h.clip = inc.clip;
+            h.justify_content = inc.justify_content;
+            h.align_items = inc.align_items;
+            h.gap = inc.gap;
+            h.align_self = inc.align_self;
             h.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
@@ -294,6 +310,7 @@ fn morphNodeLeaky(
             b.pad = inc.pad;
             b.clip = inc.clip;
             b.shadow = inc.shadow;
+            b.align_self = inc.align_self;
             b.style = inc.style;
 
             if (std.meta.activeTag(b.child.*) == std.meta.activeTag(inc.child.*)) {
@@ -311,6 +328,7 @@ fn morphNodeLeaky(
             s.flex = inc.flex;
             s.pad = inc.pad;
             s.clip = inc.clip;
+            s.align_self = inc.align_self;
             s.style = inc.style;
 
             if (std.meta.activeTag(s.child.*) == std.meta.activeTag(inc.child.*)) {
@@ -330,6 +348,7 @@ fn morphNodeLeaky(
             o.flex = inc.flex;
             o.pad = inc.pad;
             o.clip = inc.clip;
+            o.align_self = inc.align_self;
             o.style = inc.style;
 
             if (std.meta.activeTag(o.base.*) == std.meta.activeTag(inc.base.*)) {
@@ -400,6 +419,7 @@ fn morphNodeLeaky(
             l.h = inc.h;
             l.flex = inc.flex;
             l.height = inc.height;
+            l.align_self = inc.align_self;
             l.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
