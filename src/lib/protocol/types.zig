@@ -17,7 +17,7 @@ pub const PatchMode = enum {
 };
 
 pub const EventMsg = union(enum) {
-    key: struct { key: []const u8 },
+    key: struct { key: []const u8, mods: u8 = 0, seq: ?[]const u8 = null },
     focus: struct { id: []const u8 },
     input: struct { id: []const u8, value: []const u8, cursor: usize },
     select: struct { id: []const u8, item: []const u8 },

@@ -9,8 +9,8 @@ const state = tui.state;
 const terminal = tui.terminal;
 const hover = tui.hover;
 const unicode = tui.unicode;
+const keys = tui.keys;
 
-const key_decode = @import("../key_decode.zig");
 const log = @import("../log.zig");
 const node_util = @import("node_util.zig");
 
@@ -1285,7 +1285,7 @@ pub fn handleFocusedInputKey(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
     input_id: []const u8,
-    key: key_decode.DecodedKey,
+    ev: keys.KeyEvent,
     visible_cols: usize,
 ) !bool {
     const max_input_bytes: usize = 16 * 1024;
@@ -1297,54 +1297,92 @@ pub fn handleFocusedInputKey(
     const before_scroll: usize = st.scroll_x;
 
     var changed: bool = false;
-    switch (key) {
-        .byte => |b| {
-            if (b >= 0x20 and b < 0x80 and st.value.items.len >= max_input_bytes) return false;
-            changed = try input.handleInputByte(allocator, &st.value, &st.cursor, b);
-        },
-        .utf8 => |u| {
-            const bytes = u.slice();
-            if (bytes.len != 0 and st.value.items.len + bytes.len > max_input_bytes) return false;
-            changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, bytes);
-        },
-        .left => {
-            const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
-            if (next != st.cursor) {
-                st.cursor = next;
-                changed = true;
+    switch (ev.key) {
+        .text => |s| {
+            if (ev.mods.ctrl or ev.mods.shift) return false;
+
+            if (ev.mods.alt and s.len == 1) {
+                if (s[0] == 'b') {
+                    const next = input.word_left(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                    // handled
+                } else if (s[0] == 'f') {
+                    const next = input.word_right(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                    // handled
+                } else {
+                    return false;
+                }
+            } else if (ev.mods.alt) {
+                return false;
+            } else {
+                if (s.len == 0) return false;
+                if (st.value.items.len + s.len > max_input_bytes) return false;
+
+                if (s.len == 1 and s[0] < 0x80) {
+                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
+                } else {
+                    changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
+                }
             }
         },
-        .right => {
-            const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
-            if (next != st.cursor) {
-                st.cursor = next;
+        .named => |k| switch (k) {
+            .left => {
+                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
+                    const next = input.word_left(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                } else {
+                    const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
+                    if (next != st.cursor) {
+                        st.cursor = next;
+                        changed = true;
+                    }
+                }
+            },
+            .right => {
+                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
+                    const next = input.word_right(st.value.items, st.cursor);
+                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+                    if (clamped != st.cursor) {
+                        st.cursor = clamped;
+                        changed = true;
+                    }
+                } else {
+                    const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
+                    if (next != st.cursor) {
+                        st.cursor = next;
+                        changed = true;
+                    }
+                }
+            },
+            .home => if (st.cursor != 0) {
+                st.cursor = 0;
                 changed = true;
-            }
-        },
-        .home => if (st.cursor != 0) {
-            st.cursor = 0;
-            changed = true;
-        },
-        .end => if (st.cursor != st.value.items.len) {
-            st.cursor = st.value.items.len;
-            changed = true;
-        },
-        .delete => changed = input.delete_at_cursor(&st.value, &st.cursor),
-        .word_left => {
-            const next = input.word_left(st.value.items, st.cursor);
-            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-            if (clamped != st.cursor) {
-                st.cursor = clamped;
+            },
+            .end => if (st.cursor != st.value.items.len) {
+                st.cursor = st.value.items.len;
                 changed = true;
-            }
-        },
-        .word_right => {
-            const next = input.word_right(st.value.items, st.cursor);
-            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-            if (clamped != st.cursor) {
-                st.cursor = clamped;
-                changed = true;
-            }
+            },
+            .delete => changed = input.delete_at_cursor(&st.value, &st.cursor),
+            .backspace => {
+                if (st.cursor != 0) {
+                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
+                }
+            },
+            .insert => return false,
+            else => return false,
         },
         else => return false,
     }
@@ -1354,6 +1392,83 @@ pub fn handleFocusedInputKey(
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
     const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
+    return changed or scroll_changed;
+}
+
+pub fn handleFocusedInputPaste(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    input_id: []const u8,
+    payload: []const u8,
+    visible_cols: usize,
+) !bool {
+    const max_input_bytes: usize = 16 * 1024;
+    const idx = try ensureWidgetKind(allocator, widgets, input_id, .input);
+    var st = &widgets.items[idx].state.input;
+
+    const before_cursor: usize = st.cursor;
+    const before_len: usize = st.value.items.len;
+    const before_scroll: usize = st.scroll_x;
+
+    var sanitized: std.ArrayList(u8) = .empty;
+    defer sanitized.deinit(allocator);
+    try sanitized.ensureTotalCapacity(allocator, @min(payload.len, 4096));
+
+    var i: usize = 0;
+    while (i < payload.len) {
+        if (st.value.items.len + sanitized.items.len >= max_input_bytes) break;
+
+        const b = payload[i];
+        if (b == '\r' or b == '\n' or b == '\t' or b < 0x20 or b == 0x7f) {
+            try sanitized.append(allocator, ' ');
+            i += 1;
+            continue;
+        }
+
+        if (b < 0x80) {
+            try sanitized.append(allocator, b);
+            i += 1;
+            continue;
+        }
+
+        const expect = std.unicode.utf8ByteSequenceLength(b) catch {
+            i += 1;
+            continue;
+        };
+        if (expect <= 1 or expect > 4) {
+            i += 1;
+            continue;
+        }
+        const n: usize = @as(usize, @intCast(expect));
+        if (i + n > payload.len) break;
+
+        const slice = payload[i .. i + n];
+        _ = std.unicode.utf8Decode(slice) catch {
+            i += 1;
+            continue;
+        };
+        if (st.value.items.len + sanitized.items.len + slice.len > max_input_bytes) break;
+        try sanitized.appendSlice(allocator, slice);
+        i += n;
+    }
+
+    if (sanitized.items.len == 0) return false;
+
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+    st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
+
+    if (st.cursor == st.value.items.len) {
+        try st.value.appendSlice(allocator, sanitized.items);
+    } else {
+        try st.value.insertSlice(allocator, st.cursor, sanitized.items);
+    }
+    st.cursor += sanitized.items.len;
+
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+    if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
+    const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
+
+    const changed = before_cursor != st.cursor or before_len != st.value.items.len or before_scroll != st.scroll_x;
     return changed or scroll_changed;
 }
 
@@ -1397,7 +1512,7 @@ pub fn handleFocusedScrollKey(
     rows: usize,
     cols: usize,
     scroll_id: []const u8,
-    key: key_decode.DecodedKey,
+    ev: keys.KeyEvent,
 ) !bool {
     const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
     const st = &widgets.items[idx].state.scroll;
@@ -1405,24 +1520,29 @@ pub fn handleFocusedScrollKey(
     // Make sure page-scrolling uses the current viewport size.
     syncScrollForId(widgets, root, rows, cols, scroll_id);
 
-    switch (key) {
-        .byte => |b| {
-            if (b == 'j') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 1);
-            if (b == 'k') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -1);
+    switch (ev.key) {
+        .text => |s| {
+            if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
+            if (s.len != 1) return false;
+            if (s[0] == 'j') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 1);
+            if (s[0] == 'k') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -1);
             return false;
         },
-        .page_down => {
-            const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
-            return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, step);
-        },
-        .page_up => {
-            const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
-            return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -step);
-        },
-        .home => return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 0),
-        .end => {
-            const max_scroll: usize = if (st.content_h > st.viewport_h) st.content_h - st.viewport_h else 0;
-            return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, max_scroll);
+        .named => |k| switch (k) {
+            .page_down => {
+                const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
+                return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, step);
+            },
+            .page_up => {
+                const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
+                return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -step);
+            },
+            .home => return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 0),
+            .end => {
+                const max_scroll: usize = if (st.content_h > st.viewport_h) st.content_h - st.viewport_h else 0;
+                return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, max_scroll);
+            },
+            else => return false,
         },
         else => return false,
     }

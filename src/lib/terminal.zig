@@ -13,6 +13,7 @@ pub const CrashRestoreState = struct {
     mouse_enabled_1006: bool = false,
     mouse_enabled_1002: bool = false,
     mouse_enabled_1003: bool = false,
+    paste_enabled: bool = false,
 };
 
 var crash_state: CrashRestoreState = .{};
@@ -40,6 +41,7 @@ fn updateCrashStateFromTerminal(term: *const Terminal) void {
         .mouse_enabled_1006 = term.mouse_enabled_1006,
         .mouse_enabled_1002 = term.mouse_enabled_1002,
         .mouse_enabled_1003 = term.mouse_enabled_1003,
+        .paste_enabled = term.paste_enabled,
     };
     crash_state_active = true;
 }
@@ -62,6 +64,7 @@ pub fn restoreBestEffort() void {
 
     // Try to leave the terminal in a reasonable state even if we don't know
     // what was enabled.
+    writeAllBestEffort(st.stdout_fd, "\x1b[?2004l"); // disable bracketed paste
     writeAllBestEffort(st.stdout_fd, "\x1b[?1003l"); // disable mouse motion
     writeAllBestEffort(st.stdout_fd, "\x1b[?1002l"); // disable mouse motion (button)
     writeAllBestEffort(st.stdout_fd, "\x1b[?1006l"); // disable SGR mouse
@@ -89,6 +92,7 @@ pub const Terminal = struct {
     mouse_enabled_1006: bool = false,
     mouse_enabled_1002: bool = false,
     mouse_enabled_1003: bool = false,
+    paste_enabled: bool = false,
 
     pub fn init() !Terminal {
         const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
@@ -144,6 +148,10 @@ pub const Terminal = struct {
         try t.writeAll("\x1b[?1049h"); // alt screen
         try t.writeAll("\x1b[?25l"); // hide cursor
         t.screen_enabled = true;
+        updateCrashStateFromTerminal(&t);
+
+        try t.writeAll("\x1b[?2004h"); // enable bracketed paste
+        t.paste_enabled = true;
         updateCrashStateFromTerminal(&t);
         return t;
     }
@@ -211,6 +219,10 @@ pub const Terminal = struct {
 
     pub fn deinit(self: *Terminal) void {
         if (self.screen_enabled) {
+            if (self.paste_enabled) {
+                _ = self.writeAll("\x1b[?2004l") catch {};
+                self.paste_enabled = false;
+            }
             if (self.mouse_enabled_1003) {
                 _ = self.writeAll("\x1b[?1003l") catch {};
                 self.mouse_enabled_1003 = false;

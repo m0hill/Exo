@@ -45,8 +45,19 @@ pub fn writeEventJsonl(writer: anytype, key: []const u8) !void {
 }
 
 pub fn writeKeyEventJsonl(writer: anytype, key: []const u8) !void {
+    return writeKeyEventJsonlFull(writer, key, 0, null);
+}
+
+pub fn writeKeyEventJsonlFull(writer: anytype, key: []const u8, mods: u8, seq: ?[]const u8) !void {
     try writer.writeAll("{\"type\":\"event\",\"name\":\"key\",\"key\":");
     try writeJsonString(writer, key);
+    if (mods != 0) {
+        try writer.print(",\"mods\":{d}", .{mods});
+    }
+    if (seq) |s| {
+        try writer.writeAll(",\"seq\":");
+        try writeJsonString(writer, s);
+    }
     try writer.writeAll("}\n");
 }
 

@@ -435,6 +435,8 @@ fn writeAlignmentPanelNode(writer: anytype) !void {
         .id = "align-input",
         .w = 24,
         .align_self = .center,
+        .hoverable = true,
+        .mouseable = true,
         .content_align = .right,
         .placeholder = "content_align=right",
         .placeholder_style = dim_style,

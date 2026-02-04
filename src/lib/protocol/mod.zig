@@ -40,6 +40,7 @@ pub const parseMsgLeaky = parse.parseMsgLeaky;
 pub const writeJsonString = write.writeJsonString;
 pub const writeEventJsonl = write.writeEventJsonl;
 pub const writeKeyEventJsonl = write.writeKeyEventJsonl;
+pub const writeKeyEventJsonlFull = write.writeKeyEventJsonlFull;
 pub const writeFocusEventJsonl = write.writeFocusEventJsonl;
 pub const writeInputEventJsonl = write.writeInputEventJsonl;
 pub const writeSelectEventJsonl = write.writeSelectEventJsonl;

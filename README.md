@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.11)
+## Protocol (v0.12)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -69,6 +69,22 @@ Key event:
 ```json
 {"type":"event","name":"key","key":"q"}
 ```
+
+Optional fields:
+
+- `mods` (int, optional): modifier bitmask (`shift=1`, `ctrl=2`, `alt=4`)
+- `seq` (string, optional): debug payload for unrecognized escape sequences (typically when `key:"Unidentified"`)
+
+Key naming scheme (W3C-like):
+
+- Named keys: `Escape`, `Enter`, `Tab`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `ArrowUp`, `ArrowDown`, `ArrowLeft`, `ArrowRight`
+- Function keys: `F1`..`F24`
+- Text keys: literal UTF-8 text (e.g. `"a"`, `"漢"`)
+
+Notes:
+
+- ESC ambiguity is resolved via a short timeout (~25ms by default): a lone ESC becomes `Escape`, but `ESC <byte>` becomes `Alt+<byte>`.
+- Runtime enables bracketed paste (`\x1b[?2004h`) and treats paste bodies as literal bytes (no key parsing inside paste).
 
 Focus changed:
 

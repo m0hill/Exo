@@ -50,7 +50,10 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         const name = try getRequiredString(obj, "name");
         if (std.mem.eql(u8, name, "key")) {
             const key = try getRequiredString(obj, "key");
-            return .{ .event = .{ .key = .{ .key = key } } };
+            const mods_usize = try getOptionalUsize(obj, "mods") orelse 0;
+            if (mods_usize > std.math.maxInt(u8)) return error.WrongType;
+            const seq = try getOptionalString(obj, "seq");
+            return .{ .event = .{ .key = .{ .key = key, .mods = @as(u8, @intCast(mods_usize)), .seq = seq } } };
         } else if (std.mem.eql(u8, name, "focus")) {
             const id = try getRequiredString(obj, "id");
             return .{ .event = .{ .focus = .{ .id = id } } };

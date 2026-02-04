@@ -7,15 +7,92 @@ const render = tui.render;
 const renderer_mod = tui.renderer;
 const scheduler_mod = tui.scheduler;
 const terminal = tui.terminal;
+const keys = tui.keys;
+const key_decode = tui.key_decode;
 
 const cmd = @import("cmd.zig");
-const key_decode = @import("key_decode.zig");
 const log = @import("log.zig");
 const sigexit = @import("sigexit.zig");
 const sigwinch = @import("sigwinch.zig");
 const timing = @import("timing.zig");
 const ui = @import("ui/mod.zig");
 const pointer = @import("ui/pointer.zig");
+
+fn keyEventAsciiByte(ev: keys.KeyEvent) ?u8 {
+    return switch (ev.key) {
+        .text => |s| if (s.len == 1 and s[0] < 0x80) s[0] else null,
+        else => null,
+    };
+}
+
+fn keyEventIsCtrlLetter(ev: keys.KeyEvent, letter: u8) bool {
+    if (!ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
+    const b = keyEventAsciiByte(ev) orelse return false;
+    return b == letter;
+}
+
+fn keyEventIsText(ev: keys.KeyEvent, b: u8) bool {
+    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
+    const got = keyEventAsciiByte(ev) orelse return false;
+    return got == b;
+}
+
+fn keyEventIsNamed(ev: keys.KeyEvent, k: keys.NamedKey) bool {
+    return switch (ev.key) {
+        .named => |kk| kk == k,
+        else => false,
+    };
+}
+
+fn isInputLocalKey(ev: keys.KeyEvent) bool {
+    switch (ev.key) {
+        .text => |s| {
+            if (!ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) return true;
+            if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift and s.len == 1) {
+                return s[0] == 'b' or s[0] == 'f';
+            }
+            return false;
+        },
+        .named => |k| switch (k) {
+            .left, .right, .home, .end, .delete, .backspace, .insert => return !ev.mods.ctrl and !ev.mods.shift,
+            else => return false,
+        },
+        else => return false,
+    }
+}
+
+fn isListLocalKey(ev: keys.KeyEvent) bool {
+    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
+    if (keyEventIsNamed(ev, .up) or keyEventIsNamed(ev, .down) or keyEventIsNamed(ev, .enter)) return true;
+    const b = keyEventAsciiByte(ev) orelse return false;
+    return b == 'j' or b == 'k';
+}
+
+fn isScrollLocalKey(ev: keys.KeyEvent) bool {
+    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
+    if (keyEventIsNamed(ev, .page_up) or keyEventIsNamed(ev, .page_down) or keyEventIsNamed(ev, .home) or keyEventIsNamed(ev, .end)) return true;
+    const b = keyEventAsciiByte(ev) orelse return false;
+    return b == 'j' or b == 'k';
+}
+
+fn sendKeyEventToBackend(log_sink: *log.LogSink, backend_in: anytype, ev: keys.KeyEvent) !void {
+    var fbuf: [4]u8 = undefined;
+    const key_str = keys.keyToString(ev.key, &fbuf);
+    const mods_mask = ev.mods.toMask();
+    const seq: ?[]const u8 = switch (ev.key) {
+        .unknown_escape => |s| s,
+        else => null,
+    };
+
+    if (seq) |s| {
+        log.logPrint(log_sink, "EVENT_TX name=key key={s} mods={d} seq_len={d}\n", .{ key_str, mods_mask, s.len });
+    } else if (mods_mask != 0) {
+        log.logPrint(log_sink, "EVENT_TX name=key key={s} mods={d}\n", .{ key_str, mods_mask });
+    } else {
+        log.logPrint(log_sink, "EVENT_TX name=key key={s}\n", .{key_str});
+    }
+    try protocol.writeKeyEventJsonlFull(backend_in, key_str, mods_mask, seq);
+}
 
 fn maybeSendPendingResizeEvent(
     log_sink: *log.LogSink,
@@ -161,8 +238,8 @@ pub fn run() !void {
     var last_term_size: terminal.Size = ui.effectiveTermSize(term.getSize() catch .{ .rows = 0, .cols = 0 });
     var pending_resize: ?terminal.Size = null;
     var last_resize_tx_ns: u64 = 0;
-    var utf8_pending: key_decode.Utf8Pending = .{};
-    var csi_pending: key_decode.CsiPending = .{};
+    var decoder = try key_decode.Decoder.init(allocator, .{});
+    defer decoder.deinit();
     var emergency_last_ns: u64 = 0;
     const emergency_window_ns: u64 = 900 * std.time.ns_per_ms;
 
@@ -188,7 +265,15 @@ pub fn run() !void {
         const now_ns = timing.monotonicNowNs();
         const resize_timeout_ms = timing.pollTimeoutMsForPendingResize(pending_resize, last_resize_tx_ns);
         const frame_timeout_ms = timing.pollTimeoutMsForPendingFrame(now_ns, last_render_ns, sched.hasPending());
-        const poll_timeout_ms = timing.minTimeoutMs(resize_timeout_ms, frame_timeout_ms);
+        const decoder_timeout_ms: i32 = blk: {
+            const deadline_ns = decoder.nextDeadlineNs() orelse break :blk -1;
+            if (now_ns >= deadline_ns) break :blk 0;
+            const remaining_ns: u64 = deadline_ns - now_ns;
+            const ms_u64: u64 = (remaining_ns + (std.time.ns_per_ms - 1)) / std.time.ns_per_ms;
+            const max_i32: u64 = @as(u64, @intCast(std.math.maxInt(i32)));
+            break :blk @as(i32, @intCast(if (ms_u64 > max_i32) max_i32 else ms_u64));
+        };
+        const poll_timeout_ms = timing.minTimeoutMs(timing.minTimeoutMs(resize_timeout_ms, frame_timeout_ms), decoder_timeout_ms);
 
         const backend_events: i16 = if (frame_timeout_ms > 0 and sched.hasPending()) 0 else std.posix.POLL.IN;
 
@@ -207,6 +292,19 @@ pub fn run() !void {
         };
 
         const rc = try std.posix.poll(fds[0..], poll_timeout_ms);
+        while (true) {
+            const tick_ns = timing.monotonicNowNs();
+            const decoded = decoder.tick(tick_ns) orelse break;
+            switch (decoded) {
+                .key => |ev| {
+                    try sendKeyEventToBackend(&log_sink, child_in, ev);
+                    try child_in.flush();
+                    requested_reason = .input;
+                },
+                .paste => |p| log.logPrint(&log_sink, "PASTE_DROP reason=timeout bytes={d}\n", .{p.len}),
+                .mouse => {},
+            }
+        }
         if (rc == 0) {
             try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
         } else {
@@ -281,187 +379,225 @@ pub fn run() !void {
                     }
 
                     const first = try term.readByte();
-                    const decoded = try key_decode.decodeKeyWithUtf8(&term, &utf8_pending, &csi_pending, first) orelse continue;
+                    const byte_now_ns = timing.monotonicNowNs();
+                    const decoded = decoder.feedByte(first, byte_now_ns) orelse continue;
 
-                    if (decoded == .mouse and current_root != null) {
-                        if (decoded.mouse.kind == .move and have_last_mouse_pos and decoded.mouse.x == last_mouse_x and decoded.mouse.y == last_mouse_y) {
-                            continue;
-                        }
-                        last_mouse_x = decoded.mouse.x;
-                        last_mouse_y = decoded.mouse.y;
-                        have_last_mouse_pos = true;
-                        const rows: usize = @as(usize, last_term_size.rows);
-                        const cols: usize = @as(usize, last_term_size.cols);
-                        const changed = try ui.handleMouseEvent(
-                            allocator,
-                            &log_sink,
-                            child_in,
-                            &widgets,
-                            &focused_id_buf,
-                            &focused_id,
-                            &hover_id_buf,
-                            &hover_id,
-                            &hover_item_buf,
-                            &hover_item,
-                            current_root.?,
-                            rows,
-                            cols,
-                            decoded.mouse,
-                        );
-                        const wrote_pointer = try pointer_engine.handleMouseEvent(
-                            allocator,
-                            child_in,
-                            widgets.items,
-                            current_root.?,
-                            rows,
-                            cols,
-                            decoded.mouse,
-                            timing.monotonicNowNs(),
-                        );
-                        if (wrote_pointer) try child_in.flush();
-                        if (changed) requested_reason = .input;
-                        handled_input_this_iter = true;
-                        continue;
-                    }
-
-                    const key_now_ns = timing.monotonicNowNs();
-                    if (emergency_last_ns != 0 and key_now_ns > emergency_last_ns + emergency_window_ns) {
-                        emergency_last_ns = 0;
-                    }
-
-                    if (!handled_input_this_iter and (decoded == .tab or decoded == .shift_tab)) {
-                        if (current_root != null) {
-                            const next_focus = try ui.cycleFocusInTree(allocator, current_root.?, focused_id);
-                            try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
-                        } else {
-                            try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
-                        }
-                        log.logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
-                        try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
-                        if (current_root != null and focused_id != null) {
+                    switch (decoded) {
+                        .mouse => |mev| if (current_root != null) {
+                            if (mev.kind == .move and have_last_mouse_pos and mev.x == last_mouse_x and mev.y == last_mouse_y) {
+                                continue;
+                            }
+                            last_mouse_x = mev.x;
+                            last_mouse_y = mev.y;
+                            have_last_mouse_pos = true;
                             const rows: usize = @as(usize, last_term_size.rows);
                             const cols: usize = @as(usize, last_term_size.cols);
-                            const scrolled = try ui.ensureVisibleForFocusId(
+                            const changed = try ui.handleMouseEvent(
                                 allocator,
                                 &log_sink,
                                 child_in,
                                 &widgets,
+                                &focused_id_buf,
+                                &focused_id,
+                                &hover_id_buf,
+                                &hover_id,
+                                &hover_item_buf,
+                                &hover_item,
                                 current_root.?,
                                 rows,
                                 cols,
-                                focused_id.?,
+                                mev,
                             );
-                            if (scrolled) need_backend_flush = true;
-                        }
-                        need_backend_flush = true;
-                        requested_reason = .input;
-                        continue;
-                    }
-
-                    if (decoded == .byte and decoded.byte == 7) {
-                        if (emergency_last_ns != 0 and key_now_ns <= emergency_last_ns + emergency_window_ns) {
-                            log.logPrint(&log_sink, "EMERGENCY_EXIT chord=ctrl-g ctrl-g\n", .{});
-                            _ = child.kill() catch {};
-                            terminal.emergencyExit(0);
-                        }
-                        emergency_last_ns = key_now_ns;
-                        continue;
-                    }
-
-                    if (decoded == .byte and decoded.byte == 3) {
-                        log.logPrint(&log_sink, "EVENT_TX name=key key=ctrl-c\n", .{});
-                        try protocol.writeKeyEventJsonl(child_in, "ctrl-c");
-                        need_backend_flush = true;
-                        wait_child = false;
-                        exit_now = true;
-                        break;
-                    }
-                    if (decoded == .byte and decoded.byte == 'x' and !focused_is_input) {
-                        log.logPrint(&log_sink, "EVENT_TX name=key key=x\n", .{});
-                        try protocol.writeKeyEventJsonl(child_in, "x");
-                        need_backend_flush = true;
-                        wait_child = false;
-                        exit_now = true;
-                        break;
-                    }
-
-                    if (decoded == .byte and decoded.byte == 'q' and !focused_is_input) {
-                        log.logPrint(&log_sink, "EVENT_TX name=key key=q\n", .{});
-                        try protocol.writeKeyEventJsonl(child_in, "q");
-                        need_backend_flush = true;
-                        continue;
-                    }
-
-                    if (current_root != null and focused_id != null) {
-                        const fk = try ui.focusedKindInTree(allocator, current_root.?, focused_id.?);
-                        if (fk) |kind| switch (kind) {
-                            .list => {
-                                if (decoded == .byte and (decoded.byte == 'j' or decoded.byte == 'k')) {
-                                    const delta: isize = if (decoded.byte == 'j') 1 else -1;
-                                    const changed = try ui.moveListSelectionForId(
-                                        allocator,
-                                        &log_sink,
-                                        child_in,
-                                        &widgets,
-                                        current_root.?,
-                                        focused_id.?,
-                                        delta,
-                                    );
-                                    if (changed) {
-                                        need_backend_flush = true;
-                                        requested_reason = .input;
-                                    }
-                                } else if (decoded == .byte and (decoded.byte == '\r' or decoded.byte == '\n')) {
-                                    try ui.activateListForId(&log_sink, child_in, widgets.items, focused_id.?);
-                                    need_backend_flush = true;
-                                }
-                            },
-                            .input => {
+                            const wrote_pointer = try pointer_engine.handleMouseEvent(
+                                allocator,
+                                child_in,
+                                widgets.items,
+                                current_root.?,
+                                rows,
+                                cols,
+                                mev,
+                                timing.monotonicNowNs(),
+                            );
+                            if (wrote_pointer) try child_in.flush();
+                            if (changed) requested_reason = .input;
+                            handled_input_this_iter = true;
+                            continue;
+                        } else {},
+                        .paste => |payload| {
+                            if (focused_is_input and current_root != null and focused_id != null) {
                                 const rows: usize = @as(usize, last_term_size.rows);
                                 const cols: usize = @as(usize, last_term_size.cols);
                                 var visible_cols: usize = ui.inputVisibleCols(cols);
                                 if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
                                     visible_cols = ui.inputVisibleCols(r.w);
                                 }
-
-                                const changed = ui.handleFocusedInputKey(
+                                const changed = ui.handleFocusedInputPaste(
                                     allocator,
                                     &widgets,
                                     focused_id.?,
-                                    decoded,
+                                    payload,
                                     visible_cols,
                                 ) catch |e| blk: {
-                                    log.logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
+                                    log.logPrint(&log_sink, "INPUT_PASTE_ERR reason={s}\n", .{@errorName(e)});
                                     break :blk false;
                                 };
                                 if (changed) {
                                     pending_input_event = true;
                                     requested_reason = .input;
                                 }
-                            },
-                            .scroll => {
-                                const rows: usize = @as(usize, last_term_size.rows);
-                                const cols: usize = @as(usize, last_term_size.cols);
-                                const changed = ui.handleFocusedScrollKey(
-                                    allocator,
-                                    &log_sink,
-                                    child_in,
-                                    &widgets,
-                                    current_root.?,
-                                    rows,
-                                    cols,
-                                    focused_id.?,
-                                    decoded,
-                                ) catch |e| blk: {
-                                    log.logPrint(&log_sink, "SCROLL_ERR reason={s}\n", .{@errorName(e)});
-                                    break :blk false;
-                                };
-                                if (changed) {
-                                    need_backend_flush = true;
-                                    requested_reason = .input;
+                            } else {
+                                log.logPrint(&log_sink, "PASTE_DROP reason=not_input bytes={d}\n", .{payload.len});
+                            }
+                            continue;
+                        },
+                        .key => |ev| {
+                            const key_now_ns = timing.monotonicNowNs();
+                            if (emergency_last_ns != 0 and key_now_ns > emergency_last_ns + emergency_window_ns) {
+                                emergency_last_ns = 0;
+                            }
+
+                            if (keyEventIsCtrlLetter(ev, 'g')) {
+                                if (emergency_last_ns != 0 and key_now_ns <= emergency_last_ns + emergency_window_ns) {
+                                    log.logPrint(&log_sink, "EMERGENCY_EXIT chord=ctrl-g ctrl-g\n", .{});
+                                    _ = child.kill() catch {};
+                                    terminal.emergencyExit(0);
                                 }
-                            },
-                        };
+                                emergency_last_ns = key_now_ns;
+                                continue;
+                            }
+
+                            if (!handled_input_this_iter and keyEventIsNamed(ev, .tab) and !ev.mods.alt and !ev.mods.ctrl) {
+                                if (current_root != null) {
+                                    const next_focus = try ui.cycleFocusInTree(allocator, current_root.?, focused_id);
+                                    try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
+                                } else {
+                                    try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
+                                }
+                                log.logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
+                                try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
+                                if (current_root != null and focused_id != null) {
+                                    const rows: usize = @as(usize, last_term_size.rows);
+                                    const cols: usize = @as(usize, last_term_size.cols);
+                                    const scrolled = try ui.ensureVisibleForFocusId(
+                                        allocator,
+                                        &log_sink,
+                                        child_in,
+                                        &widgets,
+                                        current_root.?,
+                                        rows,
+                                        cols,
+                                        focused_id.?,
+                                    );
+                                    if (scrolled) need_backend_flush = true;
+                                }
+                                need_backend_flush = true;
+                                requested_reason = .input;
+                                continue;
+                            }
+
+                            if (keyEventIsCtrlLetter(ev, 'c')) {
+                                try sendKeyEventToBackend(&log_sink, child_in, ev);
+                                need_backend_flush = true;
+                                wait_child = false;
+                                exit_now = true;
+                                break;
+                            }
+
+                            if (keyEventIsText(ev, 'x') and !focused_is_input) {
+                                try sendKeyEventToBackend(&log_sink, child_in, ev);
+                                need_backend_flush = true;
+                                wait_child = false;
+                                exit_now = true;
+                                break;
+                            }
+
+                            if (keyEventIsText(ev, 'q') and !focused_is_input) {
+                                try sendKeyEventToBackend(&log_sink, child_in, ev);
+                                need_backend_flush = true;
+                                continue;
+                            }
+
+                            var consumed: bool = false;
+                            if (current_root != null and focused_id != null) {
+                                const fk = try ui.focusedKindInTree(allocator, current_root.?, focused_id.?);
+                                if (fk) |kind| switch (kind) {
+                                    .list => if (isListLocalKey(ev)) {
+                                        consumed = true;
+                                        if (keyEventIsNamed(ev, .up) or keyEventIsNamed(ev, .down) or keyEventIsText(ev, 'j') or keyEventIsText(ev, 'k')) {
+                                            const delta: isize = if (keyEventIsNamed(ev, .down) or keyEventIsText(ev, 'j')) 1 else -1;
+                                            const changed = try ui.moveListSelectionForId(
+                                                allocator,
+                                                &log_sink,
+                                                child_in,
+                                                &widgets,
+                                                current_root.?,
+                                                focused_id.?,
+                                                delta,
+                                            );
+                                            if (changed) {
+                                                need_backend_flush = true;
+                                                requested_reason = .input;
+                                            }
+                                        } else if (keyEventIsNamed(ev, .enter)) {
+                                            try ui.activateListForId(&log_sink, child_in, widgets.items, focused_id.?);
+                                            need_backend_flush = true;
+                                        }
+                                    },
+                                    .input => if (isInputLocalKey(ev)) {
+                                        consumed = true;
+                                        const rows: usize = @as(usize, last_term_size.rows);
+                                        const cols: usize = @as(usize, last_term_size.cols);
+                                        var visible_cols: usize = ui.inputVisibleCols(cols);
+                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                            visible_cols = ui.inputVisibleCols(r.w);
+                                        }
+
+                                        const changed = ui.handleFocusedInputKey(
+                                            allocator,
+                                            &widgets,
+                                            focused_id.?,
+                                            ev,
+                                            visible_cols,
+                                        ) catch |e| blk: {
+                                            log.logPrint(&log_sink, "INPUT_ERR reason={s}\n", .{@errorName(e)});
+                                            break :blk false;
+                                        };
+                                        if (changed) {
+                                            pending_input_event = true;
+                                            requested_reason = .input;
+                                        }
+                                    },
+                                    .scroll => if (isScrollLocalKey(ev)) {
+                                        consumed = true;
+                                        const rows: usize = @as(usize, last_term_size.rows);
+                                        const cols: usize = @as(usize, last_term_size.cols);
+                                        const changed = ui.handleFocusedScrollKey(
+                                            allocator,
+                                            &log_sink,
+                                            child_in,
+                                            &widgets,
+                                            current_root.?,
+                                            rows,
+                                            cols,
+                                            focused_id.?,
+                                            ev,
+                                        ) catch |e| blk: {
+                                            log.logPrint(&log_sink, "SCROLL_ERR reason={s}\n", .{@errorName(e)});
+                                            break :blk false;
+                                        };
+                                        if (changed) {
+                                            need_backend_flush = true;
+                                            requested_reason = .input;
+                                        }
+                                    },
+                                };
+                            }
+
+                            if (!consumed and !focused_is_input) {
+                                try sendKeyEventToBackend(&log_sink, child_in, ev);
+                                need_backend_flush = true;
+                            }
+                        },
                     }
                 }
 

@@ -491,8 +491,15 @@ pub fn main() !void {
             switch (msg) {
                 .event => |ev| switch (ev) {
                     .key => |k| {
-                        std.debug.print("EVENT_RX name=key key={s}\n", .{k.key});
-                        if (std.mem.eql(u8, k.key, "q")) {
+                        if (k.seq) |s| {
+                            std.debug.print("EVENT_RX name=key key={s} mods={d} seq_len={d}\n", .{ k.key, k.mods, s.len });
+                        } else if (k.mods != 0) {
+                            std.debug.print("EVENT_RX name=key key={s} mods={d}\n", .{ k.key, k.mods });
+                        } else {
+                            std.debug.print("EVENT_RX name=key key={s}\n", .{k.key});
+                        }
+
+                        if (std.mem.eql(u8, k.key, "q") and k.mods == 0) {
                             state_on = !state_on;
                             const status_text = try state.buildStatusText(
                                 allocator,
@@ -520,7 +527,10 @@ pub fn main() !void {
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
-                        } else if (std.mem.eql(u8, k.key, "x") or std.mem.eql(u8, k.key, "ctrl-c")) {
+                        } else if ((std.mem.eql(u8, k.key, "x") and k.mods == 0) or
+                            std.mem.eql(u8, k.key, "ctrl-c") or
+                            (std.mem.eql(u8, k.key, "c") and (k.mods & 2) != 0))
+                        {
                             return;
                         }
                     },

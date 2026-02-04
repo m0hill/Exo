@@ -700,4 +700,34 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 26,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Keyboard/Input Abstraction v1: typed key event model + robust decoder (ESC/CSI/SS3/modifiers) + bracketed paste",
+    "deliverables": [
+      "src/lib/keys.zig: `KeyEvent` model + modifier mask + standardized key naming helpers",
+      "src/lib/key_decode.zig: state-machine decoder with ESC ambiguity timeout, CSI/SS3 decoding, and bracketed paste bodies as literal bytes",
+      "src/lib/terminal.zig: enable bracketed paste (`?2004h`) on init and disable on restore/deinit (`?2004l`)",
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig: protocol v0.12 adds optional `mods` and `seq` to key events",
+      "src/bin/runtime/app.zig + src/bin/runtime/ui/mod.zig: integrate new decoder; local widget key handling consumes `KeyEvent`; paste inserts into focused input",
+      "src/test/tests.zig: decoder unit tests (ESC ambiguity, CSI timeouts, arrows+mods, F-keys, bracketed paste, UTF-8)",
+      "README.md: document protocol v0.12 key naming, modifier mask, ESC timeout, and bracketed paste behavior"
+    ],
+    "boundaries_hit": [
+      "Timeout-based ESC disambiguation for Alt-modified keys vs literal Escape",
+      "No-data-loss buffering for partial CSI/SS3 sequences (unknown escapes surfaced via `seq`)",
+      "Bracketed paste enabled at terminal level; paste bodies decoded as literal bytes (no key parsing inside paste)"
+    ],
+    "timestamp": "2026-02-04",
+    "manual_repro": [
+      "zig build demo",
+      "Paste text containing escape sequences into the focused input (e.g. include the literal bytes of an arrow sequence like `\\x1b[A`); confirm it inserts literally and does not navigate",
+      "Press Escape alone; confirm the backend logs a key event for `Escape` after a short delay",
+      "In an input, use Alt-b / Alt-f and Alt-ArrowLeft / Alt-ArrowRight; confirm word-jump behavior",
+      "Exit with 'x' or Ctrl-C; confirm terminal is restored (cursor visible, normal input behavior)",
+      "Emergency exit chord remains: Ctrl-G then Ctrl-G"
+    ]
+  }
 ]

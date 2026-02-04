@@ -17,3 +17,5 @@ pub const mouse = @import("mouse.zig");
 pub const markdown = @import("markdown/mod.zig");
 pub const hover = @import("hover.zig");
 pub const mouseable = @import("mouseable.zig");
+pub const keys = @import("keys.zig");
+pub const key_decode = @import("key_decode.zig");
