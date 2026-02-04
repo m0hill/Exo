@@ -19,6 +19,12 @@ const Span = protocol.Span;
 const PointerKind = protocol.PointerKind;
 const PointerButton = protocol.PointerButton;
 const PointerEvent = protocol.PointerEvent;
+const ClipboardMsg = protocol.ClipboardMsg;
+const ClipboardOp = protocol.ClipboardOp;
+const ClipboardTarget = protocol.ClipboardTarget;
+const ClipboardEvent = protocol.ClipboardEvent;
+const PasteSource = protocol.PasteSource;
+const PasteEvent = protocol.PasteEvent;
 const ValidationState = protocol.ValidationState;
 const ListMarker = protocol.ListMarker;
 const ParseMsgError = protocol.ParseMsgError;
@@ -125,12 +131,74 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .captured = captured,
             };
             return .{ .event = .{ .pointer = ev } };
+        } else if (std.mem.eql(u8, name, "clipboard")) {
+            const op = try parseClipboardOp(obj);
+            const ok = try getRequiredBool(obj, "ok");
+            const req_usize = try getOptionalUsize(obj, "request_id") orelse 0;
+            if (req_usize > std.math.maxInt(u32)) return error.WrongType;
+            const request_id = @as(u32, @intCast(req_usize));
+            const data = try getOptionalString(obj, "data");
+            const reason = try getOptionalString(obj, "reason");
+            const cev: ClipboardEvent = .{
+                .op = op,
+                .ok = ok,
+                .request_id = request_id,
+                .data = data,
+                .reason = reason,
+            };
+            return .{ .event = .{ .clipboard = cev } };
+        } else if (std.mem.eql(u8, name, "paste")) {
+            const src = try parsePasteSource(obj);
+            const bytes = try getRequiredUsize(obj, "bytes");
+            const pev: PasteEvent = .{ .source = src, .bytes = bytes };
+            return .{ .event = .{ .paste = pev } };
         } else {
             return error.UnknownEventName;
+        }
+    } else if (std.mem.eql(u8, type_str, "clipboard")) {
+        const op = try parseClipboardOp(obj);
+        const target = try parseClipboardTarget(obj);
+        switch (op) {
+            .write => {
+                const data = try getRequiredString(obj, "data");
+                return .{ .clipboard = .{ .write = .{ .data = data, .target = target } } };
+            },
+            .read => {
+                const request_id_val = try getRequired(obj, "request_id");
+                const request_id = switch (request_id_val) {
+                    .integer => |n| blk: {
+                        if (n < 0) return error.WrongType;
+                        if (n > std.math.maxInt(u32)) return error.WrongType;
+                        break :blk @as(u32, @intCast(n));
+                    },
+                    else => return error.WrongType,
+                };
+                return .{ .clipboard = .{ .read = .{ .request_id = request_id, .target = target } } };
+            },
         }
     } else {
         return error.UnknownMsgType;
     }
+}
+
+fn parseClipboardOp(obj: std.json.ObjectMap) ParseMsgError!ClipboardOp {
+    const s = try getRequiredString(obj, "op");
+    if (std.mem.eql(u8, s, "write")) return .write;
+    if (std.mem.eql(u8, s, "read")) return .read;
+    return error.UnknownClipboardOp;
+}
+
+fn parseClipboardTarget(obj: std.json.ObjectMap) ParseMsgError!ClipboardTarget {
+    const s = try getOptionalString(obj, "target") orelse return .clipboard;
+    if (std.mem.eql(u8, s, "clipboard")) return .clipboard;
+    return error.UnknownClipboardTarget;
+}
+
+fn parsePasteSource(obj: std.json.ObjectMap) ParseMsgError!PasteSource {
+    const s = try getRequiredString(obj, "source");
+    if (std.mem.eql(u8, s, "bracketed")) return .bracketed;
+    if (std.mem.eql(u8, s, "clipboard")) return .clipboard;
+    return error.UnknownPasteSource;
 }
 
 fn parsePatchMode(obj: std.json.ObjectMap) ParseMsgError!PatchMode {

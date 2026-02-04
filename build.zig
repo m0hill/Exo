@@ -21,6 +21,9 @@ pub fn build(b: *std.Build) void {
         .name = "tui_runtime",
         .root_module = tui_runtime_mod,
     });
+    if (target.result.os.tag == .windows) {
+        tui_runtime.linkSystemLibrary("user32");
+    }
 
     const backend_demo_mod = b.createModule(.{
         .root_source_file = b.path("src/bin/demo/main.zig"),
@@ -33,6 +36,9 @@ pub fn build(b: *std.Build) void {
         .name = "backend_demo",
         .root_module = backend_demo_mod,
     });
+    if (target.result.os.tag == .windows) {
+        backend_demo.linkSystemLibrary("user32");
+    }
 
     b.installArtifact(tui_runtime);
     b.installArtifact(backend_demo);

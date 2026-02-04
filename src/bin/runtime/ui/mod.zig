@@ -1579,6 +1579,56 @@ pub fn activateListForId(log_sink: *log.LogSink, backend_in: anytype, widgets: [
     try protocol.writeActivateEventJsonl(backend_in, list_id, st.selected_id.items);
 }
 
+pub fn handleFocusedListKey(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+    ev: keys.KeyEvent,
+) !bool {
+    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
+
+    if (ev.key == .named and ev.key.named == .enter) {
+        try activateListForId(log_sink, backend_in, widgets.items, list_id);
+        return true;
+    }
+
+    const delta: isize = blk: {
+        if (ev.key == .named and ev.key.named == .up) break :blk -1;
+        if (ev.key == .named and ev.key.named == .down) break :blk 1;
+        const b = switch (ev.key) {
+            .text => |s| if (s.len == 1 and s[0] < 0x80) s[0] else break :blk 0,
+            else => break :blk 0,
+        };
+        if (b == 'k') break :blk -1;
+        if (b == 'j') break :blk 1;
+        break :blk 0;
+    };
+    if (delta == 0) return false;
+
+    const changed = try moveListSelectionForId(allocator, log_sink, backend_in, widgets, root, list_id, delta);
+
+    // Clamp scroll to actual visible height when we can compute it from layout.
+    const l = node_util.findListNodeById(root, list_id) orelse return changed;
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
+    const rect = render.findRectForIdWithScrolls(root, rows, cols, list_id, scroll_states.items) orelse return changed;
+    const visible_height = listVisibleHeight(rect, l);
+    if (visible_height == 0) return changed;
+
+    const widx = findWidgetIndex(widgets.items, list_id) orelse return changed;
+    if (widgets.items[widx].state != .list) return changed;
+    const stw = &widgets.items[widx].state.list;
+    const selected_index = findSelectedIndexInList(l, stw.selected_id.items);
+    const before_scroll = stw.scroll;
+    stw.scroll = state.clampListScroll(stw.scroll, selected_index, visible_height, l.children.len);
+    return changed or (stw.scroll != before_scroll);
+}
+
 pub fn activateActionForId(log_sink: *log.LogSink, backend_in: anytype, id: []const u8) !void {
     log.logPrint(log_sink, "EVENT_TX name=activate id={s} item=\n", .{id});
     try protocol.writeActivateEventJsonl(backend_in, id, "");

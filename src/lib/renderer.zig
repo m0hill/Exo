@@ -6,6 +6,7 @@ const render = @import("render/mod.zig");
 const color = @import("color.zig");
 const style = @import("style.zig");
 const Size = @import("term_size.zig").Size;
+const termcaps = @import("termcaps.zig");
 
 const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
@@ -42,6 +43,10 @@ pub const Renderer = struct {
     }
 
     pub fn draw(self: *Renderer, term: anytype, root: protocol.Node, state: render.RenderState) !void {
+        return self.drawWithCaps(term, .{}, root, state);
+    }
+
+    pub fn drawWithCaps(self: *Renderer, term: anytype, caps: termcaps.Caps, root: protocol.Node, state: render.RenderState) !void {
         const size = term.getSize() catch Size{ .rows = 0, .cols = 0 };
         const eff = effectiveSize(size);
 
@@ -58,19 +63,27 @@ pub const Renderer = struct {
         var metrics: DrawMetrics = .{};
         var cur_style: style.PackedStyle = .{};
 
+        if (!caps.ansi or !caps.cursor_address) {
+            metrics.full = true;
+            try dumbPaint(term, &metrics, &self.next);
+            self.has_prev = false;
+            self.last_metrics = metrics;
+            return;
+        }
+
         // Start from a known SGR state; cursor moves don't reset style.
         try termWriteAll(term, &metrics, "\x1b[0m");
 
         if (!self.has_prev) {
             metrics.full = true;
-            try fullPaint(term, &metrics, &cur_style, self.color_mode, &self.next);
+            try fullPaint(term, &metrics, &cur_style, self.color_mode, caps, &self.next);
             self.has_prev = true;
         } else {
             metrics.full = false;
-            try diffAndFlush(term, &metrics, &cur_style, self.color_mode, &self.prev, &self.next);
+            try diffAndFlush(term, &metrics, &cur_style, self.color_mode, caps, &self.prev, &self.next);
         }
 
-        try applyCursor(term, &metrics, self.next.cursor);
+        try applyCursor(term, &metrics, caps, self.next.cursor);
         self.last_metrics = metrics;
 
         std.mem.swap(Frame, &self.prev, &self.next);
@@ -150,14 +163,40 @@ fn applyStyle(term: anytype, metrics: *DrawMetrics, cur: *style.PackedStyle, mod
     cur.* = next;
 }
 
+fn dumbPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
+    const rows: usize = @as(usize, next.rows);
+    const cols: usize = @as(usize, next.cols);
+
+    var r: usize = 0;
+    while (r < rows) : (r += 1) {
+        const row = next.rowSlice(r);
+        var c: usize = 0;
+        while (c < cols) : (c += 1) {
+            const cell = row[c];
+            if (cell.continuation) continue;
+            if (cell.len == 0) {
+                try termWriteAll(term, metrics, " ");
+            } else {
+                try termWriteAll(term, metrics, cell.slice());
+            }
+        }
+        if (r + 1 < rows) try termWriteAll(term, metrics, "\r\n");
+    }
+}
+
 fn fullPaint(
     term: anytype,
     metrics: *DrawMetrics,
     cur_style: *style.PackedStyle,
     mode: color.ColorMode,
+    caps: termcaps.Caps,
     next: *const Frame,
 ) !void {
-    try termWriteAll(term, metrics, "\x1b[2J\x1b[H");
+    if (caps.clear_screen) {
+        try termWriteAll(term, metrics, "\x1b[2J\x1b[H");
+    } else {
+        try termWriteAll(term, metrics, "\x1b[H");
+    }
 
     const rows: usize = @as(usize, next.rows);
     _ = @as(usize, next.cols);
@@ -179,8 +218,10 @@ fn fullPaint(
                 }
             }
         }
-        try applyStyle(term, metrics, cur_style, mode, .{});
-        try termWriteAll(term, metrics, "\x1b[K");
+        if (caps.erase_eol) {
+            try applyStyle(term, metrics, cur_style, mode, .{});
+            try termWriteAll(term, metrics, "\x1b[K");
+        }
         if (r + 1 < rows) {
             try termWriteAll(term, metrics, "\r\n");
         }
@@ -200,6 +241,7 @@ fn diffAndFlush(
     metrics: *DrawMetrics,
     cur_style: *style.PackedStyle,
     mode: color.ColorMode,
+    caps: termcaps.Caps,
     prev: *const Frame,
     next: *const Frame,
 ) !void {
@@ -250,13 +292,21 @@ fn diffAndFlush(
             const erase_col = next_max + 1;
             try emitCursorMove(term, metrics, r + 1, erase_col);
             try applyStyle(term, metrics, cur_style, mode, .{});
-            try termWriteAll(term, metrics, "\x1b[K");
+            if (caps.erase_eol) {
+                try termWriteAll(term, metrics, "\x1b[K");
+            } else {
+                var i: usize = 0;
+                while (i < (prev_max - next_max)) : (i += 1) {
+                    try termWriteAll(term, metrics, " ");
+                }
+            }
             metrics.changed_cells += prev_max - next_max;
         }
     }
 }
 
-fn applyCursor(term: anytype, metrics: *DrawMetrics, cursor: ?CursorPos) !void {
+fn applyCursor(term: anytype, metrics: *DrawMetrics, caps: termcaps.Caps, cursor: ?CursorPos) !void {
+    if (!caps.cursor_visibility) return;
     if (cursor) |c| {
         try termWriteAll(term, metrics, "\x1b[?25h");
         try emitCursorMove(term, metrics, c.row, c.col);

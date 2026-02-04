@@ -184,14 +184,17 @@ pub fn rgbToXterm256(c: Rgb) u8 {
     return if (gray_dist < cube_dist) gray_index else cube_index;
 }
 
-fn getenv(name: []const u8) ?[]const u8 {
-    // std.posix.getenv is available on Unix platforms. This project is Unix-only for now.
-    const v = std.posix.getenv(name) orelse return null;
-    return std.mem.sliceTo(v, 0);
+fn getenvOwned(name: []const u8) ?[]u8 {
+    return std.process.getEnvVarOwned(std.heap.page_allocator, name) catch |e| switch (e) {
+        error.EnvironmentVariableNotFound => null,
+        else => null,
+    };
 }
 
 fn envBoolPresent(name: []const u8) bool {
-    return getenv(name) != null;
+    const v = getenvOwned(name) orelse return false;
+    std.heap.page_allocator.free(v);
+    return true;
 }
 
 fn containsInsensitive(haystack: []const u8, needle: []const u8) bool {
@@ -220,15 +223,18 @@ fn parseModeOverride(s: []const u8) ?ColorMode {
 pub fn detectColorMode() ColorMode {
     if (envBoolPresent("NO_COLOR")) return .mono;
 
-    if (getenv("TUI_COLOR_MODE")) |v| {
+    if (getenvOwned("TUI_COLOR_MODE")) |v| {
+        defer std.heap.page_allocator.free(v);
         if (parseModeOverride(v)) |m| return m;
     }
 
-    if (getenv("COLORTERM")) |v| {
+    if (getenvOwned("COLORTERM")) |v| {
+        defer std.heap.page_allocator.free(v);
         if (containsInsensitive(v, "truecolor") or containsInsensitive(v, "24bit")) return .truecolor;
     }
 
-    if (getenv("TERM")) |v| {
+    if (getenvOwned("TERM")) |v| {
+        defer std.heap.page_allocator.free(v);
         if (containsInsensitive(v, "256color")) return .ansi256;
     }
 

@@ -4,6 +4,7 @@ const style = @import("../style.zig");
 pub const Msg = union(enum) {
     patch: PatchMsg,
     event: EventMsg,
+    clipboard: ClipboardMsg,
 };
 
 pub const PatchMsg = union(enum) {
@@ -26,6 +27,40 @@ pub const EventMsg = union(enum) {
     resize: struct { rows: usize, cols: usize },
     hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null },
     pointer: PointerEvent,
+    clipboard: ClipboardEvent,
+    paste: PasteEvent,
+};
+
+pub const ClipboardOp = enum {
+    write,
+    read,
+};
+
+pub const ClipboardTarget = enum {
+    clipboard,
+};
+
+pub const ClipboardMsg = union(enum) {
+    write: struct { data: []const u8, target: ClipboardTarget = .clipboard },
+    read: struct { request_id: u32, target: ClipboardTarget = .clipboard },
+};
+
+pub const ClipboardEvent = struct {
+    op: ClipboardOp,
+    ok: bool,
+    request_id: u32 = 0,
+    data: ?[]const u8 = null,
+    reason: ?[]const u8 = null,
+};
+
+pub const PasteSource = enum {
+    bracketed,
+    clipboard,
+};
+
+pub const PasteEvent = struct {
+    source: PasteSource,
+    bytes: usize,
 };
 
 pub const ValidationState = enum {
@@ -356,4 +391,7 @@ pub const ParseMsgError = error{
     UnknownVerticalAlign,
     UnknownPointerKind,
     UnknownPointerButton,
+    UnknownClipboardOp,
+    UnknownClipboardTarget,
+    UnknownPasteSource,
 } || std.mem.Allocator.Error;

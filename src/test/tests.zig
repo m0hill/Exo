@@ -17,6 +17,8 @@ const markdown = tui.markdown;
 const hover = tui.hover;
 const keys = tui.keys;
 const kd = tui.key_decode;
+const termcaps = tui.termcaps;
+const clipboard = tui.clipboard;
 const runtime_ui = @import("runtime_ui");
 const pointer = runtime_ui.pointer;
 
@@ -2432,4 +2434,146 @@ test "key_decode: UTF-8 text emits a single Key.text" {
     };
     try std.testing.expectEqualStrings(han, s);
     try std.testing.expectEqual(@as(u8, 0), ev.mods.toMask());
+}
+
+test "protocol: write+parse clipboard messages and events" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeClipboardWriteJsonl(buf.writer(std.testing.allocator), "hello", .clipboard);
+    const line_write = buf.items[0 .. buf.items.len - 1];
+    const msg_write = try protocol.parseMsgLeaky(arena.allocator(), line_write);
+    switch (msg_write) {
+        .clipboard => |c| switch (c) {
+            .write => |w| try std.testing.expectEqualStrings("hello", w.data),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    buf.clearRetainingCapacity();
+    try protocol.writeClipboardReadJsonl(buf.writer(std.testing.allocator), 7, .clipboard);
+    const line_read = buf.items[0 .. buf.items.len - 1];
+    const msg_read = try protocol.parseMsgLeaky(arena.allocator(), line_read);
+    switch (msg_read) {
+        .clipboard => |c| switch (c) {
+            .read => |r| try std.testing.expectEqual(@as(u32, 7), r.request_id),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    buf.clearRetainingCapacity();
+    try protocol.writeClipboardEventJsonl(buf.writer(std.testing.allocator), .read, true, 7, "data", null);
+    const line_ev = buf.items[0 .. buf.items.len - 1];
+    const msg_ev = try protocol.parseMsgLeaky(arena.allocator(), line_ev);
+    const ev = switch (msg_ev) {
+        .event => |e| e,
+        else => return error.TestUnexpectedResult,
+    };
+    switch (ev) {
+        .clipboard => |ce| {
+            try std.testing.expectEqual(protocol.ClipboardOp.read, ce.op);
+            try std.testing.expect(ce.ok);
+            try std.testing.expectEqual(@as(u32, 7), ce.request_id);
+            try std.testing.expectEqualStrings("data", ce.data orelse return error.TestUnexpectedResult);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    buf.clearRetainingCapacity();
+    try protocol.writePasteEventJsonl(buf.writer(std.testing.allocator), .clipboard, 123);
+    const line_paste = buf.items[0 .. buf.items.len - 1];
+    const msg_paste = try protocol.parseMsgLeaky(arena.allocator(), line_paste);
+    const ev2 = switch (msg_paste) {
+        .event => |e| e,
+        else => return error.TestUnexpectedResult,
+    };
+    switch (ev2) {
+        .paste => |p| {
+            try std.testing.expectEqual(protocol.PasteSource.clipboard, p.source);
+            try std.testing.expectEqual(@as(usize, 123), p.bytes);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "clipboard: OSC 52 encoding and wrappers" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 10, .cols = 10 });
+    defer term.deinit();
+
+    const payload = "hello";
+    const want_b64 = "aGVsbG8=";
+
+    var caps: termcaps.Caps = .{};
+    caps.ansi = true;
+    caps.osc52 = true;
+
+    term.reset();
+    try clipboard.writeOsc52(&term, std.testing.allocator, caps, .{ .max_osc52_bytes = 1024 }, payload);
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b]52;c;") != null);
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, want_b64) != null);
+
+    caps.tmux = true;
+    caps.screen = false;
+    term.reset();
+    try clipboard.writeOsc52(&term, std.testing.allocator, caps, .{ .max_osc52_bytes = 1024 }, payload);
+    try std.testing.expect(std.mem.startsWith(u8, term.out.items, "\x1bPtmux;\x1b"));
+    try std.testing.expect(std.mem.endsWith(u8, term.out.items, "\x1b\\"));
+
+    caps.tmux = false;
+    caps.screen = true;
+    term.reset();
+    try clipboard.writeOsc52(&term, std.testing.allocator, caps, .{ .max_osc52_bytes = 1024 }, payload);
+    try std.testing.expect(std.mem.startsWith(u8, term.out.items, "\x1bP\x1b"));
+    try std.testing.expect(std.mem.endsWith(u8, term.out.items, "\x1b\\"));
+}
+
+test "termcaps: dumb profile disables ANSI and forces mono" {
+    var env = std.StringHashMap([]const u8).init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("TERM", "dumb");
+
+    const caps = termcaps.detectCapsFromMap(&env, false, .truecolor);
+    try std.testing.expect(!caps.ansi);
+    try std.testing.expect(!caps.cursor_address);
+    try std.testing.expectEqual(termcaps.ColorMode.mono, caps.color);
+}
+
+test "termcaps: disable list can force features off" {
+    var env = std.StringHashMap([]const u8).init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("TERM", "xterm-256color");
+    try env.put("TUI_CAPS_DISABLE", "mouse,osc52,altscreen");
+
+    const caps = termcaps.detectCapsFromMap(&env, false, .ansi256);
+    try std.testing.expect(!caps.mouse_sgr);
+    try std.testing.expect(!caps.osc52);
+    try std.testing.expect(!caps.alt_screen);
+}
+
+test "renderer: dumb paint emits no escape bytes" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 3, .cols = 10 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.initWithMode(std.testing.allocator, .ansi16);
+    defer renderer.deinit();
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "t", .text = "Hello" } },
+    };
+    const root = protocol.Node{ .vbox = .{
+        .id = "root",
+        .children = children[0..],
+    } };
+
+    var caps: termcaps.Caps = .{};
+    caps.ansi = false;
+    caps.cursor_address = false;
+
+    try renderer.drawWithCaps(&term, caps, root, .{});
+    try std.testing.expect(std.mem.indexOfScalar(u8, term.out.items, 0x1b) == null);
 }

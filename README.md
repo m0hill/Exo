@@ -22,7 +22,7 @@ zig build demo        # Run the interactive demo
 zig build test        # Run all unit tests
 ```
 
-Tip: when running interactively, logs go to `/tmp/tui_trace.log` to avoid corrupting the TUI (set `TUI_LOG_STDERR=1` or use `2>trace.log` if you prefer stderr). If terminal is broken, run `reset`. Emergency exit chord: `Ctrl-G` then `Ctrl-G` (restores terminal and exits immediately).
+Tip: when running interactively, logs go to `/tmp/tui_trace.log` by default (override with `TUI_LOG_PATH=...`, or use `TUI_LOG_STDERR=1` / `2>trace.log` to log to stderr). If terminal is broken, run `reset`. Emergency exit chord: `Ctrl-G` then `Ctrl-G` (restores terminal and exits immediately).
 
 ## Automated tests
 
@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.13)
+## Protocol (v0.14)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -85,6 +85,43 @@ Notes:
 
 - ESC ambiguity is resolved via a short timeout (~25ms by default): a lone ESC becomes `Escape`, but `ESC <byte>` becomes `Alt+<byte>`.
 - Runtime enables bracketed paste (`\x1b[?2004h`) and treats paste bodies as literal bytes (no key parsing inside paste).
+- Runtime ignores terminal Device Attributes queries/responses (`ESC[c`, `ESC[?…c`, `ESC[>…c`) so capability negotiation does not surface as input.
+
+### Clipboard (backend → runtime)
+
+Clipboard write:
+
+```json
+{"type":"clipboard","op":"write","data":"copied text","target":"clipboard"}
+```
+
+Clipboard read:
+
+```json
+{"type":"clipboard","op":"read","request_id":1,"target":"clipboard"}
+```
+
+### Clipboard result (runtime → backend)
+
+Write ack:
+
+```json
+{"type":"event","name":"clipboard","op":"write","ok":true}
+```
+
+Read result:
+
+```json
+{"type":"event","name":"clipboard","op":"read","ok":true,"request_id":1,"data":"pasted text"}
+```
+
+On failure, `ok:false` and `reason` is set (e.g. `"unsupported"`, `"too_large"`, `"system_failure"`).
+
+### Paste semantic (runtime → backend)
+
+```json
+{"type":"event","name":"paste","source":"bracketed|clipboard","bytes":123}
+```
 
 Focus changed:
 
@@ -192,6 +229,11 @@ Runtime selects a color mode automatically (and degrades gracefully). You can fo
 
 - `NO_COLOR=1` (disable colors)
 - `TUI_COLOR_MODE=truecolor|256|16|mono`
+
+Terminal capability negotiation is profile-based and can be overridden via:
+
+- `TUI_TERM_PROFILE=dumb|xterm|screen|tmux|alacritty|kitty|wezterm|vscode|iterm2|windows-terminal`
+- `TUI_CAPS_DISABLE=mouse,osc52,altscreen,bracketed_paste,...` (comma-separated)
 
 ### Layout hints (optional)
 

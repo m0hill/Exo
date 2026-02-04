@@ -131,7 +131,7 @@ fn popupsInfo(
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true }){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -297,23 +297,124 @@ pub fn main() !void {
     }
     try out.flush();
 
-    var stdin_buf: [4096]u8 = undefined;
-    var stdin_r = std.fs.File.stdin().readerStreaming(&stdin_buf);
-    var lr = jsonl.LineReader.init(allocator, &stdin_r.interface, 1024 * 1024);
-    defer lr.deinit();
+    const InEv = union(enum) {
+        line: []u8,
+        eof,
+    };
+
+    const InQueue = struct {
+        allocator: std.mem.Allocator,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+        buf: []InEv,
+        head: usize = 0,
+        len: usize = 0,
+        closed: bool = false,
+
+        fn init(alloc: std.mem.Allocator, cap: usize) !@This() {
+            return .{ .allocator = alloc, .buf = try alloc.alloc(InEv, cap) };
+        }
+
+        fn deinit(self: *@This()) void {
+            self.allocator.free(self.buf);
+            self.buf = &.{};
+        }
+
+        fn close(self: *@This()) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.closed = true;
+            self.cond.broadcast();
+        }
+
+        fn push(self: *@This(), ev: InEv) bool {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            if (self.closed) return false;
+            if (self.len == self.buf.len) return false; // drop on overflow
+            const idx = (self.head + self.len) % self.buf.len;
+            self.buf[idx] = ev;
+            self.len += 1;
+            self.cond.signal();
+            return true;
+        }
+
+        fn popTimeout(self: *@This(), timeout_ms: i32) ?InEv {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            if (timeout_ms < 0) {
+                while (self.len == 0 and !self.closed) self.cond.wait(&self.mutex);
+            } else {
+                var t = std.time.Timer.start() catch null;
+                while (self.len == 0 and !self.closed) {
+                    if (t) |*timer| {
+                        const elapsed_ms: u64 = timer.read() / std.time.ns_per_ms;
+                        if (elapsed_ms >= @as(u64, @intCast(timeout_ms))) break;
+                        const remain_ms: u64 = @as(u64, @intCast(timeout_ms)) - elapsed_ms;
+                        self.cond.timedWait(&self.mutex, remain_ms * std.time.ns_per_ms) catch break;
+                    } else {
+                        self.cond.timedWait(&self.mutex, @as(u64, @intCast(timeout_ms)) * std.time.ns_per_ms) catch break;
+                        break;
+                    }
+                }
+            }
+
+            if (self.len == 0) return null;
+            const ev = self.buf[self.head];
+            self.head = (self.head + 1) % self.buf.len;
+            self.len -= 1;
+            return ev;
+        }
+    };
+
+    var inq = try InQueue.init(allocator, 256);
+    defer inq.close();
+    defer inq.deinit();
+
+    const InThread = struct {
+        allocator: std.mem.Allocator,
+        inq: *InQueue,
+
+        fn main(self: *@This()) void {
+            var stdin_buf: [4096]u8 = undefined;
+            var stdin_r = std.fs.File.stdin().readerStreaming(&stdin_buf);
+            var lr = jsonl.LineReader.init(self.allocator, &stdin_r.interface, 1024 * 1024);
+            defer lr.deinit();
+
+            while (true) {
+                const n = lr.readMore() catch |e| {
+                    if (e == error.LineTooLong) {
+                        std.debug.print("backend_demo: EVENT_ERR line_too_long\n", .{});
+                        continue;
+                    }
+                    _ = self.inq.push(.eof);
+                    return;
+                };
+                while (lr.nextLine()) |line| {
+                    const owned = self.allocator.dupe(u8, line) catch return;
+                    if (!self.inq.push(.{ .line = owned })) {
+                        self.allocator.free(owned);
+                    }
+                }
+                if (n == 0 and lr.eof) {
+                    _ = self.inq.push(.eof);
+                    return;
+                }
+            }
+        }
+    };
+
+    var in_thread_ctx: InThread = .{ .allocator = allocator, .inq = &inq };
+    var stdin_thread = try std.Thread.spawn(.{}, InThread.main, .{&in_thread_ctx});
+    stdin_thread.detach();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
-
     while (true) {
-        var fds = [_]std.posix.pollfd{
-            .{ .fd = stdin_fd, .events = std.posix.POLL.IN, .revents = 0 },
-        };
-
-        const rc = try std.posix.poll(fds[0..], cfg.tick_interval_ms);
-        if (rc == 0) {
+        const inev_opt = inq.popTimeout(cfg.tick_interval_ms);
+        if (inev_opt == null) {
             var tick_buf: [64]u8 = undefined;
             var tick_text: []const u8 = "";
             {
@@ -504,38 +605,67 @@ pub fn main() !void {
             continue;
         }
 
-        if ((fds[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL)) != 0) {
-            return;
-        }
+        const inev = inev_opt.?;
+        switch (inev) {
+            .eof => std.process.exit(0),
+            .line => |line| {
+                defer allocator.free(line);
+                _ = arena.reset(.retain_capacity);
+                const msg = protocol.parseMsgLeaky(arena.allocator(), line) catch |e| {
+                    std.debug.print("backend_demo: EVENT_ERR {s}\n", .{@errorName(e)});
+                    continue;
+                };
 
-        _ = lr.readMore() catch |e| {
-            if (e == error.LineTooLong) {
-                std.debug.print("backend_demo: EVENT_ERR line_too_long\n", .{});
-                continue;
-            }
-            return e;
-        };
+                switch (msg) {
+                    .event => |ev| switch (ev) {
+                        .key => |k| {
+                            if (k.seq) |s| {
+                                std.debug.print("EVENT_RX name=key key={s} mods={d} seq_len={d}\n", .{ k.key, k.mods, s.len });
+                            } else if (k.mods != 0) {
+                                std.debug.print("EVENT_RX name=key key={s} mods={d}\n", .{ k.key, k.mods });
+                            } else {
+                                std.debug.print("EVENT_RX name=key key={s}\n", .{k.key});
+                            }
 
-        while (lr.nextLine()) |line| {
-            _ = arena.reset(.retain_capacity);
-            const msg = protocol.parseMsgLeaky(arena.allocator(), line) catch |e| {
-                std.debug.print("backend_demo: EVENT_ERR {s}\n", .{@errorName(e)});
-                continue;
-            };
-
-            switch (msg) {
-                .event => |ev| switch (ev) {
-                    .key => |k| {
-                        if (k.seq) |s| {
-                            std.debug.print("EVENT_RX name=key key={s} mods={d} seq_len={d}\n", .{ k.key, k.mods, s.len });
-                        } else if (k.mods != 0) {
-                            std.debug.print("EVENT_RX name=key key={s} mods={d}\n", .{ k.key, k.mods });
-                        } else {
-                            std.debug.print("EVENT_RX name=key key={s}\n", .{k.key});
-                        }
-
-                        if (std.mem.eql(u8, k.key, "q") and k.mods == 0) {
-                            state_on = !state_on;
+                            if (std.mem.eql(u8, k.key, "q") and k.mods == 0) {
+                                state_on = !state_on;
+                                const status_text = try state.buildStatusText(
+                                    allocator,
+                                    &status_buf,
+                                    state_on,
+                                    inputs[0..],
+                                    lists[0..],
+                                    focus_id.items,
+                                    term_rows,
+                                    term_cols,
+                                    if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                    popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                    if (pointer_have) .{
+                                        .kind = pointer_kind,
+                                        .id = pointer_id.items,
+                                        .item = pointer_item.items,
+                                        .x = pointer_x,
+                                        .y = pointer_y,
+                                        .buttons = pointer_buttons,
+                                        .mods = pointer_mods,
+                                        .clicks = pointer_clicks,
+                                        .captured = pointer_captured,
+                                    } else null,
+                                );
+                                std.debug.print("PATCH_TX target=status\n", .{});
+                                try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                                try out.flush();
+                            } else if ((std.mem.eql(u8, k.key, "x") and k.mods == 0) or
+                                std.mem.eql(u8, k.key, "ctrl-c") or
+                                (std.mem.eql(u8, k.key, "c") and (k.mods & 2) != 0))
+                            {
+                                std.process.exit(0);
+                            }
+                        },
+                        .focus => |f| {
+                            std.debug.print("EVENT_RX name=focus id={s}\n", .{f.id});
+                            focus_id.clearRetainingCapacity();
+                            if (f.id.len > 0) try focus_id.appendSlice(allocator, f.id);
                             const status_text = try state.buildStatusText(
                                 allocator,
                                 &status_buf,
@@ -562,369 +692,31 @@ pub fn main() !void {
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
-                        } else if ((std.mem.eql(u8, k.key, "x") and k.mods == 0) or
-                            std.mem.eql(u8, k.key, "ctrl-c") or
-                            (std.mem.eql(u8, k.key, "c") and (k.mods & 2) != 0))
-                        {
-                            return;
-                        }
-                    },
-                    .focus => |f| {
-                        std.debug.print("EVENT_RX name=focus id={s}\n", .{f.id});
-                        focus_id.clearRetainingCapacity();
-                        if (f.id.len > 0) try focus_id.appendSlice(allocator, f.id);
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                            if (pointer_have) .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            } else null,
-                        );
-                        std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
-                        try out.flush();
-                    },
-                    .input => |inp| {
-                        std.debug.print(
-                            "EVENT_RX name=input id={s} len={d} cursor={d}\n",
-                            .{ inp.id, inp.value.len, inp.cursor },
-                        );
-                        if (state.findInputSlot(inputs[0..], inp.id)) |slot| {
-                            slot.last.clearRetainingCapacity();
-                            slot.last_len = inp.value.len;
-                            const cap: usize = if (std.mem.eql(u8, inp.id, MD_PROMPT_ID)) 32 * 1024 else 256;
-                            const n = @min(inp.value.len, cap);
-
-                            // Keep status output single-line and bounded.
-                            if (!std.mem.eql(u8, inp.id, MD_PROMPT_ID)) {
-                                var i: usize = 0;
-                                while (i < n) : (i += 1) {
-                                    const b = inp.value[i];
-                                    const out_b: u8 = if (b < 0x20 or b == 0x7f) ' ' else b;
-                                    try slot.last.append(allocator, out_b);
-                                }
-                            } else {
-                                try slot.last.appendSlice(allocator, inp.value[0..n]);
-                            }
-                        }
-
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                            if (pointer_have) .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            } else null,
-                        );
-                        std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
-                        try out.flush();
-                    },
-                    .select => |s| {
-                        std.debug.print("EVENT_RX name=select id={s} item={s}\n", .{ s.id, s.item });
-                        if (state.findListSlot(lists[0..], s.id)) |slot| {
-                            slot.selected.clearRetainingCapacity();
-                            if (s.item.len > 0) try slot.selected.appendSlice(allocator, s.item);
-                        }
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                            if (pointer_have) .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            } else null,
-                        );
-                        std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
-                        try out.flush();
-                    },
-                    .scroll => |s| {
-                        std.debug.print("EVENT_RX name=scroll id={s} scroll_y={d}\n", .{ s.id, s.scroll_y });
-                        scroll_id.clearRetainingCapacity();
-                        if (s.id.len > 0) try scroll_id.appendSlice(allocator, s.id);
-                        scroll_y = s.scroll_y;
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                            if (pointer_have) .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            } else null,
-                        );
-                        std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
-                        try out.flush();
-                    },
-                    .pointer => |p| {
-                        if (p.kind != .move and p.kind != .drag) {
+                        },
+                        .input => |inp| {
                             std.debug.print(
-                                "EVENT_RX name=pointer kind={s} id={s} item={s} x={d} y={d} buttons={d} mods={d} clicks={d} captured={s}\n",
-                                .{
-                                    switch (p.kind) {
-                                        .down => "down",
-                                        .up => "up",
-                                        .move => "move",
-                                        .drag => "drag",
-                                        .scroll => "scroll",
-                                    },
-                                    p.id,
-                                    p.item orelse "",
-                                    p.x,
-                                    p.y,
-                                    p.buttons,
-                                    p.mods,
-                                    p.clicks,
-                                    if (p.captured) "true" else "false",
-                                },
+                                "EVENT_RX name=input id={s} len={d} cursor={d}\n",
+                                .{ inp.id, inp.value.len, inp.cursor },
                             );
-                        }
+                            if (state.findInputSlot(inputs[0..], inp.id)) |slot| {
+                                slot.last.clearRetainingCapacity();
+                                slot.last_len = inp.value.len;
+                                const cap: usize = if (std.mem.eql(u8, inp.id, MD_PROMPT_ID)) 32 * 1024 else 256;
+                                const n = @min(inp.value.len, cap);
 
-                        pointer_have = true;
-                        pointer_kind = p.kind;
-                        pointer_x = p.x;
-                        pointer_y = p.y;
-                        pointer_buttons = p.buttons;
-                        pointer_mods = p.mods;
-                        pointer_clicks = p.clicks;
-                        pointer_captured = p.captured;
-                        pointer_id.clearRetainingCapacity();
-                        if (p.id.len > 0) try pointer_id.appendSlice(allocator, p.id);
-                        pointer_item.clearRetainingCapacity();
-                        if (p.item) |it| {
-                            if (it.len > 0) try pointer_item.appendSlice(allocator, it);
-                        }
-
-                        const now_i = std.time.nanoTimestamp();
-                        const now_ns: u64 = if (now_i > 0) @as(u64, @intCast(now_i)) else 0;
-                        const debounce_ns: u64 = 50 * std.time.ns_per_ms;
-                        const should_patch =
-                            (p.kind != .move and p.kind != .drag) or pointer_last_patch_ns == 0 or
-                            now_ns > pointer_last_patch_ns + debounce_ns;
-                        if (!should_patch) continue;
-                        pointer_last_patch_ns = now_ns;
-
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                            .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            },
-                        );
-                        std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
-                        try out.flush();
-                    },
-                    .hover => |h| {
-                        std.debug.print(
-                            "EVENT_RX name=hover id={s} x={d} y={d} item={s}\n",
-                            .{ h.id, h.x, h.y, h.item orelse "" },
-                        );
-
-                        hover_id.clearRetainingCapacity();
-                        hover_item.clearRetainingCapacity();
-                        if (h.id.len > 0) {
-                            try hover_id.appendSlice(allocator, h.id);
-                            if (h.item) |it| {
-                                if (it.len > 0) try hover_item.appendSlice(allocator, it);
-                            }
-                        }
-
-                        if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=root mode=morph reason=hover\n", .{});
-                        const layout_alt = false;
-
-                        var tick_buf: [64]u8 = undefined;
-                        const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(
-                                popup_modal_open,
-                                popup_dropdown_open,
-                                popup_tooltip_on,
-                                focus_id.items,
-                                hover_id.items,
-                                hover_item.items,
-                            ),
-                            if (pointer_have) .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            } else null,
-                        );
-
-                        _ = arena_tx.reset(.retain_capacity);
-                        const md_stream_node = switch (md_mode) {
-                            .tracer18 => try markdown.compileLeaky(
-                                arena_tx.allocator(),
-                                md_buf.items,
-                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                            ),
-                            .tracer19a => if (md_blocks) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
-                                arena_tx.allocator(),
-                                "",
-                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                            ),
-                            .tracer19b => if (md_inline) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
-                                arena_tx.allocator(),
-                                "",
-                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                            ),
-                        };
-
-                        var title_buf: [128]u8 = undefined;
-                        var hint_buf: [512]u8 = undefined;
-                        var faster_buf: [96]u8 = undefined;
-                        var slower_buf: [96]u8 = undefined;
-                        var chunk_smaller_buf: [96]u8 = undefined;
-                        var chunk_larger_buf: [96]u8 = undefined;
-                        const md_title = try mdStreamTitle(&title_buf, md_mode);
-                        const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
-                        const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
-                        const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
-                        const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
-                        const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
-
-                        try render.emitRootMorphPatch(
-                            arena_tx.allocator(),
-                            out,
-                            tick_text,
-                            status_text,
-                            md_stream_node,
-                            md_title,
-                            md_hint,
-                            md_faster,
-                            md_slower,
-                            md_chunk_smaller,
-                            md_chunk_larger,
-                            inputs[0..],
-                            lists[0..],
-                            layout_alt,
-                            list_height,
-                            popupsInfo(
-                                popup_modal_open,
-                                popup_dropdown_open,
-                                popup_tooltip_on,
-                                focus_id.items,
-                                hover_id.items,
-                                hover_item.items,
-                            ),
-                            widgets,
-                            tick,
-                        );
-                        try out.flush();
-                    },
-                    .activate => |a| {
-                        std.debug.print("EVENT_RX name=activate id={s} item={s}\n", .{ a.id, a.item });
-                        var widgets_changed: bool = false;
-                        if (std.mem.eql(u8, a.id, POPUPS_ID) or std.mem.eql(u8, a.id, MODAL_ACTIONS_ID) or std.mem.eql(u8, a.id, DROPDOWN_ID)) {
-                            if (std.mem.eql(u8, a.id, POPUPS_ID)) {
-                                if (std.mem.eql(u8, a.item, POPUP_OPEN_MODAL)) {
-                                    popup_modal_open = true;
-                                    popup_dropdown_open = false;
-                                } else if (std.mem.eql(u8, a.item, POPUP_OPEN_DROPDOWN)) {
-                                    popup_dropdown_open = !popup_dropdown_open;
-                                    if (popup_dropdown_open) popup_modal_open = false;
-                                } else if (std.mem.eql(u8, a.item, POPUP_TOGGLE_TOOLTIP)) {
-                                    popup_tooltip_on = !popup_tooltip_on;
+                                // Keep status output single-line and bounded.
+                                if (!std.mem.eql(u8, inp.id, MD_PROMPT_ID)) {
+                                    var i: usize = 0;
+                                    while (i < n) : (i += 1) {
+                                        const b = inp.value[i];
+                                        const out_b: u8 = if (b < 0x20 or b == 0x7f) ' ' else b;
+                                        try slot.last.append(allocator, out_b);
+                                    }
+                                } else {
+                                    try slot.last.appendSlice(allocator, inp.value[0..n]);
                                 }
-                            } else if (std.mem.eql(u8, a.id, MODAL_ACTIONS_ID) and std.mem.eql(u8, a.item, MODAL_CLOSE)) {
-                                popup_modal_open = false;
-                            } else if (std.mem.eql(u8, a.id, DROPDOWN_ID)) {
-                                popup_dropdown_open = false;
                             }
 
-                            var tick_buf: [64]u8 = undefined;
-                            const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
                             const status_text = try state.buildStatusText(
                                 allocator,
                                 &status_buf,
@@ -948,324 +740,201 @@ pub fn main() !void {
                                     .captured = pointer_captured,
                                 } else null,
                             );
-
-                            const layout_alt = false;
-                            _ = arena_tx.reset(.retain_capacity);
-                            const md_stream_node = switch (md_mode) {
-                                .tracer18 => try markdown.compileLeaky(
-                                    arena_tx.allocator(),
-                                    md_buf.items,
-                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                                ),
-                                .tracer19a => if (md_blocks) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
-                                    arena_tx.allocator(),
-                                    "",
-                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                                ),
-                                .tracer19b => if (md_inline) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
-                                    arena_tx.allocator(),
-                                    "",
-                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                                ),
-                            };
-
-                            var title_buf: [128]u8 = undefined;
-                            var hint_buf: [512]u8 = undefined;
-                            var faster_buf: [96]u8 = undefined;
-                            var slower_buf: [96]u8 = undefined;
-                            var chunk_smaller_buf: [96]u8 = undefined;
-                            var chunk_larger_buf: [96]u8 = undefined;
-                            const md_title = try mdStreamTitle(&title_buf, md_mode);
-                            const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
-                            const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
-                            const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
-                            const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
-                            const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
-
-                            try render.emitRootMorphPatch(
-                                arena_tx.allocator(),
-                                out,
-                                tick_text,
-                                status_text,
-                                md_stream_node,
-                                md_title,
-                                md_hint,
-                                md_faster,
-                                md_slower,
-                                md_chunk_smaller,
-                                md_chunk_larger,
-                                inputs[0..],
-                                lists[0..],
-                                layout_alt,
-                                list_height,
-                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                                widgets,
-                                tick,
-                            );
+                            std.debug.print("PATCH_TX target=status\n", .{});
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
-                            continue;
-                        }
-
-                        if (a.item.len == 0) {
-                            if (std.mem.eql(u8, a.id, W_BTN)) {
-                                widgets.button_clicks += 1;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.id, W_CHECKBOX)) {
-                                widgets.checkbox_checked = !widgets.checkbox_checked;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.id, W_TOGGLE)) {
-                                widgets.toggle_on = !widgets.toggle_on;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.id, W_TAB_ONE)) {
-                                widgets.active_tab = .one;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.id, W_TAB_TWO)) {
-                                widgets.active_tab = .two;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.id, W_TAB_THREE)) {
-                                widgets.active_tab = .three;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.id, W_MENU_FILE)) {
-                                if (widgets.menu_open and widgets.menu_anchor == .file) {
-                                    widgets.menu_open = false;
-                                } else {
-                                    widgets.menu_open = true;
-                                    widgets.menu_anchor = .file;
-                                }
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.id, W_MENU_HELP)) {
-                                if (widgets.menu_open and widgets.menu_anchor == .help) {
-                                    widgets.menu_open = false;
-                                } else {
-                                    widgets.menu_open = true;
-                                    widgets.menu_anchor = .help;
-                                }
-                                widgets_changed = true;
+                        },
+                        .select => |s| {
+                            std.debug.print("EVENT_RX name=select id={s} item={s}\n", .{ s.id, s.item });
+                            if (state.findListSlot(lists[0..], s.id)) |slot| {
+                                slot.selected.clearRetainingCapacity();
+                                if (s.item.len > 0) try slot.selected.appendSlice(allocator, s.item);
                             }
-                        } else if (std.mem.eql(u8, a.id, W_RADIO)) {
-                            if (std.mem.eql(u8, a.item, "w-radio-a")) {
-                                widgets.radio_choice = .alpha;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.item, "w-radio-b")) {
-                                widgets.radio_choice = .beta;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.item, "w-radio-c")) {
-                                widgets.radio_choice = .gamma;
-                                widgets_changed = true;
-                            }
-                        } else if (std.mem.eql(u8, a.id, W_MENU_LIST)) {
-                            widgets.menu_open = false;
-                            if (std.mem.eql(u8, a.item, W_MENU_NEW)) {
-                                widgets.last_menu_action = .new;
-                            } else if (std.mem.eql(u8, a.item, W_MENU_OPEN)) {
-                                widgets.last_menu_action = .open;
-                            } else if (std.mem.eql(u8, a.item, W_MENU_ABOUT)) {
-                                widgets.last_menu_action = .about;
-                            } else if (std.mem.eql(u8, a.item, W_MENU_QUIT)) {
-                                widgets.last_menu_action = .quit;
-                                return;
-                            } else if (std.mem.eql(u8, a.item, W_MENU_CLOSE)) {
-                                widgets.last_menu_action = .none;
-                            }
-                            widgets_changed = true;
-                        } else if (std.mem.eql(u8, a.id, W_TREE)) {
-                            if (std.mem.eql(u8, a.item, W_TREE_ROOT)) {
-                                widgets.tree_root_expanded = !widgets.tree_root_expanded;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.item, W_TREE_SRC)) {
-                                widgets.tree_src_expanded = !widgets.tree_src_expanded;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.item, W_TREE_LIB)) {
-                                widgets.tree_lib_expanded = !widgets.tree_lib_expanded;
-                                widgets_changed = true;
-                            } else if (std.mem.eql(u8, a.item, W_TREE_TESTS)) {
-                                widgets.tree_tests_expanded = !widgets.tree_tests_expanded;
-                                widgets_changed = true;
-                            }
-                        }
-
-                        if (std.mem.eql(u8, a.id, MD_ACTIONS_ID)) {
-                            if (std.mem.eql(u8, a.item, MD_ACTION_START)) {
-                                md_buf.clearRetainingCapacity();
-                                md_source.clearRetainingCapacity();
-                                md_cursor = 0;
-                                md_active = true;
-                                md_paused = false;
-                                if (md_blocks) |*s| s.deinit();
-                                md_blocks = null;
-                                if (md_inline) |*s| s.deinit();
-                                md_inline = null;
-
-                                const prompt = if (state.findInputSlot(inputs[0..], MD_PROMPT_ID)) |slot|
-                                    slot.last.items
-                                else
-                                    "";
-                                if (prompt.len > 0) {
-                                    try md_source.appendSlice(allocator, prompt);
-                                } else {
-                                    try md_source.appendSlice(allocator, md_default);
-                                }
-
-                                const next = @min(md_source.items.len, md_cursor + md_chunk_len);
-                                if (next > md_cursor) {
-                                    const chunk = md_source.items[md_cursor..next];
-                                    md_cursor = next;
-
-                                    switch (md_mode) {
-                                        .tracer18 => {
-                                            try md_buf.appendSlice(allocator, chunk);
-                                            _ = arena_tx.reset(.retain_capacity);
-                                            try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                            const status_text = try state.buildStatusText(
+                                allocator,
+                                &status_buf,
+                                state_on,
+                                inputs[0..],
+                                lists[0..],
+                                focus_id.items,
+                                term_rows,
+                                term_cols,
+                                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                if (pointer_have) .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                } else null,
+                            );
+                            std.debug.print("PATCH_TX target=status\n", .{});
+                            try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                            try out.flush();
+                        },
+                        .scroll => |s| {
+                            std.debug.print("EVENT_RX name=scroll id={s} scroll_y={d}\n", .{ s.id, s.scroll_y });
+                            scroll_id.clearRetainingCapacity();
+                            if (s.id.len > 0) try scroll_id.appendSlice(allocator, s.id);
+                            scroll_y = s.scroll_y;
+                            const status_text = try state.buildStatusText(
+                                allocator,
+                                &status_buf,
+                                state_on,
+                                inputs[0..],
+                                lists[0..],
+                                focus_id.items,
+                                term_rows,
+                                term_cols,
+                                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                if (pointer_have) .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                } else null,
+                            );
+                            std.debug.print("PATCH_TX target=status\n", .{});
+                            try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                            try out.flush();
+                        },
+                        .pointer => |p| {
+                            if (p.kind != .move and p.kind != .drag) {
+                                std.debug.print(
+                                    "EVENT_RX name=pointer kind={s} id={s} item={s} x={d} y={d} buttons={d} mods={d} clicks={d} captured={s}\n",
+                                    .{
+                                        switch (p.kind) {
+                                            .down => "down",
+                                            .up => "up",
+                                            .move => "move",
+                                            .drag => "drag",
+                                            .scroll => "scroll",
                                         },
-                                        .tracer19a => {
-                                            md_blocks = tui.markdown.StreamBlocks.init(
-                                                allocator,
-                                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                                                .{},
-                                                .plain,
-                                            );
-                                            _ = try md_blocks.?.push(chunk);
-                                            _ = arena_tx.reset(.retain_capacity);
-                                            const node = try md_blocks.?.snapshotLeaky(arena_tx.allocator());
-                                            try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
-                                        },
-                                        .tracer19b => {
-                                            md_inline = tui.markdown.StreamInline.init(
-                                                allocator,
-                                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
-                                                .{},
-                                            );
-                                            _ = try md_inline.?.push(chunk);
-                                            _ = arena_tx.reset(.retain_capacity);
-                                            const node = try md_inline.?.snapshotLeaky(arena_tx.allocator());
-                                            try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
-                                        },
-                                    }
-                                }
-                                try out.flush();
-                                continue;
-                            } else if (std.mem.eql(u8, a.item, MD_ACTION_PAUSE)) {
-                                if (md_active or md_cursor < md_source.items.len) md_paused = !md_paused;
-                                continue;
-                            } else if (std.mem.eql(u8, a.item, MD_ACTION_RESET)) {
-                                md_buf.clearRetainingCapacity();
-                                md_source.clearRetainingCapacity();
-                                md_cursor = 0;
-                                md_active = false;
-                                md_paused = false;
-                                if (md_blocks) |*s| s.deinit();
-                                md_blocks = null;
-                                if (md_inline) |*s| s.deinit();
-                                md_inline = null;
-                                _ = arena_tx.reset(.retain_capacity);
-                                const empty = try markdown.compileLeaky(
-                                    arena_tx.allocator(),
-                                    "",
-                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                        p.id,
+                                        p.item orelse "",
+                                        p.x,
+                                        p.y,
+                                        p.buttons,
+                                        p.mods,
+                                        p.clicks,
+                                        if (p.captured) "true" else "false",
+                                    },
                                 );
-                                try render.emitNodeMorphPatch(out, MD_STREAM_ID, empty);
-                                try out.flush();
-                                continue;
-                            }
-                        } else if (std.mem.eql(u8, a.id, MD_MODE_ID)) {
-                            if (std.mem.eql(u8, a.item, MD_MODE_18)) {
-                                md_mode = .tracer18;
-                            } else if (std.mem.eql(u8, a.item, MD_MODE_19A)) {
-                                md_mode = .tracer19a;
-                            } else if (std.mem.eql(u8, a.item, MD_MODE_19B)) {
-                                md_mode = .tracer19b;
                             }
 
-                            md_buf.clearRetainingCapacity();
-                            md_source.clearRetainingCapacity();
-                            md_cursor = 0;
-                            md_active = false;
-                            md_paused = false;
-                            if (md_blocks) |*s| s.deinit();
-                            md_blocks = null;
-                            if (md_inline) |*s| s.deinit();
-                            md_inline = null;
+                            pointer_have = true;
+                            pointer_kind = p.kind;
+                            pointer_x = p.x;
+                            pointer_y = p.y;
+                            pointer_buttons = p.buttons;
+                            pointer_mods = p.mods;
+                            pointer_clicks = p.clicks;
+                            pointer_captured = p.captured;
+                            pointer_id.clearRetainingCapacity();
+                            if (p.id.len > 0) try pointer_id.appendSlice(allocator, p.id);
+                            pointer_item.clearRetainingCapacity();
+                            if (p.item) |it| {
+                                if (it.len > 0) try pointer_item.appendSlice(allocator, it);
+                            }
 
-                            _ = arena_tx.reset(.retain_capacity);
-                            const empty = try markdown.compileLeaky(
-                                arena_tx.allocator(),
-                                "",
-                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                            const now_i = std.time.nanoTimestamp();
+                            const now_ns: u64 = if (now_i > 0) @as(u64, @intCast(now_i)) else 0;
+                            const debounce_ns: u64 = 50 * std.time.ns_per_ms;
+                            const should_patch =
+                                (p.kind != .move and p.kind != .drag) or pointer_last_patch_ns == 0 or
+                                now_ns > pointer_last_patch_ns + debounce_ns;
+                            if (!should_patch) continue;
+                            pointer_last_patch_ns = now_ns;
+
+                            const status_text = try state.buildStatusText(
+                                allocator,
+                                &status_buf,
+                                state_on,
+                                inputs[0..],
+                                lists[0..],
+                                focus_id.items,
+                                term_rows,
+                                term_cols,
+                                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                },
                             );
-                            try render.emitNodeMorphPatch(out, MD_STREAM_ID, empty);
+                            std.debug.print("PATCH_TX target=status\n", .{});
+                            try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
-                            continue;
-                        } else if (std.mem.eql(u8, a.id, MD_SPEED_ID)) {
-                            if (std.mem.eql(u8, a.item, MD_SPEED_FASTER)) {
-                                md_tick_every = @max(@as(usize, 1), md_tick_every / 2);
-                            } else if (std.mem.eql(u8, a.item, MD_SPEED_SLOWER)) {
-                                md_tick_every = @min(@as(usize, 64), md_tick_every * 2);
-                            } else if (std.mem.eql(u8, a.item, MD_SPEED_CHUNK_SMALLER)) {
-                                md_chunk_len = @max(@as(usize, 1), md_chunk_len / 2);
-                            } else if (std.mem.eql(u8, a.item, MD_SPEED_CHUNK_LARGER)) {
-                                md_chunk_len = @min(@as(usize, 512), md_chunk_len * 2);
+                        },
+                        .hover => |h| {
+                            std.debug.print(
+                                "EVENT_RX name=hover id={s} x={d} y={d} item={s}\n",
+                                .{ h.id, h.x, h.y, h.item orelse "" },
+                            );
+
+                            hover_id.clearRetainingCapacity();
+                            hover_item.clearRetainingCapacity();
+                            if (h.id.len > 0) {
+                                try hover_id.appendSlice(allocator, h.id);
+                                if (h.item) |it| {
+                                    if (it.len > 0) try hover_item.appendSlice(allocator, it);
+                                }
                             }
 
-                            var faster_buf: [96]u8 = undefined;
-                            var slower_buf: [96]u8 = undefined;
-                            var chunk_smaller_buf: [96]u8 = undefined;
-                            var chunk_larger_buf: [96]u8 = undefined;
-                            try render.emitTextPatchById(
-                                out,
-                                MD_SPEED_FASTER,
-                                try mdSpeedFasterLabel(&faster_buf, md_tick_every),
-                            );
-                            try render.emitTextPatchById(
-                                out,
-                                MD_SPEED_SLOWER,
-                                try mdSpeedSlowerLabel(&slower_buf, md_tick_every),
-                            );
-                            try render.emitTextPatchById(
-                                out,
-                                MD_SPEED_CHUNK_SMALLER,
-                                try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len),
-                            );
-                            try render.emitTextPatchById(
-                                out,
-                                MD_SPEED_CHUNK_LARGER,
-                                try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len),
-                            );
-                            try out.flush();
-                            continue;
-                        }
-                        if (state.findListSlot(lists[0..], a.id)) |slot| {
-                            slot.activated.clearRetainingCapacity();
-                            if (a.item.len > 0) try slot.activated.appendSlice(allocator, a.item);
-                        }
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                            if (pointer_have) .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            } else null,
-                        );
-                        if (widgets_changed) {
+                            if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=root mode=morph reason=hover\n", .{});
+                            const layout_alt = false;
+
                             var tick_buf: [64]u8 = undefined;
                             const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+                            const status_text = try state.buildStatusText(
+                                allocator,
+                                &status_buf,
+                                state_on,
+                                inputs[0..],
+                                lists[0..],
+                                focus_id.items,
+                                term_rows,
+                                term_cols,
+                                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                popupsInfo(
+                                    popup_modal_open,
+                                    popup_dropdown_open,
+                                    popup_tooltip_on,
+                                    focus_id.items,
+                                    hover_id.items,
+                                    hover_item.items,
+                                ),
+                                if (pointer_have) .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                } else null,
+                            );
 
-                            const layout_alt = false;
                             _ = arena_tx.reset(.retain_capacity);
                             const md_stream_node = switch (md_mode) {
                                 .tracer18 => try markdown.compileLeaky(
@@ -1325,47 +994,496 @@ pub fn main() !void {
                                 widgets,
                                 tick,
                             );
-                        }
-                        std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
-                        try out.flush();
-                    },
-                    .resize => |r| {
-                        std.debug.print("EVENT_RX name=resize rows={d} cols={d}\n", .{ r.rows, r.cols });
-                        term_rows = r.rows;
-                        term_cols = r.cols;
+                            try out.flush();
+                        },
+                        .activate => |a| {
+                            std.debug.print("EVENT_RX name=activate id={s} item={s}\n", .{ a.id, a.item });
+                            var widgets_changed: bool = false;
+                            if (std.mem.eql(u8, a.id, POPUPS_ID) or std.mem.eql(u8, a.id, MODAL_ACTIONS_ID) or std.mem.eql(u8, a.id, DROPDOWN_ID)) {
+                                if (std.mem.eql(u8, a.id, POPUPS_ID)) {
+                                    if (std.mem.eql(u8, a.item, POPUP_OPEN_MODAL)) {
+                                        popup_modal_open = true;
+                                        popup_dropdown_open = false;
+                                    } else if (std.mem.eql(u8, a.item, POPUP_OPEN_DROPDOWN)) {
+                                        popup_dropdown_open = !popup_dropdown_open;
+                                        if (popup_dropdown_open) popup_modal_open = false;
+                                    } else if (std.mem.eql(u8, a.item, POPUP_TOGGLE_TOOLTIP)) {
+                                        popup_tooltip_on = !popup_tooltip_on;
+                                    }
+                                } else if (std.mem.eql(u8, a.id, MODAL_ACTIONS_ID) and std.mem.eql(u8, a.item, MODAL_CLOSE)) {
+                                    popup_modal_open = false;
+                                } else if (std.mem.eql(u8, a.id, DROPDOWN_ID)) {
+                                    popup_dropdown_open = false;
+                                }
 
-                        const status_text = try state.buildStatusText(
-                            allocator,
-                            &status_buf,
-                            state_on,
-                            inputs[0..],
-                            lists[0..],
-                            focus_id.items,
-                            term_rows,
-                            term_cols,
-                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
-                            if (pointer_have) .{
-                                .kind = pointer_kind,
-                                .id = pointer_id.items,
-                                .item = pointer_item.items,
-                                .x = pointer_x,
-                                .y = pointer_y,
-                                .buttons = pointer_buttons,
-                                .mods = pointer_mods,
-                                .clicks = pointer_clicks,
-                                .captured = pointer_captured,
-                            } else null,
-                        );
-                        std.debug.print("PATCH_TX target=status\n", .{});
-                        try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                                var tick_buf: [64]u8 = undefined;
+                                const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+                                const status_text = try state.buildStatusText(
+                                    allocator,
+                                    &status_buf,
+                                    state_on,
+                                    inputs[0..],
+                                    lists[0..],
+                                    focus_id.items,
+                                    term_rows,
+                                    term_cols,
+                                    if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                    popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                    if (pointer_have) .{
+                                        .kind = pointer_kind,
+                                        .id = pointer_id.items,
+                                        .item = pointer_item.items,
+                                        .x = pointer_x,
+                                        .y = pointer_y,
+                                        .buttons = pointer_buttons,
+                                        .mods = pointer_mods,
+                                        .clicks = pointer_clicks,
+                                        .captured = pointer_captured,
+                                    } else null,
+                                );
 
-                        try out.flush();
+                                const layout_alt = false;
+                                _ = arena_tx.reset(.retain_capacity);
+                                const md_stream_node = switch (md_mode) {
+                                    .tracer18 => try markdown.compileLeaky(
+                                        arena_tx.allocator(),
+                                        md_buf.items,
+                                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    ),
+                                    .tracer19a => if (md_blocks) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                        arena_tx.allocator(),
+                                        "",
+                                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    ),
+                                    .tracer19b => if (md_inline) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                        arena_tx.allocator(),
+                                        "",
+                                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    ),
+                                };
+
+                                var title_buf: [128]u8 = undefined;
+                                var hint_buf: [512]u8 = undefined;
+                                var faster_buf: [96]u8 = undefined;
+                                var slower_buf: [96]u8 = undefined;
+                                var chunk_smaller_buf: [96]u8 = undefined;
+                                var chunk_larger_buf: [96]u8 = undefined;
+                                const md_title = try mdStreamTitle(&title_buf, md_mode);
+                                const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
+                                const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
+                                const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
+                                const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
+                                const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
+
+                                try render.emitRootMorphPatch(
+                                    arena_tx.allocator(),
+                                    out,
+                                    tick_text,
+                                    status_text,
+                                    md_stream_node,
+                                    md_title,
+                                    md_hint,
+                                    md_faster,
+                                    md_slower,
+                                    md_chunk_smaller,
+                                    md_chunk_larger,
+                                    inputs[0..],
+                                    lists[0..],
+                                    layout_alt,
+                                    list_height,
+                                    popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                    widgets,
+                                    tick,
+                                );
+                                try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                                try out.flush();
+                                continue;
+                            }
+
+                            if (a.item.len == 0) {
+                                if (std.mem.eql(u8, a.id, W_BTN)) {
+                                    widgets.button_clicks += 1;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.id, W_CHECKBOX)) {
+                                    widgets.checkbox_checked = !widgets.checkbox_checked;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.id, W_TOGGLE)) {
+                                    widgets.toggle_on = !widgets.toggle_on;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.id, W_TAB_ONE)) {
+                                    widgets.active_tab = .one;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.id, W_TAB_TWO)) {
+                                    widgets.active_tab = .two;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.id, W_TAB_THREE)) {
+                                    widgets.active_tab = .three;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.id, W_MENU_FILE)) {
+                                    if (widgets.menu_open and widgets.menu_anchor == .file) {
+                                        widgets.menu_open = false;
+                                    } else {
+                                        widgets.menu_open = true;
+                                        widgets.menu_anchor = .file;
+                                    }
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.id, W_MENU_HELP)) {
+                                    if (widgets.menu_open and widgets.menu_anchor == .help) {
+                                        widgets.menu_open = false;
+                                    } else {
+                                        widgets.menu_open = true;
+                                        widgets.menu_anchor = .help;
+                                    }
+                                    widgets_changed = true;
+                                }
+                            } else if (std.mem.eql(u8, a.id, W_RADIO)) {
+                                if (std.mem.eql(u8, a.item, "w-radio-a")) {
+                                    widgets.radio_choice = .alpha;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.item, "w-radio-b")) {
+                                    widgets.radio_choice = .beta;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.item, "w-radio-c")) {
+                                    widgets.radio_choice = .gamma;
+                                    widgets_changed = true;
+                                }
+                            } else if (std.mem.eql(u8, a.id, W_MENU_LIST)) {
+                                widgets.menu_open = false;
+                                if (std.mem.eql(u8, a.item, W_MENU_NEW)) {
+                                    widgets.last_menu_action = .new;
+                                } else if (std.mem.eql(u8, a.item, W_MENU_OPEN)) {
+                                    widgets.last_menu_action = .open;
+                                } else if (std.mem.eql(u8, a.item, W_MENU_ABOUT)) {
+                                    widgets.last_menu_action = .about;
+                                } else if (std.mem.eql(u8, a.item, W_MENU_QUIT)) {
+                                    widgets.last_menu_action = .quit;
+                                    return;
+                                } else if (std.mem.eql(u8, a.item, W_MENU_CLOSE)) {
+                                    widgets.last_menu_action = .none;
+                                }
+                                widgets_changed = true;
+                            } else if (std.mem.eql(u8, a.id, W_TREE)) {
+                                if (std.mem.eql(u8, a.item, W_TREE_ROOT)) {
+                                    widgets.tree_root_expanded = !widgets.tree_root_expanded;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.item, W_TREE_SRC)) {
+                                    widgets.tree_src_expanded = !widgets.tree_src_expanded;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.item, W_TREE_LIB)) {
+                                    widgets.tree_lib_expanded = !widgets.tree_lib_expanded;
+                                    widgets_changed = true;
+                                } else if (std.mem.eql(u8, a.item, W_TREE_TESTS)) {
+                                    widgets.tree_tests_expanded = !widgets.tree_tests_expanded;
+                                    widgets_changed = true;
+                                }
+                            }
+
+                            if (std.mem.eql(u8, a.id, MD_ACTIONS_ID)) {
+                                if (std.mem.eql(u8, a.item, MD_ACTION_START)) {
+                                    md_buf.clearRetainingCapacity();
+                                    md_source.clearRetainingCapacity();
+                                    md_cursor = 0;
+                                    md_active = true;
+                                    md_paused = false;
+                                    if (md_blocks) |*s| s.deinit();
+                                    md_blocks = null;
+                                    if (md_inline) |*s| s.deinit();
+                                    md_inline = null;
+
+                                    const prompt = if (state.findInputSlot(inputs[0..], MD_PROMPT_ID)) |slot|
+                                        slot.last.items
+                                    else
+                                        "";
+                                    if (prompt.len > 0) {
+                                        try md_source.appendSlice(allocator, prompt);
+                                    } else {
+                                        try md_source.appendSlice(allocator, md_default);
+                                    }
+
+                                    const next = @min(md_source.items.len, md_cursor + md_chunk_len);
+                                    if (next > md_cursor) {
+                                        const chunk = md_source.items[md_cursor..next];
+                                        md_cursor = next;
+
+                                        switch (md_mode) {
+                                            .tracer18 => {
+                                                try md_buf.appendSlice(allocator, chunk);
+                                                _ = arena_tx.reset(.retain_capacity);
+                                                try render.emitMarkdownMorphPatch(arena_tx.allocator(), out, MD_STREAM_ID, md_buf.items);
+                                            },
+                                            .tracer19a => {
+                                                md_blocks = tui.markdown.StreamBlocks.init(
+                                                    allocator,
+                                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                                    .{},
+                                                    .plain,
+                                                );
+                                                _ = try md_blocks.?.push(chunk);
+                                                _ = arena_tx.reset(.retain_capacity);
+                                                const node = try md_blocks.?.snapshotLeaky(arena_tx.allocator());
+                                                try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                                            },
+                                            .tracer19b => {
+                                                md_inline = tui.markdown.StreamInline.init(
+                                                    allocator,
+                                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                                    .{},
+                                                );
+                                                _ = try md_inline.?.push(chunk);
+                                                _ = arena_tx.reset(.retain_capacity);
+                                                const node = try md_inline.?.snapshotLeaky(arena_tx.allocator());
+                                                try render.emitNodeMorphPatch(out, MD_STREAM_ID, node);
+                                            },
+                                        }
+                                    }
+                                    try out.flush();
+                                    continue;
+                                } else if (std.mem.eql(u8, a.item, MD_ACTION_PAUSE)) {
+                                    if (md_active or md_cursor < md_source.items.len) md_paused = !md_paused;
+                                    continue;
+                                } else if (std.mem.eql(u8, a.item, MD_ACTION_RESET)) {
+                                    md_buf.clearRetainingCapacity();
+                                    md_source.clearRetainingCapacity();
+                                    md_cursor = 0;
+                                    md_active = false;
+                                    md_paused = false;
+                                    if (md_blocks) |*s| s.deinit();
+                                    md_blocks = null;
+                                    if (md_inline) |*s| s.deinit();
+                                    md_inline = null;
+                                    _ = arena_tx.reset(.retain_capacity);
+                                    const empty = try markdown.compileLeaky(
+                                        arena_tx.allocator(),
+                                        "",
+                                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    );
+                                    try render.emitNodeMorphPatch(out, MD_STREAM_ID, empty);
+                                    try out.flush();
+                                    continue;
+                                }
+                            } else if (std.mem.eql(u8, a.id, MD_MODE_ID)) {
+                                if (std.mem.eql(u8, a.item, MD_MODE_18)) {
+                                    md_mode = .tracer18;
+                                } else if (std.mem.eql(u8, a.item, MD_MODE_19A)) {
+                                    md_mode = .tracer19a;
+                                } else if (std.mem.eql(u8, a.item, MD_MODE_19B)) {
+                                    md_mode = .tracer19b;
+                                }
+
+                                md_buf.clearRetainingCapacity();
+                                md_source.clearRetainingCapacity();
+                                md_cursor = 0;
+                                md_active = false;
+                                md_paused = false;
+                                if (md_blocks) |*s| s.deinit();
+                                md_blocks = null;
+                                if (md_inline) |*s| s.deinit();
+                                md_inline = null;
+
+                                _ = arena_tx.reset(.retain_capacity);
+                                const empty = try markdown.compileLeaky(
+                                    arena_tx.allocator(),
+                                    "",
+                                    .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                );
+                                try render.emitNodeMorphPatch(out, MD_STREAM_ID, empty);
+                                try out.flush();
+                                continue;
+                            } else if (std.mem.eql(u8, a.id, MD_SPEED_ID)) {
+                                if (std.mem.eql(u8, a.item, MD_SPEED_FASTER)) {
+                                    md_tick_every = @max(@as(usize, 1), md_tick_every / 2);
+                                } else if (std.mem.eql(u8, a.item, MD_SPEED_SLOWER)) {
+                                    md_tick_every = @min(@as(usize, 64), md_tick_every * 2);
+                                } else if (std.mem.eql(u8, a.item, MD_SPEED_CHUNK_SMALLER)) {
+                                    md_chunk_len = @max(@as(usize, 1), md_chunk_len / 2);
+                                } else if (std.mem.eql(u8, a.item, MD_SPEED_CHUNK_LARGER)) {
+                                    md_chunk_len = @min(@as(usize, 512), md_chunk_len * 2);
+                                }
+
+                                var faster_buf: [96]u8 = undefined;
+                                var slower_buf: [96]u8 = undefined;
+                                var chunk_smaller_buf: [96]u8 = undefined;
+                                var chunk_larger_buf: [96]u8 = undefined;
+                                try render.emitTextPatchById(
+                                    out,
+                                    MD_SPEED_FASTER,
+                                    try mdSpeedFasterLabel(&faster_buf, md_tick_every),
+                                );
+                                try render.emitTextPatchById(
+                                    out,
+                                    MD_SPEED_SLOWER,
+                                    try mdSpeedSlowerLabel(&slower_buf, md_tick_every),
+                                );
+                                try render.emitTextPatchById(
+                                    out,
+                                    MD_SPEED_CHUNK_SMALLER,
+                                    try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len),
+                                );
+                                try render.emitTextPatchById(
+                                    out,
+                                    MD_SPEED_CHUNK_LARGER,
+                                    try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len),
+                                );
+                                try out.flush();
+                                continue;
+                            }
+                            if (state.findListSlot(lists[0..], a.id)) |slot| {
+                                slot.activated.clearRetainingCapacity();
+                                if (a.item.len > 0) try slot.activated.appendSlice(allocator, a.item);
+                            }
+                            const status_text = try state.buildStatusText(
+                                allocator,
+                                &status_buf,
+                                state_on,
+                                inputs[0..],
+                                lists[0..],
+                                focus_id.items,
+                                term_rows,
+                                term_cols,
+                                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                if (pointer_have) .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                } else null,
+                            );
+                            if (widgets_changed) {
+                                var tick_buf: [64]u8 = undefined;
+                                const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+
+                                const layout_alt = false;
+                                _ = arena_tx.reset(.retain_capacity);
+                                const md_stream_node = switch (md_mode) {
+                                    .tracer18 => try markdown.compileLeaky(
+                                        arena_tx.allocator(),
+                                        md_buf.items,
+                                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    ),
+                                    .tracer19a => if (md_blocks) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                        arena_tx.allocator(),
+                                        "",
+                                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    ),
+                                    .tracer19b => if (md_inline) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                        arena_tx.allocator(),
+                                        "",
+                                        .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                                    ),
+                                };
+
+                                var title_buf: [128]u8 = undefined;
+                                var hint_buf: [512]u8 = undefined;
+                                var faster_buf: [96]u8 = undefined;
+                                var slower_buf: [96]u8 = undefined;
+                                var chunk_smaller_buf: [96]u8 = undefined;
+                                var chunk_larger_buf: [96]u8 = undefined;
+                                const md_title = try mdStreamTitle(&title_buf, md_mode);
+                                const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
+                                const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
+                                const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
+                                const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
+                                const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
+
+                                try render.emitRootMorphPatch(
+                                    arena_tx.allocator(),
+                                    out,
+                                    tick_text,
+                                    status_text,
+                                    md_stream_node,
+                                    md_title,
+                                    md_hint,
+                                    md_faster,
+                                    md_slower,
+                                    md_chunk_smaller,
+                                    md_chunk_larger,
+                                    inputs[0..],
+                                    lists[0..],
+                                    layout_alt,
+                                    list_height,
+                                    popupsInfo(
+                                        popup_modal_open,
+                                        popup_dropdown_open,
+                                        popup_tooltip_on,
+                                        focus_id.items,
+                                        hover_id.items,
+                                        hover_item.items,
+                                    ),
+                                    widgets,
+                                    tick,
+                                );
+                            }
+                            std.debug.print("PATCH_TX target=status\n", .{});
+                            try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                            try out.flush();
+                        },
+                        .resize => |r| {
+                            std.debug.print("EVENT_RX name=resize rows={d} cols={d}\n", .{ r.rows, r.cols });
+                            term_rows = r.rows;
+                            term_cols = r.cols;
+
+                            const status_text = try state.buildStatusText(
+                                allocator,
+                                &status_buf,
+                                state_on,
+                                inputs[0..],
+                                lists[0..],
+                                focus_id.items,
+                                term_rows,
+                                term_cols,
+                                if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
+                                if (pointer_have) .{
+                                    .kind = pointer_kind,
+                                    .id = pointer_id.items,
+                                    .item = pointer_item.items,
+                                    .x = pointer_x,
+                                    .y = pointer_y,
+                                    .buttons = pointer_buttons,
+                                    .mods = pointer_mods,
+                                    .clicks = pointer_clicks,
+                                    .captured = pointer_captured,
+                                } else null,
+                            );
+                            std.debug.print("PATCH_TX target=status\n", .{});
+                            try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+
+                            try out.flush();
+                        },
+                        .clipboard => |c| {
+                            const op_s: []const u8 = switch (c.op) {
+                                .write => "write",
+                                .read => "read",
+                            };
+                            const ok_s: []const u8 = if (c.ok) "true" else "false";
+                            const data_len: usize = if (c.data) |d| d.len else 0;
+                            std.debug.print(
+                                "EVENT_RX name=clipboard op={s} ok={s} request_id={d} data_len={d} reason={s}\n",
+                                .{ op_s, ok_s, c.request_id, data_len, c.reason orelse "" },
+                            );
+                        },
+                        .paste => |p| {
+                            std.debug.print(
+                                "EVENT_RX name=paste source={s} bytes={d}\n",
+                                .{
+                                    switch (p.source) {
+                                        .bracketed => "bracketed",
+                                        .clipboard => "clipboard",
+                                    },
+                                    p.bytes,
+                                },
+                            );
+                        },
                     },
-                },
-                else => {},
-            }
+                    else => {},
+                }
+            },
         }
     }
 }

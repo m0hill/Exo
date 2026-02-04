@@ -20,3 +20,5 @@ pub const mouseable = @import("mouseable.zig");
 pub const keys = @import("keys.zig");
 pub const key_decode = @import("key_decode.zig");
 pub const widget_kit = @import("widget_kit/mod.zig");
+pub const termcaps = @import("termcaps.zig");
+pub const clipboard = @import("clipboard.zig");

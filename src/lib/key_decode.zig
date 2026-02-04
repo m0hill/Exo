@@ -391,6 +391,13 @@ pub const Decoder = struct {
             return self.emitKey(.{ .unknown_escape = seq }, self.seq_base_mods);
         }
 
+        // Device Attributes queries/responses (ESC[c, ESC[?…c, ESC[>…c) are
+        // terminal capability negotiation and should not surface as input.
+        if (final == 'c') {
+            self.resetToGround();
+            return null;
+        }
+
         const params_bytes = seq[2 .. seq.len - 1];
 
         if (final == 'Z') {

@@ -17,6 +17,9 @@ const OverlayAlign = protocol.OverlayAlign;
 const OverlayLayer = protocol.OverlayLayer;
 const Span = protocol.Span;
 const PointerEvent = protocol.PointerEvent;
+const ClipboardOp = protocol.ClipboardOp;
+const ClipboardTarget = protocol.ClipboardTarget;
+const PasteSource = protocol.PasteSource;
 const ParseMsgError = protocol.ParseMsgError;
 
 pub fn writeJsonString(writer: anytype, s: []const u8) !void {
@@ -143,6 +146,63 @@ pub fn writePointerEventJsonl(writer: anytype, ev: PointerEvent) !void {
     try writer.writeAll(",\"captured\":");
     try writer.writeAll(if (ev.captured) "true" else "false");
     try writer.writeAll("}\n");
+}
+
+pub fn writeClipboardWriteJsonl(writer: anytype, data: []const u8, target: ClipboardTarget) !void {
+    try writer.writeAll("{\"type\":\"clipboard\",\"op\":\"write\",\"data\":");
+    try writeJsonString(writer, data);
+    if (target != .clipboard) {
+        try writer.writeAll(",\"target\":");
+        try writeJsonString(writer, "clipboard");
+    }
+    try writer.writeAll("}\n");
+}
+
+pub fn writeClipboardReadJsonl(writer: anytype, request_id: u32, target: ClipboardTarget) !void {
+    try writer.print("{{\"type\":\"clipboard\",\"op\":\"read\",\"request_id\":{d}", .{request_id});
+    if (target != .clipboard) {
+        try writer.writeAll(",\"target\":");
+        try writeJsonString(writer, "clipboard");
+    }
+    try writer.writeAll("}\n");
+}
+
+pub fn writeClipboardEventJsonl(
+    writer: anytype,
+    op: ClipboardOp,
+    ok: bool,
+    request_id: u32,
+    data: ?[]const u8,
+    reason: ?[]const u8,
+) !void {
+    try writer.writeAll("{\"type\":\"event\",\"name\":\"clipboard\",\"op\":");
+    try writeJsonString(writer, switch (op) {
+        .write => "write",
+        .read => "read",
+    });
+    try writer.writeAll(",\"ok\":");
+    try writer.writeAll(if (ok) "true" else "false");
+    if (request_id != 0) {
+        try writer.print(",\"request_id\":{d}", .{request_id});
+    }
+    if (data) |d| {
+        try writer.writeAll(",\"data\":");
+        try writeJsonString(writer, d);
+    }
+    if (reason) |r| {
+        try writer.writeAll(",\"reason\":");
+        try writeJsonString(writer, r);
+    }
+    try writer.writeAll("}\n");
+}
+
+pub fn writePasteEventJsonl(writer: anytype, source: PasteSource, bytes: usize) !void {
+    try writer.writeAll("{\"type\":\"event\",\"name\":\"paste\",\"source\":");
+    try writeJsonString(writer, switch (source) {
+        .bracketed => "bracketed",
+        .clipboard => "clipboard",
+    });
+    try writer.print(",\"bytes\":{d}}}\n", .{bytes});
 }
 
 fn writeWidgetStateFields(

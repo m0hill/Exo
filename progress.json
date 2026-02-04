@@ -760,5 +760,34 @@
       "Verify validation styles are visible (error/warning/success) and disabled styling dims the disabled control",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 28,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Portability + terminal integration: per-OS terminal backends (Windows VT + POSIX), termcaps negotiation (profiles + env overrides), adaptive rendering, portable IO mux, and standardized clipboard protocol/events",
+    "deliverables": [
+      "src/lib/termcaps.zig: termcap profiles + env overrides (`TUI_TERM_PROFILE`, `TUI_CAPS_DISABLE`), plus test-friendly detection helpers",
+      "src/lib/terminal.zig + src/lib/terminal_posix.zig + src/lib/terminal_windows.zig: portable terminal facade with per-OS raw mode, VT enablement, and caps-gated feature enabling",
+      "src/lib/renderer.zig: `drawWithCaps` with dumb-paint fallback when ANSI/cursor addressing is unavailable",
+      "src/lib/clipboard.zig: OS clipboard (Windows API, pbcopy/pbpaste, wl-*/xclip/xsel) + OSC 52 fallback with tmux/screen passthrough",
+      "src/lib/protocol/{types,parse,write}.zig: protocol v0.14 adds clipboard messages + clipboard/paste events",
+      "src/bin/runtime/iomux.zig + src/bin/runtime/app.zig: portable runtime event mux (threads + queue) replacing `poll`, plus clipboard message handling and local paste insertion",
+      "src/bin/demo/main.zig: portable stdin polling via `std.Io.poll` (no `std.posix.poll`)",
+      "src/test/tests.zig: unit tests for clipboard protocol, OSC 52 encoding/wrappers, termcaps, and dumb renderer mode"
+    ],
+    "boundaries_hit": [
+      "Windows-first portability baseline (VT-only) with robust state restore and clear failure messaging when VT cannot be enabled",
+      "Capability-gated terminal feature use (alt screen, bracketed paste, mouse, OSC 52) to degrade gracefully across terminals",
+      "Clipboard integration standardized via protocol messages/events and separated from raw input bytes/paste semantics"
+    ],
+    "timestamp": "2026-02-04",
+    "manual_repro": [
+      "POSIX: `zig build demo` and confirm behavior matches prior slices",
+      "POSIX: run with `TERM=dumb zig build demo` and confirm rendering uses dumb mode (no escape spam) and remains usable",
+      "Clipboard: from a backend, send `{\"type\":\"clipboard\",\"op\":\"write\",\"data\":\"hello\"}` and confirm runtime returns a clipboard ack event",
+      "Clipboard: send `{\"type\":\"clipboard\",\"op\":\"read\",\"request_id\":1}` and confirm runtime returns clipboard read event + paste semantic event",
+      "Windows cross-compile: `zig build -Dtarget=x86_64-windows` succeeds"
+    ]
   }
 ]
