@@ -4,6 +4,7 @@ pub const MouseEventKind = enum {
     down_left,
     wheel_up,
     wheel_down,
+    move,
 };
 
 pub const MouseEvent = struct {
@@ -36,6 +37,14 @@ pub fn parseSgrMouseSequence(bytes: []const u8) ?MouseEvent {
     if (i != bytes.len) return null;
 
     if (final != 'M') return null; // Tracer 13 ignores releases ('m') and everything else.
+
+    // SGR mouse motion events set bit 0x20 in the `b` parameter.
+    // We treat any motion report as `.move` and ignore releases ('m').
+    if ((b & 32) != 0) {
+        const x0: usize = if (x1 > 0) @as(usize, x1 - 1) else 0;
+        const y0: usize = if (y1 > 0) @as(usize, y1 - 1) else 0;
+        return .{ .kind = .move, .x = x0, .y = y0 };
+    }
 
     const b_nomod: u32 = b & ~@as(u32, 4 | 8 | 16);
     const kind: MouseEventKind = switch (b_nomod) {

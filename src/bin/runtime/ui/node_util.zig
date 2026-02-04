@@ -10,6 +10,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .w = t.w,
             .h = t.h,
             .flex = t.flex,
+            .hoverable = t.hoverable,
             .style = t.style,
             .text = try allocator.dupe(u8, t.text),
         } },
@@ -26,6 +27,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .w = t.w,
                 .h = t.h,
                 .flex = t.flex,
+                .hoverable = t.hoverable,
                 .style = t.style,
                 .spans = spans,
             } };
@@ -35,6 +37,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .w = i.w,
             .h = i.h,
             .flex = i.flex,
+            .hoverable = i.hoverable,
             .style = i.style,
             .placeholder_style = i.placeholder_style,
             .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
@@ -51,6 +54,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .flex = v.flex,
                 .pad = v.pad,
                 .clip = v.clip,
+                .hoverable = v.hoverable,
                 .style = v.style,
                 .children = children,
             } };
@@ -67,6 +71,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .flex = h.flex,
                 .pad = h.pad,
                 .clip = h.clip,
+                .hoverable = h.hoverable,
                 .style = h.style,
                 .children = children,
             } };
@@ -81,6 +86,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .pad = b.pad,
             .clip = b.clip,
             .shadow = b.shadow,
+            .hoverable = b.hoverable,
             .style = b.style,
             .child = blk: {
                 const child_node = try cloneNodeLeaky(allocator, b.child.*);
@@ -96,6 +102,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .flex = s.flex,
             .pad = s.pad,
             .clip = s.clip,
+            .hoverable = s.hoverable,
             .style = s.style,
             .child = blk: {
                 const child_node = try cloneNodeLeaky(allocator, s.child.*);
@@ -135,6 +142,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .flex = o.flex,
                 .pad = o.pad,
                 .clip = o.clip,
+                .hoverable = o.hoverable,
                 .style = o.style,
                 .base = base,
                 .layers = layers,
@@ -151,6 +159,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .h = l.h,
                 .flex = l.flex,
                 .height = l.height,
+                .hoverable = l.hoverable,
                 .style = l.style,
                 .children = children,
             } };

@@ -7,6 +7,7 @@ const input = tui.input;
 const mouse = tui.mouse;
 const state = tui.state;
 const terminal = tui.terminal;
+const hover = tui.hover;
 const unicode = tui.unicode;
 
 const key_decode = @import("../key_decode.zig");
@@ -98,6 +99,8 @@ pub const FocusKind = enum {
     list,
     scroll,
 };
+
+pub const HoverHit = hover.HoverHit;
 
 const Focusable = struct {
     id: []const u8,
@@ -288,6 +291,10 @@ fn findTopmostModalLayer(root: protocol.Node) ?*const protocol.Node {
     return out;
 }
 
+pub fn treeHasHoverables(node: protocol.Node) bool {
+    return hover.treeHasHoverables(node);
+}
+
 fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) void {
     switch (node) {
         .overlay => |o| {
@@ -335,6 +342,122 @@ fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]c
         .hbox => |h| for (h.children) |child| try collectHitTestablesInto(allocator, out, child),
         else => {},
     }
+}
+
+fn setOptId(
+    allocator: std.mem.Allocator,
+    buf: *std.ArrayList(u8),
+    out: *?[]const u8,
+    next: ?[]const u8,
+) !void {
+    if (next == null or next.?.len == 0) {
+        buf.clearRetainingCapacity();
+        out.* = null;
+        return;
+    }
+    if (out.* != null and std.mem.eql(u8, out.*.?, next.?)) return;
+    buf.clearRetainingCapacity();
+    try buf.appendSlice(allocator, next.?);
+    out.* = buf.items;
+}
+
+pub fn hoverHitTest(
+    allocator: std.mem.Allocator,
+    widgets: []const WidgetEntry,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    x: usize,
+    y: usize,
+) !HoverHit {
+    if (!treeHasHoverables(root)) return .{ .id = null, .item = null };
+
+    var scroll_states = try collectRenderScrollStates(allocator, widgets);
+    defer scroll_states.deinit(allocator);
+
+    var list_states = try collectHoverListStates(allocator, widgets);
+    defer list_states.deinit(allocator);
+
+    return try hover.hoverHitTestLeaky(
+        allocator,
+        root,
+        rows,
+        cols,
+        x,
+        y,
+        scroll_states.items,
+        list_states.items,
+    );
+}
+
+fn updateHoverForCoords(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: []const WidgetEntry,
+    hover_id_buf: *std.ArrayList(u8),
+    hover_id: *?[]const u8,
+    hover_item_buf: *std.ArrayList(u8),
+    hover_item: *?[]const u8,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    x: usize,
+    y: usize,
+) !bool {
+    const hit = try hoverHitTest(allocator, widgets, root, rows, cols, x, y);
+    if (optEql(hover_id.*, hit.id) and optEql(hover_item.*, hit.item)) return false;
+
+    try setOptId(allocator, hover_id_buf, hover_id, hit.id);
+    try setOptId(allocator, hover_item_buf, hover_item, hit.item);
+
+    log.logPrint(
+        log_sink,
+        "EVENT_TX name=hover id={s} x={d} y={d} item={s}\n",
+        .{ hover_id.* orelse "", x, y, hover_item.* orelse "" },
+    );
+    try protocol.writeHoverEventJsonl(backend_in, hover_id.* orelse "", x, y, hover_item.*);
+    return true;
+}
+
+pub fn refreshHoverAfterPatch(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: []const WidgetEntry,
+    hover_id_buf: *std.ArrayList(u8),
+    hover_id: *?[]const u8,
+    hover_item_buf: *std.ArrayList(u8),
+    hover_item: *?[]const u8,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    x_opt: ?usize,
+    y_opt: ?usize,
+) !bool {
+    if (x_opt == null or y_opt == null) {
+        if (hover_id.* == null and hover_item.* == null) return false;
+        try setOptId(allocator, hover_id_buf, hover_id, null);
+        try setOptId(allocator, hover_item_buf, hover_item, null);
+        log.logPrint(log_sink, "EVENT_TX name=hover id= x=0 y=0 item=\n", .{});
+        try protocol.writeHoverEventJsonl(backend_in, "", 0, 0, null);
+        return true;
+    }
+    return try updateHoverForCoords(
+        allocator,
+        log_sink,
+        backend_in,
+        widgets,
+        hover_id_buf,
+        hover_id,
+        hover_item_buf,
+        hover_item,
+        root,
+        rows,
+        cols,
+        x_opt.?,
+        y_opt.?,
+    );
 }
 
 pub fn cycleFocusInTree(allocator: std.mem.Allocator, root: protocol.Node, current: ?[]const u8) !?[]const u8 {
@@ -508,6 +631,21 @@ fn collectRenderScrollStates(allocator: std.mem.Allocator, widgets: []const Widg
     return out;
 }
 
+fn collectHoverListStates(allocator: std.mem.Allocator, widgets: []const WidgetEntry) !std.ArrayList(render.ListState) {
+    var out: std.ArrayList(render.ListState) = .empty;
+    errdefer out.deinit(allocator);
+    for (widgets) |w| {
+        if (w.state != .list) continue;
+        const st = w.state.list;
+        try out.append(allocator, .{
+            .id = w.id.items,
+            .selected_id = st.selected_id.items,
+            .scroll = st.scroll,
+        });
+    }
+    return out;
+}
+
 fn listVisibleHeight(rect: render.Rect, l: protocol.ListNode) usize {
     const desired = l.height orelse rect.h;
     return @min(desired, rect.h);
@@ -528,13 +666,18 @@ pub fn handleMouseEvent(
     widgets: *std.ArrayList(WidgetEntry),
     focused_id_buf: *std.ArrayList(u8),
     focused_id: *?[]const u8,
+    hover_id_buf: *std.ArrayList(u8),
+    hover_id: *?[]const u8,
+    hover_item_buf: *std.ArrayList(u8),
+    hover_item: *?[]const u8,
     root: protocol.Node,
     rows: usize,
     cols: usize,
     ev: mouse.MouseEvent,
 ) !bool {
+    var changed: bool = false;
     switch (ev.kind) {
-        .down_left => return try handleMouseDownLeft(
+        .down_left => changed = try handleMouseDownLeft(
             allocator,
             log_sink,
             backend_in,
@@ -547,7 +690,7 @@ pub fn handleMouseEvent(
             ev.x,
             ev.y,
         ),
-        .wheel_up => return try handleMouseWheel(
+        .wheel_up => changed = try handleMouseWheel(
             allocator,
             log_sink,
             backend_in,
@@ -559,7 +702,7 @@ pub fn handleMouseEvent(
             ev.y,
             -1,
         ),
-        .wheel_down => return try handleMouseWheel(
+        .wheel_down => changed = try handleMouseWheel(
             allocator,
             log_sink,
             backend_in,
@@ -571,7 +714,35 @@ pub fn handleMouseEvent(
             ev.y,
             1,
         ),
+        .move => {},
     }
+    if (treeHasHoverables(root)) {
+        // Only flush on hover changes; motion tracking makes `.move` events frequent.
+        if (try updateHoverForCoords(
+            allocator,
+            log_sink,
+            backend_in,
+            widgets.items,
+            hover_id_buf,
+            hover_id,
+            hover_item_buf,
+            hover_item,
+            root,
+            rows,
+            cols,
+            ev.x,
+            ev.y,
+        )) try backend_in.flush();
+    } else {
+        if (hover_id.* != null or hover_item.* != null) {
+            try setOptId(allocator, hover_id_buf, hover_id, null);
+            try setOptId(allocator, hover_item_buf, hover_item, null);
+            log.logPrint(log_sink, "EVENT_TX name=hover id= x={d} y={d} item=\n", .{ ev.x, ev.y });
+            try protocol.writeHoverEventJsonl(backend_in, "", ev.x, ev.y, null);
+            try backend_in.flush();
+        }
+    }
+    return changed;
 }
 
 fn handleMouseDownLeft(

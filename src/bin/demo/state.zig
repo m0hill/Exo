@@ -24,6 +24,8 @@ pub const PopupInfo = struct {
     dropdown_open: bool,
     tooltip_on: bool,
     tooltip_anchor: []const u8,
+    hover_id: []const u8,
+    hover_item: []const u8,
 };
 
 pub fn buildStatusText(

@@ -106,6 +106,15 @@ pub fn run() !void {
     var focused_id_buf: std.ArrayList(u8) = .empty;
     defer focused_id_buf.deinit(allocator);
     var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(allocator);
+    var hover_item: ?[]const u8 = null;
+    var last_mouse_x: usize = 0;
+    var last_mouse_y: usize = 0;
+    var have_last_mouse_pos: bool = false;
     var auto_focus_done: bool = false;
     var widgets: std.ArrayList(ui.WidgetEntry) = .empty;
     defer ui.deinitWidgetEntries(allocator, &widgets);
@@ -272,6 +281,12 @@ pub fn run() !void {
                     const decoded = try key_decode.decodeKeyWithUtf8(&term, &utf8_pending, &csi_pending, first) orelse continue;
 
                     if (decoded == .mouse and current_root != null) {
+                        if (decoded.mouse.kind == .move and have_last_mouse_pos and decoded.mouse.x == last_mouse_x and decoded.mouse.y == last_mouse_y) {
+                            continue;
+                        }
+                        last_mouse_x = decoded.mouse.x;
+                        last_mouse_y = decoded.mouse.y;
+                        have_last_mouse_pos = true;
                         const rows: usize = @as(usize, last_term_size.rows);
                         const cols: usize = @as(usize, last_term_size.cols);
                         const changed = try ui.handleMouseEvent(
@@ -281,6 +296,10 @@ pub fn run() !void {
                             &widgets,
                             &focused_id_buf,
                             &focused_id,
+                            &hover_id_buf,
+                            &hover_id,
+                            &hover_item_buf,
+                            &hover_item,
                             current_root.?,
                             rows,
                             cols,
@@ -544,6 +563,15 @@ pub fn run() !void {
                 scheduler_mod.FlushResult{ .dropped_targets = sched.counts().dropped_targets };
 
             if (current_root != null) {
+                const rows: usize = @as(usize, last_term_size.rows);
+                const cols: usize = @as(usize, last_term_size.cols);
+                const has_hoverables = ui.treeHasHoverables(current_root.?);
+                if (has_hoverables) {
+                    try term.enableMouseMotion();
+                } else {
+                    try term.disableMouseMotion();
+                }
+
                 try ui.syncUiAfterPatch(
                     allocator,
                     &log_sink,
@@ -553,9 +581,30 @@ pub fn run() !void {
                     &focused_id,
                     &auto_focus_done,
                     current_root.?,
-                    @as(usize, last_term_size.rows),
-                    @as(usize, last_term_size.cols),
+                    rows,
+                    cols,
                 );
+
+                // If the tree changes under the pointer (morph patches, modals, etc), refresh hover once.
+                const hover_x_opt: ?usize = if (have_last_mouse_pos) last_mouse_x else null;
+                const hover_y_opt: ?usize = if (have_last_mouse_pos) last_mouse_y else null;
+                if (try ui.refreshHoverAfterPatch(
+                    allocator,
+                    &log_sink,
+                    child_in,
+                    widgets.items,
+                    &hover_id_buf,
+                    &hover_id,
+                    &hover_item_buf,
+                    &hover_item,
+                    current_root.?,
+                    rows,
+                    cols,
+                    hover_x_opt,
+                    hover_y_opt,
+                )) {
+                    // fall through; flushed below
+                }
                 try child_in.flush();
 
                 if (resize_changed_this_iter) {

@@ -42,6 +42,7 @@ pub const writeSelectEventJsonl = write.writeSelectEventJsonl;
 pub const writeActivateEventJsonl = write.writeActivateEventJsonl;
 pub const writeScrollEventJsonl = write.writeScrollEventJsonl;
 pub const writeResizeEventJsonl = write.writeResizeEventJsonl;
+pub const writeHoverEventJsonl = write.writeHoverEventJsonl;
 pub const writeNodeJson = write.writeNodeJson;
 pub const writeSpanJson = write.writeSpanJson;
 pub const writeStyleOverrideJson = write.writeStyleOverrideJson;

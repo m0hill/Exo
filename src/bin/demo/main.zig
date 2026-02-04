@@ -88,12 +88,21 @@ fn nodeId(node: protocol.Node) []const u8 {
     };
 }
 
-fn popupsInfo(modal_open: bool, dropdown_open: bool, tooltip_on: bool, tooltip_anchor: []const u8) state.PopupInfo {
+fn popupsInfo(
+    modal_open: bool,
+    dropdown_open: bool,
+    tooltip_on: bool,
+    tooltip_anchor: []const u8,
+    hover_id: []const u8,
+    hover_item: []const u8,
+) state.PopupInfo {
     return .{
         .modal_open = modal_open,
         .dropdown_open = dropdown_open,
         .tooltip_on = tooltip_on,
         .tooltip_anchor = tooltip_anchor,
+        .hover_id = hover_id,
+        .hover_item = hover_item,
     };
 }
 
@@ -116,6 +125,11 @@ pub fn main() !void {
     var scroll_id: std.ArrayList(u8) = .empty;
     defer scroll_id.deinit(allocator);
     var scroll_y: usize = 0;
+
+    var hover_id: std.ArrayList(u8) = .empty;
+    defer hover_id.deinit(allocator);
+    var hover_item: std.ArrayList(u8) = .empty;
+    defer hover_item.deinit(allocator);
 
     var inputs = [_]state.InputSlot{
         .{ .id = "query-a" },
@@ -195,7 +209,7 @@ pub fn main() !void {
             term_rows,
             term_cols,
             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
         );
         var title_buf: [128]u8 = undefined;
         var hint_buf: [512]u8 = undefined;
@@ -230,7 +244,7 @@ pub fn main() !void {
             inputs[0..],
             lists[0..],
             list_height,
-            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
         );
     }
     try out.flush();
@@ -293,12 +307,12 @@ pub fn main() !void {
                 term_rows,
                 term_cols,
                 if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
             );
 
             if ((tick % 4) == 0) {
                 if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=root mode=morph tick={d}\n", .{tick});
-                const layout_alt = (tick % 2) == 1;
+                const layout_alt = false;
                 _ = arena_tx.reset(.retain_capacity);
                 const md_stream_node = switch (md_mode) {
                     .tracer18 => try markdown.compileLeaky(
@@ -345,7 +359,7 @@ pub fn main() !void {
                     lists[0..],
                     layout_alt,
                     list_height,
-                    popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                    popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                 );
             }
 
@@ -464,7 +478,7 @@ pub fn main() !void {
                                 term_rows,
                                 term_cols,
                                 if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -487,7 +501,7 @@ pub fn main() !void {
                             term_rows,
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -527,7 +541,7 @@ pub fn main() !void {
                             term_rows,
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -549,7 +563,7 @@ pub fn main() !void {
                             term_rows,
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -570,10 +584,109 @@ pub fn main() !void {
                             term_rows,
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                        try out.flush();
+                    },
+                    .hover => |h| {
+                        std.debug.print(
+                            "EVENT_RX name=hover id={s} x={d} y={d} item={s}\n",
+                            .{ h.id, h.x, h.y, h.item orelse "" },
+                        );
+
+                        hover_id.clearRetainingCapacity();
+                        hover_item.clearRetainingCapacity();
+                        if (h.id.len > 0) {
+                            try hover_id.appendSlice(allocator, h.id);
+                            if (h.item) |it| {
+                                if (it.len > 0) try hover_item.appendSlice(allocator, it);
+                            }
+                        }
+
+                        if (!cfg.quiet_tx) std.debug.print("PATCH_TX target=root mode=morph reason=hover\n", .{});
+                        const layout_alt = false;
+
+                        var tick_buf: [64]u8 = undefined;
+                        const tick_text = try std.fmt.bufPrint(&tick_buf, "Tick: {d}", .{tick});
+                        const status_text = try state.buildStatusText(
+                            allocator,
+                            &status_buf,
+                            state_on,
+                            inputs[0..],
+                            lists[0..],
+                            focus_id.items,
+                            term_rows,
+                            term_cols,
+                            if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
+                            popupsInfo(
+                                popup_modal_open,
+                                popup_dropdown_open,
+                                popup_tooltip_on,
+                                focus_id.items,
+                                hover_id.items,
+                                hover_item.items,
+                            ),
+                        );
+
+                        _ = arena_tx.reset(.retain_capacity);
+                        const md_stream_node = switch (md_mode) {
+                            .tracer18 => try markdown.compileLeaky(
+                                arena_tx.allocator(),
+                                md_buf.items,
+                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                            ),
+                            .tracer19a => if (md_blocks) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                arena_tx.allocator(),
+                                "",
+                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                            ),
+                            .tracer19b => if (md_inline) |*s| try s.snapshotLeaky(arena_tx.allocator()) else try markdown.compileLeaky(
+                                arena_tx.allocator(),
+                                "",
+                                .{ .id = MD_STREAM_ID, .id_prefix = MD_STREAM_ID, .own_text = false },
+                            ),
+                        };
+
+                        var title_buf: [128]u8 = undefined;
+                        var hint_buf: [512]u8 = undefined;
+                        var faster_buf: [96]u8 = undefined;
+                        var slower_buf: [96]u8 = undefined;
+                        var chunk_smaller_buf: [96]u8 = undefined;
+                        var chunk_larger_buf: [96]u8 = undefined;
+                        const md_title = try mdStreamTitle(&title_buf, md_mode);
+                        const md_hint = try mdStreamHint(&hint_buf, md_mode, md_tick_every, md_chunk_len);
+                        const md_faster = try mdSpeedFasterLabel(&faster_buf, md_tick_every);
+                        const md_slower = try mdSpeedSlowerLabel(&slower_buf, md_tick_every);
+                        const md_chunk_smaller = try mdChunkSmallerLabel(&chunk_smaller_buf, md_chunk_len);
+                        const md_chunk_larger = try mdChunkLargerLabel(&chunk_larger_buf, md_chunk_len);
+
+                        try render.emitRootMorphPatch(
+                            arena_tx.allocator(),
+                            out,
+                            tick_text,
+                            status_text,
+                            md_stream_node,
+                            md_title,
+                            md_hint,
+                            md_faster,
+                            md_slower,
+                            md_chunk_smaller,
+                            md_chunk_larger,
+                            inputs[0..],
+                            lists[0..],
+                            layout_alt,
+                            list_height,
+                            popupsInfo(
+                                popup_modal_open,
+                                popup_dropdown_open,
+                                popup_tooltip_on,
+                                focus_id.items,
+                                hover_id.items,
+                                hover_item.items,
+                            ),
+                        );
                         try out.flush();
                     },
                     .activate => |a| {
@@ -607,10 +720,10 @@ pub fn main() !void {
                                 term_rows,
                                 term_cols,
                                 if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                             );
 
-                            const layout_alt = (tick % 2) == 1;
+                            const layout_alt = false;
                             _ = arena_tx.reset(.retain_capacity);
                             const md_stream_node = switch (md_mode) {
                                 .tracer18 => try markdown.compileLeaky(
@@ -659,7 +772,7 @@ pub fn main() !void {
                                 lists[0..],
                                 layout_alt,
                                 list_height,
-                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                                popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                             );
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
@@ -828,7 +941,7 @@ pub fn main() !void {
                             term_rows,
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
@@ -849,7 +962,7 @@ pub fn main() !void {
                             term_rows,
                             term_cols,
                             if (scroll_id.items.len > 0) .{ .id = scroll_id.items, .scroll_y = scroll_y } else null,
-                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items),
+                            popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                         );
                         std.debug.print("PATCH_TX target=status\n", .{});
                         try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");

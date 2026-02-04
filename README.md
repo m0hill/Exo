@@ -38,7 +38,7 @@ What's covered (no real TTY required):
 - Patch-by-id tree updates (`src/lib/tree.zig`)
 All tests live in `src/test/tests.zig`.
 
-## Protocol (v0.9)
+## Protocol (v0.10)
 
 Transport is newline-delimited JSON (JSONL) over pipes.
 
@@ -106,6 +106,24 @@ Resize (runtime-generated):
 {"type":"event","name":"resize","rows":40,"cols":120}
 ```
 
+Hover (strict opt-in via `hoverable:true`; emitted only on change):
+
+```json
+{"type":"event","name":"hover","id":"query","x":12,"y":3}
+```
+
+Hover leave (hovering “nothing”):
+
+```json
+{"type":"event","name":"hover","id":"","x":12,"y":3}
+```
+
+Hovering a list row (includes `item` when the row maps to an item id):
+
+```json
+{"type":"event","name":"hover","id":"results","x":12,"y":3,"item":"results-1"}
+```
+
 ### Nodes
 
 - `vbox`: `{ "type":"vbox", "id":"...", "children":[ ... ] }`
@@ -143,6 +161,12 @@ Containers (`vbox`/`hbox`) may also include:
 
 - `pad` (int, default 0): uniform padding (in cells)
 - `clip` (bool, default false): clip child rendering to the padded inner rect
+
+### Hover (optional)
+
+Any node may include:
+
+- `hoverable` (bool, default false): strict opt-in for hover hit-testing + hover event emission. Hover events are emitted only when `(id,item)` changes; when hovering “nothing”, `id` is `""`. For lists, `item` is the row’s node id (when applicable).
 
 ### Alignment (optional)
 

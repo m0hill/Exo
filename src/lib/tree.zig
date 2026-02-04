@@ -159,6 +159,7 @@ fn morphNodeLeaky(
             t.h = inc.h;
             t.flex = inc.flex;
             t.align_self = inc.align_self;
+            t.hoverable = inc.hoverable;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
             t.style = inc.style;
@@ -170,6 +171,7 @@ fn morphNodeLeaky(
             t.h = inc.h;
             t.flex = inc.flex;
             t.align_self = inc.align_self;
+            t.hoverable = inc.hoverable;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
             t.style = inc.style;
@@ -181,6 +183,7 @@ fn morphNodeLeaky(
             i.h = inc.h;
             i.flex = inc.flex;
             i.align_self = inc.align_self;
+            i.hoverable = inc.hoverable;
             i.content_align = inc.content_align;
             i.style = inc.style;
             i.placeholder_style = inc.placeholder_style;
@@ -195,6 +198,7 @@ fn morphNodeLeaky(
             v.flex = inc.flex;
             v.pad = inc.pad;
             v.clip = inc.clip;
+            v.hoverable = inc.hoverable;
             v.justify_content = inc.justify_content;
             v.align_items = inc.align_items;
             v.gap = inc.gap;
@@ -252,6 +256,7 @@ fn morphNodeLeaky(
             h.flex = inc.flex;
             h.pad = inc.pad;
             h.clip = inc.clip;
+            h.hoverable = inc.hoverable;
             h.justify_content = inc.justify_content;
             h.align_items = inc.align_items;
             h.gap = inc.gap;
@@ -310,6 +315,7 @@ fn morphNodeLeaky(
             b.pad = inc.pad;
             b.clip = inc.clip;
             b.shadow = inc.shadow;
+            b.hoverable = inc.hoverable;
             b.align_self = inc.align_self;
             b.style = inc.style;
 
@@ -328,6 +334,7 @@ fn morphNodeLeaky(
             s.flex = inc.flex;
             s.pad = inc.pad;
             s.clip = inc.clip;
+            s.hoverable = inc.hoverable;
             s.align_self = inc.align_self;
             s.style = inc.style;
 
@@ -348,6 +355,7 @@ fn morphNodeLeaky(
             o.flex = inc.flex;
             o.pad = inc.pad;
             o.clip = inc.clip;
+            o.hoverable = inc.hoverable;
             o.align_self = inc.align_self;
             o.style = inc.style;
 
@@ -420,6 +428,7 @@ fn morphNodeLeaky(
             l.flex = inc.flex;
             l.height = inc.height;
             l.align_self = inc.align_self;
+            l.hoverable = inc.hoverable;
             l.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);

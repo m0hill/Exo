@@ -89,6 +89,17 @@ pub fn writeResizeEventJsonl(writer: anytype, rows: usize, cols: usize) !void {
     try writer.print("{{\"type\":\"event\",\"name\":\"resize\",\"rows\":{d},\"cols\":{d}}}\n", .{ rows, cols });
 }
 
+pub fn writeHoverEventJsonl(writer: anytype, id: []const u8, x: usize, y: usize, item: ?[]const u8) !void {
+    try writer.writeAll("{\"type\":\"event\",\"name\":\"hover\",\"id\":");
+    try writeJsonString(writer, id);
+    try writer.print(",\"x\":{d},\"y\":{d}", .{ x, y });
+    if (item) |it| {
+        try writer.writeAll(",\"item\":");
+        try writeJsonString(writer, it);
+    }
+    try writer.writeAll("}\n");
+}
+
 pub fn writeNodeJson(writer: anytype, node: Node) !void {
     switch (node) {
         .vbox => |v| {
@@ -99,6 +110,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (v.flex != 0) try writer.print(",\"flex\":{d}", .{v.flex});
             if (v.pad != 0) try writer.print(",\"pad\":{d}", .{v.pad});
             if (v.clip) try writer.writeAll(",\"clip\":true");
+            if (v.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (v.justify_content != .start) {
                 try writer.writeAll(",\"justify_content\":");
                 try writeJsonString(writer, switch (v.justify_content) {
@@ -148,6 +160,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (h.flex != 0) try writer.print(",\"flex\":{d}", .{h.flex});
             if (h.pad != 0) try writer.print(",\"pad\":{d}", .{h.pad});
             if (h.clip) try writer.writeAll(",\"clip\":true");
+            if (h.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (h.justify_content != .start) {
                 try writer.writeAll(",\"justify_content\":");
                 try writeJsonString(writer, switch (h.justify_content) {
@@ -203,6 +216,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (b.pad != 0) try writer.print(",\"pad\":{d}", .{b.pad});
             if (!b.clip) try writer.writeAll(",\"clip\":false");
             if (b.shadow) try writer.writeAll(",\"shadow\":true");
+            if (b.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (b.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -228,6 +242,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (s.flex != 0) try writer.print(",\"flex\":{d}", .{s.flex});
             if (s.pad != 0) try writer.print(",\"pad\":{d}", .{s.pad});
             if (!s.clip) try writer.writeAll(",\"clip\":false");
+            if (s.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (s.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -253,6 +268,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (o.flex != 0) try writer.print(",\"flex\":{d}", .{o.flex});
             if (o.pad != 0) try writer.print(",\"pad\":{d}", .{o.pad});
             if (o.clip) try writer.writeAll(",\"clip\":true");
+            if (o.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (o.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -318,6 +334,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            if (t.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (t.ext_align != .left) {
                 try writer.writeAll(",\"ext_align\":");
                 try writeJsonString(writer, switch (t.ext_align) {
@@ -357,6 +374,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            if (t.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (t.ext_align != .left) {
                 try writer.writeAll(",\"ext_align\":");
                 try writeJsonString(writer, switch (t.ext_align) {
@@ -399,6 +417,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            if (inp.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (inp.content_align != .left) {
                 try writer.writeAll(",\"content_align\":");
                 try writeJsonString(writer, switch (inp.content_align) {
@@ -437,6 +456,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            if (l.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (l.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);

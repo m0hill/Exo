@@ -10,6 +10,7 @@ pub const CrashRestoreState = struct {
     raw_enabled: bool = false,
     screen_enabled: bool = false,
     mouse_enabled: bool = false,
+    mouse_motion_enabled: bool = false,
 };
 
 var crash_state: CrashRestoreState = .{};
@@ -34,6 +35,7 @@ fn updateCrashStateFromTerminal(term: *const Terminal) void {
         .raw_enabled = term.raw_enabled,
         .screen_enabled = term.screen_enabled,
         .mouse_enabled = term.mouse_enabled,
+        .mouse_motion_enabled = term.mouse_motion_enabled,
     };
     crash_state_active = true;
 }
@@ -56,6 +58,7 @@ pub fn restoreBestEffort() void {
 
     // Try to leave the terminal in a reasonable state even if we don't know
     // what was enabled.
+    writeAllBestEffort(st.stdout_fd, "\x1b[?1003l"); // disable mouse motion
     writeAllBestEffort(st.stdout_fd, "\x1b[?1006l"); // disable SGR mouse
     writeAllBestEffort(st.stdout_fd, "\x1b[?1000l"); // disable mouse
     writeAllBestEffort(st.stdout_fd, "\x1b[?25h"); // show cursor
@@ -78,6 +81,7 @@ pub const Terminal = struct {
     raw_enabled: bool = false,
     screen_enabled: bool = false,
     mouse_enabled: bool = false,
+    mouse_motion_enabled: bool = false,
 
     pub fn init() !Terminal {
         const stdin_fd: std.posix.fd_t = std.posix.STDIN_FILENO;
@@ -141,9 +145,27 @@ pub const Terminal = struct {
         return t;
     }
 
+    pub fn enableMouseMotion(self: *Terminal) !void {
+        if (self.mouse_motion_enabled) return;
+        try self.writeAll("\x1b[?1003h");
+        self.mouse_motion_enabled = true;
+        updateCrashStateFromTerminal(self);
+    }
+
+    pub fn disableMouseMotion(self: *Terminal) !void {
+        if (!self.mouse_motion_enabled) return;
+        try self.writeAll("\x1b[?1003l");
+        self.mouse_motion_enabled = false;
+        updateCrashStateFromTerminal(self);
+    }
+
     pub fn deinit(self: *Terminal) void {
         if (self.screen_enabled) {
             if (self.mouse_enabled) {
+                if (self.mouse_motion_enabled) {
+                    _ = self.writeAll("\x1b[?1003l") catch {};
+                    self.mouse_motion_enabled = false;
+                }
                 _ = self.writeAll("\x1b[?1006l") catch {};
                 _ = self.writeAll("\x1b[?1000l") catch {};
                 self.mouse_enabled = false;

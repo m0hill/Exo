@@ -14,6 +14,7 @@ const scheduler_mod = tui.scheduler;
 const mouse = tui.mouse;
 const style = tui.style;
 const markdown = tui.markdown;
+const hover = tui.hover;
 
 fn cellByte(frame: *const Frame, row: usize, col: usize) u8 {
     const c = frame.rowSlice(row)[col];
@@ -274,6 +275,89 @@ test "protocol: parse scroll node + scroll event" {
         },
         else => return error.TestUnexpectedResult,
     }
+}
+
+test "mouse: parse SGR move" {
+    const ev = mouse.parseSgrMouseSequence("<32;10;5M") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(mouse.MouseEventKind.move, ev.kind);
+    try std.testing.expectEqual(@as(usize, 9), ev.x);
+    try std.testing.expectEqual(@as(usize, 4), ev.y);
+}
+
+test "protocol: parse hover event (no item)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line = "{\"type\":\"event\",\"name\":\"hover\",\"id\":\"query\",\"x\":12,\"y\":3}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const ev = switch (msg) {
+        .event => |e| e,
+        else => return error.TestUnexpectedResult,
+    };
+    const h = switch (ev) {
+        .hover => |hh| hh,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("query", h.id);
+    try std.testing.expectEqual(@as(usize, 12), h.x);
+    try std.testing.expectEqual(@as(usize, 3), h.y);
+    try std.testing.expect(h.item == null);
+}
+
+test "protocol: parse hover event (with item)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line = "{\"type\":\"event\",\"name\":\"hover\",\"id\":\"results\",\"x\":0,\"y\":1,\"item\":\"results-1\"}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const ev = switch (msg) {
+        .event => |e| e,
+        else => return error.TestUnexpectedResult,
+    };
+    const h = switch (ev) {
+        .hover => |hh| hh,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("results", h.id);
+    try std.testing.expectEqual(@as(usize, 0), h.x);
+    try std.testing.expectEqual(@as(usize, 1), h.y);
+    try std.testing.expectEqualStrings("results-1", h.item orelse return error.TestUnexpectedResult);
+}
+
+test "protocol: parse hoverable field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line = "{\"type\":\"patch\",\"root\":{\"type\":\"text\",\"id\":\"t\",\"hoverable\":true,\"text\":\"hi\"}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+    const t = switch (root) {
+        .text => |tt| tt,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(t.hoverable);
+}
+
+test "ui: hover hit-test list item" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "results-0", .text = "0" } },
+        .{ .text = .{ .id = "results-1", .text = "1" } },
+        .{ .text = .{ .id = "results-2", .text = "2" } },
+        .{ .text = .{ .id = "results-3", .text = "3" } },
+    };
+
+    const root = protocol.Node{ .list = .{ .id = "results", .height = 3, .hoverable = true, .children = children[0..] } };
+    const list_states = [_]render.ListState{.{ .id = "results", .selected_id = "", .scroll = 0 }};
+    const empty_scrolls = [_]render.ScrollState{};
+    const hit = try hover.hoverHitTestLeaky(std.testing.allocator, root, 10, 10, 0, 1, empty_scrolls[0..], list_states[0..]);
+    try std.testing.expectEqualStrings("results", hit.id orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqualStrings("results-1", hit.item orelse return error.TestUnexpectedResult);
 }
 
 test "protocol: parse overlay node" {

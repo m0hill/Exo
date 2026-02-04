@@ -636,5 +636,36 @@
       "In the hbox demo, confirm items A/B/C are spaced across the row (space_between) and aligned to the bottom (align_items=end)",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 24,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Hover tooltip plumbing (strict opt-in): runtime emits change-only hover events and demo shows an anchored tooltip overlay",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig: protocol v0.10 adds `hoverable` node field + `hover` event (optional `item`)",
+      "src/lib/terminal.zig: toggle xterm mouse motion tracking (1003) only when needed; best-effort restore disables it",
+      "src/lib/mouse.zig: parse SGR mouse move events",
+      "src/bin/runtime/ui/mod.zig + src/bin/runtime/app.zig: hover hit-testing (modal + overlay-aware), change-only hover emission, and pointer refresh after patches",
+      "src/bin/demo/main.zig + src/bin/demo/render.zig + src/bin/demo/state.zig: demo renders a hover-driven tooltip overlay anchored to the hovered node id",
+      "src/test/tests.zig: unit tests for mouse move parsing, hover protocol parsing, and list-row hover hit-testing",
+      "README.md: document protocol v0.10 hover behavior"
+    ],
+    "boundaries_hit": [
+      "Strict opt-in hover (`hoverable:true`) across all node types",
+      "Mouse motion tracking enabled only when hoverables exist to reduce terminal input traffic",
+      "Change-only hover event emission (no move spam) with optional list-row `item` identification",
+      "Overlay/modal-aware hover hit-testing with topmost-wins semantics"
+    ],
+    "timestamp": "2026-02-04",
+    "manual_repro": [
+      "zig build demo",
+      "Hover over a node marked `hoverable:true` (e.g. the panel input or results list); confirm backend logs `EVENT_RX name=hover ...` and a tooltip appears anchored to that id",
+      "Move within the same hover target; confirm no additional hover events are logged (change-only)",
+      "Move off any hoverable target; confirm a hover leave event is logged with `id:\"\"` and the tooltip disappears",
+      "Hover over a hoverable list; confirm the hover event includes `item` and it updates as you move across rows",
+      "Wheel-scroll the list under the cursor; confirm the hovered `item` updates under the same cursor position (opt-in behavior)",
+      "Exit with 'x'"
+    ]
   }
 ]

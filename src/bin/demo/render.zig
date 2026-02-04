@@ -185,7 +185,7 @@ fn writeInputNodeLayout(
     h: ?usize,
     flex: usize,
 ) !void {
-    try writeInputNodeLayoutStyled(writer, id, placeholder, w, h, flex, null, null);
+    try writeInputNodeLayoutStyled(writer, id, placeholder, w, h, flex, null, null, false);
 }
 
 fn writeInputNodeLayoutStyled(
@@ -197,6 +197,7 @@ fn writeInputNodeLayoutStyled(
     flex: usize,
     style_json: ?[]const u8,
     placeholder_style_json: ?[]const u8,
+    hoverable: bool,
 ) !void {
     try writer.writeAll("{\"type\":\"input\",\"id\":");
     try protocol.writeJsonString(writer, id);
@@ -211,18 +212,27 @@ fn writeInputNodeLayoutStyled(
         try writer.writeAll(",\"placeholder_style\":");
         try writer.writeAll(sj);
     }
+    if (hoverable) try writer.writeAll(",\"hoverable\":true");
     try writer.writeAll(",\"placeholder\":");
     try protocol.writeJsonString(writer, placeholder);
     try writer.writeByte('}');
 }
 
-fn writeListNode(writer: anytype, id: []const u8, height: usize, items: []const u64, style_json: ?[]const u8) !void {
+fn writeListNode(
+    writer: anytype,
+    id: []const u8,
+    height: usize,
+    items: []const u64,
+    style_json: ?[]const u8,
+    hoverable: bool,
+) !void {
     try writer.writeAll("{\"type\":\"list\",\"id\":");
     try protocol.writeJsonString(writer, id);
     if (style_json) |sj| {
         try writer.writeAll(",\"style\":");
         try writer.writeAll(sj);
     }
+    if (hoverable) try writer.writeAll(",\"hoverable\":true");
     try writer.print(",\"height\":{d},\"children\":[", .{height});
     for (items, 0..) |it, idx| {
         if (idx != 0) try writer.writeByte(',');
@@ -239,7 +249,7 @@ pub fn emitListMorphPatch(writer: anytype, list_id: []const u8, items: []const u
     try writer.writeAll("{\"type\":\"patch\",\"target\":");
     try protocol.writeJsonString(writer, list_id);
     try writer.writeAll(",\"mode\":\"morph\",\"node\":");
-    try writeListNode(writer, list_id, height, items, null);
+    try writeListNode(writer, list_id, height, items, null, true);
     try writer.writeAll("}\n");
 }
 
@@ -344,9 +354,10 @@ fn writePanelNode(
         0,
         "{\"fg\":\"#f9fafb\"}",
         "{\"fg\":\"gray\",\"dim\":true}",
+        true,
     );
     try writer.writeByte(',');
-    try writeListNode(writer, list_id, list_height, items, "{\"fg\":\"#e5e7eb\"}");
+    try writeListNode(writer, list_id, list_height, items, "{\"fg\":\"#e5e7eb\"}", true);
     try writer.writeAll("]}");
     try writer.writeByte('}');
 }
@@ -557,6 +568,7 @@ fn writeRootNode(
         0,
         "{\"fg\":\"#f9fafb\"}",
         "{\"fg\":\"gray\",\"dim\":true}",
+        false,
     );
     try writer.writeByte(',');
     try writer.writeAll("{\"type\":\"list\",\"id\":\"md-actions\",\"height\":3,\"children\":[");
@@ -694,6 +706,38 @@ fn writeRootNode(
         try writer.writeAll(",\"placement\":\"right\",\"align\":\"center\",\"offset_x\":1,\"w\":26}");
     }
 
+    if (popups.hover_id.len > 0) {
+        if (wrote_any) try writer.writeByte(',') else wrote_any = true;
+        var hovered_buf: [192]u8 = undefined;
+        const hovered_text = try std.fmt.bufPrint(&hovered_buf, "Hovered: {s}", .{popups.hover_id});
+        var item_buf: [192]u8 = undefined;
+        const item_text: ?[]const u8 = if (popups.hover_item.len > 0)
+            try std.fmt.bufPrint(&item_buf, "Item: {s}", .{popups.hover_item})
+        else
+            null;
+
+        try writer.writeAll("{\"node\":");
+        try writer.writeAll("{\"type\":\"box\",\"id\":\"hover-tip-box\",\"shadow\":true");
+        try writer.writeAll(",\"style\":{\"bg\":\"#111827\",\"fg\":\"#fbbf24\"}");
+        try writer.writeAll(",\"child\":");
+        try writer.writeAll("{\"type\":\"vbox\",\"id\":\"hover-tip\",\"clip\":true,\"children\":[");
+        try writer.writeAll("{\"type\":\"text\",\"id\":\"hover-tip-hovered\",\"h\":1");
+        try writer.writeAll(",\"style\":{\"fg\":\"#e5e7eb\"},\"text\":");
+        try protocol.writeJsonString(writer, hovered_text);
+        try writer.writeAll("}");
+        if (item_text) |it| {
+            try writer.writeByte(',');
+            try writer.writeAll("{\"type\":\"text\",\"id\":\"hover-tip-item\",\"h\":1");
+            try writer.writeAll(",\"style\":{\"fg\":\"#94a3b8\",\"dim\":true},\"text\":");
+            try protocol.writeJsonString(writer, it);
+            try writer.writeAll("}");
+        }
+        try writer.writeAll("]}}");
+        try writer.writeAll(",\"anchor\":");
+        try protocol.writeJsonString(writer, popups.hover_id);
+        try writer.writeAll(",\"placement\":\"right\",\"align\":\"center\",\"offset_x\":1,\"w\":34}");
+    }
+
     if (popups.modal_open) {
         if (wrote_any) try writer.writeByte(',') else wrote_any = true;
         try writer.writeAll("{\"node\":");
@@ -711,6 +755,7 @@ fn writeRootNode(
             0,
             "{\"fg\":\"#f9fafb\"}",
             "{\"fg\":\"gray\",\"dim\":true}",
+            false,
         );
         try writer.writeByte(',');
         try writer.writeAll("{\"type\":\"list\",\"id\":\"modal-actions\",\"height\":1,\"style\":{\"fg\":\"#e5e7eb\"},\"children\":[");

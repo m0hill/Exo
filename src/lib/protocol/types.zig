@@ -24,6 +24,7 @@ pub const EventMsg = union(enum) {
     activate: struct { id: []const u8, item: []const u8 },
     scroll: struct { id: []const u8, scroll_y: usize },
     resize: struct { rows: usize, cols: usize },
+    hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null },
 };
 
 pub const Node = union(enum) {
@@ -73,6 +74,7 @@ pub const VBoxNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    hoverable: bool = false,
     justify_content: JustifyContent = .start,
     align_items: AlignItems = .stretch,
     gap: usize = 0,
@@ -88,6 +90,7 @@ pub const HBoxNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    hoverable: bool = false,
     justify_content: JustifyContent = .start,
     align_items: AlignItems = .stretch,
     gap: usize = 0,
@@ -107,6 +110,7 @@ pub const BoxNode = struct {
     /// Defaults to true; backends may omit `clip` entirely.
     clip: bool = true,
     shadow: bool = false,
+    hoverable: bool = false,
     align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     child: *Node,
@@ -120,6 +124,7 @@ pub const ScrollNode = struct {
     pad: usize = 0,
     /// Defaults to true; backends may omit `clip` entirely.
     clip: bool = true,
+    hoverable: bool = false,
     align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     child: *Node,
@@ -159,6 +164,7 @@ pub const OverlayNode = struct {
     flex: usize = 0,
     pad: usize = 0,
     clip: bool = false,
+    hoverable: bool = false,
     align_self: ?AlignItems = null,
     style: ?style.StyleOverride = null,
     base: *Node,
@@ -171,6 +177,7 @@ pub const TextNode = struct {
     h: ?usize = null,
     flex: usize = 0,
     align_self: ?AlignItems = null,
+    hoverable: bool = false,
     ext_align: HorizontalAlign = .left,
     v_align: VerticalAlign = .top,
     style: ?style.StyleOverride = null,
@@ -188,6 +195,7 @@ pub const StyledTextNode = struct {
     h: ?usize = null,
     flex: usize = 0,
     align_self: ?AlignItems = null,
+    hoverable: bool = false,
     ext_align: HorizontalAlign = .left,
     v_align: VerticalAlign = .top,
     style: ?style.StyleOverride = null,
@@ -200,6 +208,7 @@ pub const InputNode = struct {
     h: ?usize = null,
     flex: usize = 0,
     align_self: ?AlignItems = null,
+    hoverable: bool = false,
     content_align: HorizontalAlign = .left,
     style: ?style.StyleOverride = null,
     placeholder_style: ?style.StyleOverride = null,
@@ -213,6 +222,7 @@ pub const ListNode = struct {
     flex: usize = 0,
     height: ?usize = null,
     align_self: ?AlignItems = null,
+    hoverable: bool = false,
     style: ?style.StyleOverride = null,
     children: []Node,
 };
