@@ -97,11 +97,13 @@ fn writeViaCommand(data: []const u8, argv: []const []const u8) !void {
     };
     in.writeAll(data) catch {
         in.close();
+        child.stdin = null;
         _ = child.kill() catch {};
         _ = child.wait() catch {};
         return error.SystemFailure;
     };
     in.close();
+    child.stdin = null;
     const term = child.wait() catch return error.SystemFailure;
     if (!commandTermOk(term)) return error.SystemFailure;
 }
@@ -115,7 +117,6 @@ fn readViaCommand(allocator: std.mem.Allocator, argv: []const []const u8) Error!
     errdefer _ = child.kill() catch {};
 
     const out = child.stdout orelse return error.SystemFailure;
-    defer out.close();
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);

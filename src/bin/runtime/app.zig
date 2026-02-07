@@ -134,6 +134,10 @@ pub fn run() !void {
     const child_in_file = child.stdin orelse return error.Unexpected;
     const child_out_file = child.stdout orelse return error.Unexpected;
     const child_err_file = child.stderr orelse return error.Unexpected;
+    // IOMux owns these read pipes and closes them on teardown. Clear child-owned
+    // references so kill()/wait() does not attempt to close them a second time.
+    child.stdout = null;
+    child.stderr = null;
 
     var child_in_buf: [4096]u8 = undefined;
     var child_in_w = child_in_file.writerStreaming(&child_in_buf);
@@ -219,7 +223,6 @@ pub fn run() !void {
             break :blk @as(i32, @intCast(if (ms_u64 > max_i32) max_i32 else ms_u64));
         };
         const poll_timeout_ms = timing.minTimeoutMs(timing.minTimeoutMs(resize_timeout_ms, frame_timeout_ms), decoder_timeout_ms);
-        const ev_opt = mux.recvTimeout(poll_timeout_ms);
         while (true) {
             const tick_ns = timing.monotonicNowNs();
             const decoded = decoder.tick(tick_ns) orelse break;
@@ -234,7 +237,11 @@ pub fn run() !void {
             }
         }
         var sched_changed_live: bool = false;
-        if (ev_opt) |ev| {
+        var events_processed: usize = 0;
+        var next_timeout_ms: i32 = poll_timeout_ms;
+        while (events_processed < timing.max_backend_lines_per_iter) : (events_processed += 1) {
+            const ev = mux.recvTimeout(next_timeout_ms) orelse break;
+            next_timeout_ms = 0;
             switch (ev) {
                 .backend_closed => {
                     log.logPrint(&log_sink, "BACKEND_CLOSED\n", .{});
@@ -775,6 +782,7 @@ pub fn run() !void {
                     log.logPrint(&log_sink, "PATCH_ERR reason=line_too_long\n", .{});
                 },
             }
+            if (exit_now) break;
         }
 
         if (sched_changed_live) {
