@@ -635,7 +635,7 @@ test "protocol: parse config keybindings message" {
 
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const cfg = switch (msg) {
-        .config => |c| c.keybindings,
+        .config => |c| c.keybindings orelse return error.TestUnexpectedResult,
         else => return error.TestUnexpectedResult,
     };
     try std.testing.expect(cfg.global != null);
@@ -649,7 +649,7 @@ test "protocol: parse config keybindings message" {
         "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"n\",\"action\":\"focus_scope_next\"}]}}";
     const scope_msg = try protocol.parseMsgLeaky(arena.allocator(), scope_line);
     const scope_cfg = switch (scope_msg) {
-        .config => |c| c.keybindings,
+        .config => |c| c.keybindings orelse return error.TestUnexpectedResult,
         else => return error.TestUnexpectedResult,
     };
     try std.testing.expectEqual(protocol.KeyAction.focus_scope_next, scope_cfg.global.?[0].action);
@@ -677,6 +677,72 @@ test "protocol: reject malformed keybinding rule" {
     try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), missing_key));
 }
 
+test "protocol: parse theme message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"theme\",\"name\":\"light\"}");
+    switch (msg) {
+        .theme => |tm| try std.testing.expectEqual(protocol.ThemeName.light, tm.name),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: parse config theme-only message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme\":\"ocean\"}");
+    switch (msg) {
+        .config => |cfg| {
+            try std.testing.expect(cfg.keybindings == null);
+            try std.testing.expectEqual(protocol.ThemeName.ocean, cfg.theme orelse return error.TestUnexpectedResult);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: write config rejects empty payload" {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try std.testing.expectError(
+        error.MissingField,
+        protocol.writeConfigJsonl(buf.writer(std.testing.allocator), .{}),
+    );
+}
+
+test "protocol: class roundtrip via writer+parser" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const root = protocol.Node{ .text = .{
+        .id = "title",
+        .class = "accent",
+        .text = "Hello",
+    } };
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try protocol.writeNodeJson(buf.writer(std.testing.allocator), root);
+    try buf.appendSlice(std.testing.allocator, "}");
+
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"class\":\"accent\"") != null);
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    const parsed = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+    switch (parsed) {
+        .text => |t| try std.testing.expectEqualStrings("accent", t.class orelse return error.TestUnexpectedResult),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "protocol: parse textarea v2 key actions" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -690,7 +756,7 @@ test "protocol: parse textarea v2 key actions" {
         "]}}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const cfg = switch (msg) {
-        .config => |c| c.keybindings,
+        .config => |c| c.keybindings orelse return error.TestUnexpectedResult,
         else => return error.TestUnexpectedResult,
     };
     try std.testing.expect(cfg.textarea != null);
@@ -712,7 +778,7 @@ test "protocol: parse input v2 key actions" {
         "]}}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const cfg = switch (msg) {
-        .config => |c| c.keybindings,
+        .config => |c| c.keybindings orelse return error.TestUnexpectedResult,
         else => return error.TestUnexpectedResult,
     };
     try std.testing.expect(cfg.input != null);

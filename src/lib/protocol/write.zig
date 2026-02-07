@@ -24,6 +24,7 @@ const PasteSource = protocol.PasteSource;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
+const ThemeName = protocol.ThemeName;
 const StateMode = protocol.StateMode;
 const ParseMsgError = protocol.ParseMsgError;
 
@@ -210,16 +211,39 @@ pub fn writePasteEventJsonl(writer: anytype, source: PasteSource, bytes: usize) 
     try writer.print(",\"bytes\":{d}}}\n", .{bytes});
 }
 
-pub fn writeConfigJsonl(writer: anytype, cfg: KeybindingsConfig) !void {
-    try writer.writeAll("{\"type\":\"config\",\"keybindings\":{");
-    var wrote_context = false;
-    try writeKeybindingContext(writer, "global", cfg.global, &wrote_context);
-    try writeKeybindingContext(writer, "input", cfg.input, &wrote_context);
-    try writeKeybindingContext(writer, "textarea", cfg.textarea, &wrote_context);
-    try writeKeybindingContext(writer, "list", cfg.list, &wrote_context);
-    try writeKeybindingContext(writer, "scroll", cfg.scroll, &wrote_context);
-    try writeKeybindingContext(writer, "action", cfg.action, &wrote_context);
-    try writer.writeAll("}}\n");
+pub fn writeConfigJsonl(writer: anytype, cfg: protocol.ConfigMsg) !void {
+    if (cfg.keybindings == null and cfg.theme == null) return ParseMsgError.MissingField;
+    try writer.writeAll("{\"type\":\"config\"");
+    if (cfg.keybindings) |kb| {
+        try writer.writeAll(",\"keybindings\":{");
+        var wrote_context = false;
+        try writeKeybindingContext(writer, "global", kb.global, &wrote_context);
+        try writeKeybindingContext(writer, "input", kb.input, &wrote_context);
+        try writeKeybindingContext(writer, "textarea", kb.textarea, &wrote_context);
+        try writeKeybindingContext(writer, "list", kb.list, &wrote_context);
+        try writeKeybindingContext(writer, "scroll", kb.scroll, &wrote_context);
+        try writeKeybindingContext(writer, "action", kb.action, &wrote_context);
+        try writer.writeByte('}');
+    }
+    if (cfg.theme) |theme| {
+        try writer.writeAll(",\"theme\":");
+        try writeJsonString(writer, switch (theme) {
+            .default => "default",
+            .light => "light",
+            .ocean => "ocean",
+        });
+    }
+    try writer.writeAll("}\n");
+}
+
+pub fn writeThemeJsonl(writer: anytype, name: ThemeName) !void {
+    try writer.writeAll("{\"type\":\"theme\",\"name\":");
+    try writeJsonString(writer, switch (name) {
+        .default => "default",
+        .light => "light",
+        .ocean => "ocean",
+    });
+    try writer.writeAll("}\n");
 }
 
 fn writeKeybindingContext(
@@ -345,6 +369,13 @@ fn writeWidgetStateFields(
     }
 }
 
+fn writeClassField(writer: anytype, class: ?[]const u8) !void {
+    const cls = class orelse return;
+    if (cls.len == 0) return;
+    try writer.writeAll(",\"class\":");
+    try writeJsonString(writer, cls);
+}
+
 fn writeGridPlacementFields(
     writer: anytype,
     grid_row: ?usize,
@@ -388,6 +419,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .vbox => |v| {
             try writer.writeAll("{\"type\":\"vbox\",\"id\":");
             try writeJsonString(writer, v.id);
+            try writeClassField(writer, v.class);
             if (v.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (v.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (v.flex != 0) try writer.print(",\"flex\":{d}", .{v.flex});
@@ -441,6 +473,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .hbox => |h| {
             try writer.writeAll("{\"type\":\"hbox\",\"id\":");
             try writeJsonString(writer, h.id);
+            try writeClassField(writer, h.class);
             if (h.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (h.h) |hh| try writer.print(",\"h\":{d}", .{hh});
             if (h.flex != 0) try writer.print(",\"flex\":{d}", .{h.flex});
@@ -494,6 +527,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .grid => |g| {
             try writer.writeAll("{\"type\":\"grid\",\"id\":");
             try writeJsonString(writer, g.id);
+            try writeClassField(writer, g.class);
             if (g.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (g.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (g.flex != 0) try writer.print(",\"flex\":{d}", .{g.flex});
@@ -547,6 +581,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .box => |b| {
             try writer.writeAll("{\"type\":\"box\",\"id\":");
             try writeJsonString(writer, b.id);
+            try writeClassField(writer, b.class);
             if (b.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (b.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (b.flex != 0) try writer.print(",\"flex\":{d}", .{b.flex});
@@ -582,6 +617,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .scroll => |s| {
             try writer.writeAll("{\"type\":\"scroll\",\"id\":");
             try writeJsonString(writer, s.id);
+            try writeClassField(writer, s.class);
             if (s.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (s.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (s.flex != 0) try writer.print(",\"flex\":{d}", .{s.flex});
@@ -613,6 +649,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .overlay => |o| {
             try writer.writeAll("{\"type\":\"overlay\",\"id\":");
             try writeJsonString(writer, o.id);
+            try writeClassField(writer, o.class);
             if (o.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (o.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (o.flex != 0) try writer.print(",\"flex\":{d}", .{o.flex});
@@ -675,6 +712,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .text => |t| {
             try writer.writeAll("{\"type\":\"text\",\"id\":");
             try writeJsonString(writer, t.id);
+            try writeClassField(writer, t.class);
             if (t.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (t.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (t.flex != 0) try writer.print(",\"flex\":{d}", .{t.flex});
@@ -718,6 +756,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .styled_text => |t| {
             try writer.writeAll("{\"type\":\"styled_text\",\"id\":");
             try writeJsonString(writer, t.id);
+            try writeClassField(writer, t.class);
             if (t.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (t.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (t.flex != 0) try writer.print(",\"flex\":{d}", .{t.flex});
@@ -764,6 +803,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .input => |inp| {
             try writer.writeAll("{\"type\":\"input\",\"id\":");
             try writeJsonString(writer, inp.id);
+            try writeClassField(writer, inp.class);
             if (inp.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (inp.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (inp.flex != 0) try writer.print(",\"flex\":{d}", .{inp.flex});
@@ -818,6 +858,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .textarea => |ta| {
             try writer.writeAll("{\"type\":\"textarea\",\"id\":");
             try writeJsonString(writer, ta.id);
+            try writeClassField(writer, ta.class);
             if (ta.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (ta.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (ta.flex != 0) try writer.print(",\"flex\":{d}", .{ta.flex});
@@ -864,6 +905,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
         .list => |l| {
             try writer.writeAll("{\"type\":\"list\",\"id\":");
             try writeJsonString(writer, l.id);
+            try writeClassField(writer, l.class);
             if (l.w) |w| try writer.print(",\"w\":{d}", .{w});
             if (l.h) |h| try writer.print(",\"h\":{d}", .{h});
             if (l.flex != 0) try writer.print(",\"flex\":{d}", .{l.flex});

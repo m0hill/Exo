@@ -6,6 +6,7 @@ pub const Msg = union(enum) {
     event: EventMsg,
     clipboard: ClipboardMsg,
     config: ConfigMsg,
+    theme: ThemeMsg,
 };
 
 pub const PatchMsg = union(enum) {
@@ -65,7 +66,18 @@ pub const PasteEvent = struct {
 };
 
 pub const ConfigMsg = struct {
-    keybindings: KeybindingsConfig,
+    keybindings: ?KeybindingsConfig = null,
+    theme: ?ThemeName = null,
+};
+
+pub const ThemeName = enum {
+    default,
+    light,
+    ocean,
+};
+
+pub const ThemeMsg = struct {
+    name: ThemeName,
 };
 
 pub const KeybindingsConfig = struct {
@@ -204,6 +216,7 @@ pub const VerticalAlign = enum {
 
 pub const VBoxNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -231,6 +244,7 @@ pub const VBoxNode = struct {
 
 pub const HBoxNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -264,6 +278,7 @@ pub const GridTrack = union(enum) {
 
 pub const GridNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -294,6 +309,7 @@ pub const GridNode = struct {
 
 pub const BoxNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -322,6 +338,7 @@ pub const BoxNode = struct {
 
 pub const ScrollNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -376,6 +393,7 @@ pub const OverlayLayer = struct {
 
 pub const OverlayNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -401,6 +419,7 @@ pub const OverlayNode = struct {
 
 pub const TextNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -430,6 +449,7 @@ pub const Span = struct {
 
 pub const StyledTextNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -454,6 +474,7 @@ pub const StyledTextNode = struct {
 
 pub const InputNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -485,6 +506,7 @@ pub const InputNode = struct {
 
 pub const TextareaNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -520,6 +542,7 @@ pub const ListMarker = enum {
 
 pub const ListNode = struct {
     id: []const u8,
+    class: ?[]const u8 = null,
     w: ?usize = null,
     h: ?usize = null,
     flex: usize = 0,
@@ -602,6 +625,7 @@ pub const ParseMsgError = error{
     UnknownClipboardOp,
     UnknownClipboardTarget,
     UnknownPasteSource,
+    UnknownThemeName,
     UnknownKeyAction,
     InvalidKeybindingRule,
 } || std.mem.Allocator.Error;

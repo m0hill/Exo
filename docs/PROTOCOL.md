@@ -15,6 +15,7 @@ Every line is a single JSON object with a `type`:
 - `event` (runtime → backend)
 - `clipboard` (backend → runtime)
 - `config` (backend → runtime)
+- `theme` (backend → runtime)
 
 ### Patch (backend → runtime)
 
@@ -67,6 +68,12 @@ Runtime keybindings can be replaced at runtime with a strict, replace-style mess
 }
 ```
 
+Config can also switch the active runtime theme:
+
+```json
+{"type":"config","theme":"light"}
+```
+
 Rules:
 
 - each rule is `{ "key": string, "mods": number (optional, default 0), "action": string }`
@@ -76,6 +83,20 @@ Rules:
 - explicit empty arrays clear defaults for that context
 - matching is exact (`key` + `mods`), context-first and then `global`
 - malformed rules reject the entire config message
+
+Theme names:
+
+- `default`
+- `light`
+- `ocean`
+
+### Theme (backend -> runtime)
+
+A dedicated theme message can also change active theme at runtime:
+
+```json
+{"type":"theme","name":"ocean"}
+```
 
 Action names:
 
@@ -152,6 +173,7 @@ Node types (current):
 ### Common fields (most nodes)
 
 - `id` (string, required)
+- `class` (string, optional): theme class hook (exact string match; no selector language)
 - layout: `w`/`h` (int?), `flex` (int), `pad` (int), `clip` (bool)
 - interaction/state: `hoverable` (bool), `mouseable` (bool), `focusable` (bool), `disabled` (bool), `readonly` (bool)
 - focus scoping: `focus_scope` (string, optional; alias `focus_group` accepted on input)

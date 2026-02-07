@@ -175,6 +175,7 @@ fn morphNodeLeaky(
     switch (existing.*) {
         .text => |*t| {
             const inc = incoming.text;
+            t.class = inc.class;
             t.w = inc.w;
             t.h = inc.h;
             t.flex = inc.flex;
@@ -198,6 +199,7 @@ fn morphNodeLeaky(
         },
         .styled_text => |*t| {
             const inc = incoming.styled_text;
+            t.class = inc.class;
             t.w = inc.w;
             t.h = inc.h;
             t.flex = inc.flex;
@@ -221,6 +223,7 @@ fn morphNodeLeaky(
         },
         .input => |*i| {
             const inc = incoming.input;
+            i.class = inc.class;
             i.w = inc.w;
             i.h = inc.h;
             i.flex = inc.flex;
@@ -244,6 +247,7 @@ fn morphNodeLeaky(
         },
         .textarea => |*t| {
             const inc = incoming.textarea;
+            t.class = inc.class;
             t.w = inc.w;
             t.h = inc.h;
             t.flex = inc.flex;
@@ -269,6 +273,7 @@ fn morphNodeLeaky(
             const inc = incoming.vbox;
             const existing_children = v.children;
 
+            v.class = inc.class;
             v.w = inc.w;
             v.h = inc.h;
             v.flex = inc.flex;
@@ -338,6 +343,7 @@ fn morphNodeLeaky(
             const inc = incoming.hbox;
             const existing_children = h.children;
 
+            h.class = inc.class;
             h.w = inc.w;
             h.h = inc.h;
             h.flex = inc.flex;
@@ -407,6 +413,7 @@ fn morphNodeLeaky(
             const inc = incoming.grid;
             const existing_children = g.children;
 
+            g.class = inc.class;
             g.w = inc.w;
             g.h = inc.h;
             g.flex = inc.flex;
@@ -476,6 +483,7 @@ fn morphNodeLeaky(
         },
         .box => |*b| {
             const inc = incoming.box;
+            b.class = inc.class;
             b.w = inc.w;
             b.h = inc.h;
             b.flex = inc.flex;
@@ -509,6 +517,7 @@ fn morphNodeLeaky(
         },
         .scroll => |*s| {
             const inc = incoming.scroll;
+            s.class = inc.class;
             s.w = inc.w;
             s.h = inc.h;
             s.flex = inc.flex;
@@ -541,6 +550,7 @@ fn morphNodeLeaky(
             const inc = incoming.overlay;
             const existing_layers = o.layers;
 
+            o.class = inc.class;
             o.w = inc.w;
             o.h = inc.h;
             o.flex = inc.flex;
@@ -625,6 +635,7 @@ fn morphNodeLeaky(
             const inc = incoming.list;
             const existing_children = l.children;
 
+            l.class = inc.class;
             l.w = inc.w;
             l.h = inc.h;
             l.flex = inc.flex;

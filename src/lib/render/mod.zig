@@ -8,9 +8,14 @@ const theme_mod = @import("theme.zig");
 
 const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
-const default_theme = theme_mod.default_theme;
+pub const Theme = theme_mod.Theme;
+pub const default_theme = theme_mod.default_theme;
+pub const light_theme = theme_mod.light_theme;
+pub const ocean_theme = theme_mod.ocean_theme;
+pub const themeFromName = theme_mod.themeFromName;
 
 pub const RenderState = struct {
+    theme: *const Theme = &theme_mod.default_theme,
     focused_id: ?[]const u8 = null,
     hovered_id: ?[]const u8 = null,
     hovered_item: ?[]const u8 = null,
@@ -1111,17 +1116,18 @@ fn nodeValidation(node: protocol.Node) protocol.ValidationState {
 
 fn applyStateOverlays(base: style.Style, node: protocol.Node, state: RenderState) style.Style {
     var out = base;
+    const theme = state.theme.*;
 
     const v = nodeValidation(node);
     out = switch (v) {
         .none => out,
-        .@"error" => applyOverlay(out, default_theme.validation_error_overlay),
-        .warning => applyOverlay(out, default_theme.validation_warning_overlay),
-        .success => applyOverlay(out, default_theme.validation_success_overlay),
+        .@"error" => applyOverlay(out, theme.validation_error_overlay),
+        .warning => applyOverlay(out, theme.validation_warning_overlay),
+        .success => applyOverlay(out, theme.validation_success_overlay),
     };
 
-    if (nodeDisabled(node)) out = applyOverlay(out, default_theme.disabled_overlay);
-    if (nodeReadonly(node)) out = applyOverlay(out, default_theme.readonly_overlay);
+    if (nodeDisabled(node)) out = applyOverlay(out, theme.disabled_overlay);
+    if (nodeReadonly(node)) out = applyOverlay(out, theme.readonly_overlay);
 
     const id = nodeId(node);
     if (state.hovered_id != null and std.mem.eql(u8, state.hovered_id.?, id)) {
@@ -1132,14 +1138,14 @@ fn applyStateOverlays(base: style.Style, node: protocol.Node, state: RenderState
             else => false,
         };
         if (!is_list) {
-            out = applyOverlay(out, default_theme.hovered_overlay);
+            out = applyOverlay(out, theme.hovered_overlay);
         }
     }
     if (state.focused_id != null and std.mem.eql(u8, state.focused_id.?, id)) {
-        out = applyOverlay(out, default_theme.focused_overlay);
+        out = applyOverlay(out, theme.focused_overlay);
     }
     if (state.active_id != null and std.mem.eql(u8, state.active_id.?, id)) {
-        out = applyOverlay(out, default_theme.active_overlay);
+        out = applyOverlay(out, theme.active_overlay);
     }
 
     return out;
@@ -1158,6 +1164,38 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
         .input => |i| i.style,
         .textarea => |t| t.style,
         .list => |l| l.style,
+    };
+}
+
+fn nodeClass(node: protocol.Node) ?[]const u8 {
+    return switch (node) {
+        .vbox => |v| v.class,
+        .hbox => |h| h.class,
+        .grid => |g| g.class,
+        .box => |b| b.class,
+        .scroll => |s| s.class,
+        .overlay => |o| o.class,
+        .text => |t| t.class,
+        .styled_text => |t| t.class,
+        .input => |i| i.class,
+        .textarea => |t| t.class,
+        .list => |l| l.class,
+    };
+}
+
+fn nodeKind(node: protocol.Node) theme_mod.NodeKind {
+    return switch (node) {
+        .vbox => .vbox,
+        .hbox => .hbox,
+        .grid => .grid,
+        .box => .box,
+        .scroll => .scroll,
+        .overlay => .overlay,
+        .text => .text,
+        .styled_text => .styled_text,
+        .input => .input,
+        .textarea => .textarea,
+        .list => .list,
     };
 }
 
@@ -1217,7 +1255,8 @@ fn paintInput(
 
     const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, i.id);
     const input_state = findInputState(state.inputs, i.id);
-    const prefix = "> ";
+    const chrome = state.theme.chrome;
+    const prefix = chrome.input_prefix;
     const prefix_cols: usize = unicode.displayWidth(prefix);
     const cols: usize = rect.w;
     const visible_cols: usize = if (cols > prefix_cols) cols - prefix_cols else 0;
@@ -1331,7 +1370,9 @@ fn paintInput(
         } else {
             renderLinePiecesInRectStyled(frame, row, rect, clip, &.{prefix}, &.{base_packed});
             if (visible_cols != 0) {
-                const content_cols: usize = 2 + ph_cols;
+                const left_bracket_w = unicode.displayWidth(chrome.input_placeholder_left);
+                const right_bracket_w = unicode.displayWidth(chrome.input_placeholder_right);
+                const content_cols: usize = left_bracket_w + right_bracket_w + ph_cols;
                 const pad_left: usize = if (st.scroll_x == 0 and content_cols <= visible_cols)
                     hAlignOffset(visible_cols, content_cols, i.content_align)
                 else
@@ -1339,9 +1380,9 @@ fn paintInput(
                 const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left));
                 const max_w: usize = if (visible_cols > pad_left) visible_cols - pad_left else 0;
                 const one: u2 = 1;
-                render_text.putGraphemeClipped(frame, row, col_abs, "[", one, clip, base_packed);
-                drawInlineTextAt(frame, row, col_abs + 1, clip, ph, if (max_w > 1) max_w - 1 else 0, ph_packed);
-                render_text.putGraphemeClipped(frame, row, col_abs + 1 + @as(isize, @intCast(ph_cols)), "]", one, clip, base_packed);
+                render_text.putGraphemeClipped(frame, row, col_abs, chrome.input_placeholder_left, one, clip, base_packed);
+                drawInlineTextAt(frame, row, col_abs + @as(isize, @intCast(left_bracket_w)), clip, ph, if (max_w > left_bracket_w) max_w - left_bracket_w else 0, ph_packed);
+                render_text.putGraphemeClipped(frame, row, col_abs + @as(isize, @intCast(left_bracket_w + ph_cols)), chrome.input_placeholder_right, one, clip, base_packed);
             }
         }
     } else {
@@ -1522,6 +1563,7 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
     const selected_id = if (list_state) |st| st.selected_id else "";
     const scroll = if (list_state) |st| st.scroll else 0;
     const hovered_item = if (state.hovered_id != null and std.mem.eql(u8, state.hovered_id.?, l.id)) state.hovered_item else null;
+    const chrome = state.theme.chrome;
 
     const list_style = inherited;
     const list_packed = style.pack(list_style);
@@ -1542,12 +1584,12 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
 
         const prefix = switch (l.marker) {
             .none => "",
-            .default => if (is_selected) (if (focused) "> " else "* ") else "  ",
+            .default => if (is_selected) (if (focused) chrome.list_selected_focused_marker else chrome.list_selected_marker) else chrome.list_unselected_marker,
         };
         var item_style = style.merge(list_style, nodeStyleOverride(item));
-        if (is_hovered and !is_selected) item_style = applyOverlay(item_style, default_theme.hovered_overlay);
+        if (is_hovered and !is_selected) item_style = applyOverlay(item_style, state.theme.hovered_overlay);
         var row_packed = style.pack(item_style);
-        if (is_selected) row_packed.attrs |= style.ATTR_INVERSE;
+        if (is_selected and chrome.list_selected_inverse) row_packed.attrs |= style.ATTR_INVERSE;
 
         const row: isize = rect.y + @as(isize, @intCast(row_idx));
         const y_end: isize = rect.y + @as(isize, @intCast(rect.h));
@@ -1803,9 +1845,11 @@ fn paintNode(
     const node_clip = rectIntersect(clip, rect);
     if (node_clip.w == 0 or node_clip.h == 0) return;
 
+    const themed_override = state.theme.resolveBaseStyleOverride(nodeKind(node), nodeClass(node));
     const own_override = nodeStyleOverride(node);
-    const base_resolved = style.merge(inherited, own_override);
-    const resolved = applyStateOverlays(base_resolved, node, state);
+    const base_resolved = style.merge(inherited, themed_override);
+    const state_resolved = applyStateOverlays(base_resolved, node, state);
+    const resolved = style.merge(state_resolved, own_override);
     const inherited_packed = style.pack(inherited);
     const resolved_packed = style.pack(resolved);
     if (!packedEq(resolved_packed, inherited_packed) and resolved_packed.affectsBlank()) {
@@ -1841,9 +1885,9 @@ fn paintBox(
     if (node_clip.w == 0 or node_clip.h == 0) return;
 
     const border_thickness: usize = if (b.border and rect.w >= 2 and rect.h >= 2) 1 else 0;
-    const chrome: usize = border_thickness + b.pad;
+    const inset: usize = border_thickness + b.pad;
 
-    const inner = rectDeflate(rect, chrome);
+    const inner = rectDeflate(rect, inset);
     const base_clip = node_clip;
     const child_clip = if (b.clip) rectIntersect(base_clip, inner) else base_clip;
 
@@ -1860,21 +1904,22 @@ fn paintBox(
         const y1: isize = rect.y + @as(isize, @intCast(rect.h)) - 1;
 
         const one: u2 = 1;
-        render_text.putGraphemeClipped(frame, y0, x0, "┌", one, node_clip, resolved_packed);
-        render_text.putGraphemeClipped(frame, y0, x1, "┐", one, node_clip, resolved_packed);
-        render_text.putGraphemeClipped(frame, y1, x0, "└", one, node_clip, resolved_packed);
-        render_text.putGraphemeClipped(frame, y1, x1, "┘", one, node_clip, resolved_packed);
+        const chrome_cfg = state.theme.chrome;
+        render_text.putGraphemeClipped(frame, y0, x0, chrome_cfg.box_top_left, one, node_clip, resolved_packed);
+        render_text.putGraphemeClipped(frame, y0, x1, chrome_cfg.box_top_right, one, node_clip, resolved_packed);
+        render_text.putGraphemeClipped(frame, y1, x0, chrome_cfg.box_bottom_left, one, node_clip, resolved_packed);
+        render_text.putGraphemeClipped(frame, y1, x1, chrome_cfg.box_bottom_right, one, node_clip, resolved_packed);
 
         var x: isize = x0 + 1;
         while (x < x1) : (x += 1) {
-            render_text.putGraphemeClipped(frame, y0, x, "─", one, node_clip, resolved_packed);
-            render_text.putGraphemeClipped(frame, y1, x, "─", one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y0, x, chrome_cfg.box_horizontal, one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y1, x, chrome_cfg.box_horizontal, one, node_clip, resolved_packed);
         }
 
         var y: isize = y0 + 1;
         while (y < y1) : (y += 1) {
-            render_text.putGraphemeClipped(frame, y, x0, "│", one, node_clip, resolved_packed);
-            render_text.putGraphemeClipped(frame, y, x1, "│", one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y, x0, chrome_cfg.box_vertical, one, node_clip, resolved_packed);
+            render_text.putGraphemeClipped(frame, y, x1, chrome_cfg.box_vertical, one, node_clip, resolved_packed);
         }
 
         if (b.title) |title| {

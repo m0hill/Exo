@@ -189,6 +189,7 @@ pub fn run() !void {
     defer decoder.deinit();
     var keymap = try keybindings.KeymapState.initDefaults(allocator);
     defer keymap.deinit();
+    var active_theme: render.Theme = render.default_theme;
     var emergency_last_ns: u64 = 0;
     const emergency_window_ns: u64 = 900 * std.time.ns_per_ms;
 
@@ -291,7 +292,7 @@ pub fn run() !void {
                     const msg = protocol.parseMsgLeaky(next_arena.allocator(), line_owned) catch |e| {
                         if (e == error.UnknownPatchMode) {
                             log.logPrint(&log_sink, "PATCH_ERR reason=unknown_mode\n", .{});
-                        } else if (e == error.UnknownKeyAction or e == error.InvalidKeybindingRule) {
+                        } else if (e == error.UnknownKeyAction or e == error.InvalidKeybindingRule or e == error.UnknownThemeName) {
                             log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
                         } else {
                             log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
@@ -428,11 +429,21 @@ pub fn run() !void {
                             }
                         },
                         .config => |cfg| {
-                            keymap.applyConfigReplace(cfg.keybindings) catch |e| {
-                                log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
-                                break;
-                            };
-                            log.logPrint(&log_sink, "CONFIG_APPLY kind=keybindings\n", .{});
+                            if (cfg.keybindings) |kb| {
+                                keymap.applyConfigReplace(kb) catch |e| {
+                                    log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
+                                    break;
+                                };
+                                log.logPrint(&log_sink, "CONFIG_APPLY kind=keybindings\n", .{});
+                            }
+                            if (cfg.theme) |theme_name| {
+                                active_theme = render.themeFromName(theme_name);
+                                log.logPrint(&log_sink, "CONFIG_APPLY kind=theme name={s}\n", .{@tagName(theme_name)});
+                            }
+                        },
+                        .theme => |tm| {
+                            active_theme = render.themeFromName(tm.name);
+                            log.logPrint(&log_sink, "CONFIG_APPLY kind=theme name={s}\n", .{@tagName(tm.name)});
                         },
                         else => {},
                     }
@@ -969,7 +980,7 @@ pub fn run() !void {
                     ui.clampLocalStateForResize(&widgets, current_root.?, last_term_size);
                 }
 
-                const rs = try ui.buildRenderState(
+                var rs = try ui.buildRenderState(
                     allocator,
                     widgets.items,
                     &render_inputs,
@@ -981,6 +992,7 @@ pub fn run() !void {
                     hover_item,
                     pointer_engine.activeId(),
                 );
+                rs.theme = &active_theme;
                 try renderer.drawWithCaps(&term, term.caps(), current_root.?, rs);
                 last_render_ns = timing.monotonicNowNs();
 

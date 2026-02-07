@@ -7,6 +7,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
     return switch (node) {
         .text => |t| .{ .text = .{
             .id = try allocator.dupe(u8, t.id),
+            .class = if (t.class) |class| try allocator.dupe(u8, class) else null,
             .w = t.w,
             .h = t.h,
             .flex = t.flex,
@@ -24,6 +25,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             }
             break :blk .{ .styled_text = .{
                 .id = try allocator.dupe(u8, t.id),
+                .class = if (t.class) |class| try allocator.dupe(u8, class) else null,
                 .w = t.w,
                 .h = t.h,
                 .flex = t.flex,
@@ -34,6 +36,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
         },
         .input => |i| .{ .input = .{
             .id = try allocator.dupe(u8, i.id),
+            .class = if (i.class) |class| try allocator.dupe(u8, class) else null,
             .w = i.w,
             .h = i.h,
             .flex = i.flex,
@@ -56,6 +59,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
         } },
         .textarea => |t| .{ .textarea = .{
             .id = try allocator.dupe(u8, t.id),
+            .class = if (t.class) |class| try allocator.dupe(u8, class) else null,
             .w = t.w,
             .h = t.h,
             .flex = t.flex,
@@ -84,6 +88,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             }
             break :blk .{ .vbox = .{
                 .id = try allocator.dupe(u8, v.id),
+                .class = if (v.class) |class| try allocator.dupe(u8, class) else null,
                 .w = v.w,
                 .h = v.h,
                 .flex = v.flex,
@@ -106,6 +111,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             }
             break :blk .{ .hbox = .{
                 .id = try allocator.dupe(u8, h.id),
+                .class = if (h.class) |class| try allocator.dupe(u8, class) else null,
                 .w = h.w,
                 .h = h.h,
                 .flex = h.flex,
@@ -132,6 +138,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             @memcpy(cols, g.cols);
             break :blk .{ .grid = .{
                 .id = try allocator.dupe(u8, g.id),
+                .class = if (g.class) |class| try allocator.dupe(u8, class) else null,
                 .w = g.w,
                 .h = g.h,
                 .flex = g.flex,
@@ -154,6 +161,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
         },
         .box => |b| .{ .box = .{
             .id = try allocator.dupe(u8, b.id),
+            .class = if (b.class) |class| try allocator.dupe(u8, class) else null,
             .w = b.w,
             .h = b.h,
             .flex = b.flex,
@@ -178,6 +186,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
         } },
         .scroll => |s| .{ .scroll = .{
             .id = try allocator.dupe(u8, s.id),
+            .class = if (s.class) |class| try allocator.dupe(u8, class) else null,
             .w = s.w,
             .h = s.h,
             .flex = s.flex,
@@ -225,6 +234,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
 
             break :blk .{ .overlay = .{
                 .id = try allocator.dupe(u8, o.id),
+                .class = if (o.class) |class| try allocator.dupe(u8, class) else null,
                 .w = o.w,
                 .h = o.h,
                 .flex = o.flex,
@@ -248,6 +258,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             }
             break :blk .{ .list = .{
                 .id = try allocator.dupe(u8, l.id),
+                .class = if (l.class) |class| try allocator.dupe(u8, class) else null,
                 .w = l.w,
                 .h = l.h,
                 .flex = l.flex,

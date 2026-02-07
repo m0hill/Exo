@@ -11,8 +11,27 @@ pub const Common = struct {
     mouseable: bool = true,
     w: ?usize = null,
     h: ?usize = null,
+    class: ?[]const u8 = null,
     style: ?style.StyleOverride = null,
 };
+
+pub const ButtonVariant = enum {
+    primary,
+    secondary,
+    danger,
+    subtle,
+    outline,
+};
+
+fn buttonVariantClass(variant: ButtonVariant) []const u8 {
+    return switch (variant) {
+        .primary => "button.primary",
+        .secondary => "button.secondary",
+        .danger => "button.danger",
+        .subtle => "button.subtle",
+        .outline => "button.outline",
+    };
+}
 
 fn nodePtr(allocator: std.mem.Allocator, node: protocol.Node) !*protocol.Node {
     const p = try allocator.create(protocol.Node);
@@ -31,6 +50,17 @@ pub fn button(
     border: bool,
     common: Common,
 ) !protocol.Node {
+    return buttonVariant(allocator, id, label, border, .secondary, common);
+}
+
+pub fn buttonVariant(
+    allocator: std.mem.Allocator,
+    id: []const u8,
+    label: []const u8,
+    border: bool,
+    variant: ButtonVariant,
+    common: Common,
+) !protocol.Node {
     const label_w: usize = unicode.displayWidth(label);
     const chrome: usize = (if (border) 1 else 0);
     const computed_w: usize = label_w + chrome * 2 + 2;
@@ -46,6 +76,7 @@ pub fn button(
 
     return .{ .box = .{
         .id = id,
+        .class = common.class orelse buttonVariantClass(variant),
         .w = w,
         .h = common.h,
         .border = border,
@@ -78,17 +109,19 @@ pub fn checkbox(
     const label_id = try joinId(allocator, id, "label");
 
     var row_children = try allocator.alloc(protocol.Node, 2);
-    row_children[0] = .{ .text = .{ .id = mark_id, .w = 4, .text = if (checked) "[x]" else "[ ]" } };
-    row_children[1] = .{ .text = .{ .id = label_id, .text = label } };
+    row_children[0] = .{ .text = .{ .id = mark_id, .class = "muted", .w = 4, .text = if (checked) "[x]" else "[ ]" } };
+    row_children[1] = .{ .text = .{ .id = label_id, .class = "text", .text = label } };
 
     const row = try nodePtr(allocator, .{ .hbox = .{
         .id = row_id,
+        .class = "surface",
         .gap = 1,
         .children = row_children,
     } });
 
     return .{ .box = .{
         .id = id,
+        .class = common.class orelse "button.subtle",
         .w = w,
         .h = common.h,
         .border = false,
@@ -121,17 +154,19 @@ pub fn radioItem(
     const label_id = try joinId(allocator, id, "label");
 
     var row_children = try allocator.alloc(protocol.Node, 2);
-    row_children[0] = .{ .text = .{ .id = mark_id, .w = 4, .text = if (selected) "(•)" else "( )" } };
-    row_children[1] = .{ .text = .{ .id = label_id, .text = label } };
+    row_children[0] = .{ .text = .{ .id = mark_id, .class = "muted", .w = 4, .text = if (selected) "(•)" else "( )" } };
+    row_children[1] = .{ .text = .{ .id = label_id, .class = "text", .text = label } };
 
     const row = try nodePtr(allocator, .{ .hbox = .{
         .id = row_id,
+        .class = "surface",
         .gap = 1,
         .children = row_children,
     } });
 
     return .{ .box = .{
         .id = id,
+        .class = common.class orelse "button.subtle",
         .w = w,
         .h = common.h,
         .border = false,
@@ -164,17 +199,19 @@ pub fn toggle(
     const label_id = try joinId(allocator, id, "label");
 
     var row_children = try allocator.alloc(protocol.Node, 2);
-    row_children[0] = .{ .text = .{ .id = mark_id, .w = 6, .text = if (on) "[ON]" else "[OFF]" } };
-    row_children[1] = .{ .text = .{ .id = label_id, .text = label } };
+    row_children[0] = .{ .text = .{ .id = mark_id, .class = "accent", .w = 6, .text = if (on) "[ON]" else "[OFF]" } };
+    row_children[1] = .{ .text = .{ .id = label_id, .class = "text", .text = label } };
 
     const row = try nodePtr(allocator, .{ .hbox = .{
         .id = row_id,
+        .class = "surface",
         .gap = 1,
         .children = row_children,
     } });
 
     return .{ .box = .{
         .id = id,
+        .class = common.class orelse "button.subtle",
         .w = w,
         .h = common.h,
         .border = false,
@@ -212,12 +249,14 @@ pub fn radioGroupList(
         spans[1] = .{ .text = opt.label };
         children[idx] = .{ .styled_text = .{
             .id = opt.id,
+            .class = "text",
             .spans = spans,
         } };
     }
 
     return .{ .list = .{
         .id = id,
+        .class = common.class orelse "menu",
         .hoverable = common.hoverable,
         .mouseable = common.mouseable,
         .disabled = common.disabled,
@@ -246,19 +285,17 @@ pub fn tabs(
 
     var bar_children = try allocator.alloc(protocol.Node, tabs_spec.len);
     for (tabs_spec, 0..) |t, idx| {
-        var st: ?style.StyleOverride = null;
-        if (std.mem.eql(u8, t.id, active_tab_id)) {
-            st = .{ .attrs_set = style.ATTR_BOLD | style.ATTR_UNDERLINE, .attrs_values = style.ATTR_BOLD | style.ATTR_UNDERLINE };
-        }
-        bar_children[idx] = try button(allocator, t.id, t.label, false, .{
+        const active = std.mem.eql(u8, t.id, active_tab_id);
+        bar_children[idx] = try buttonVariant(allocator, t.id, t.label, false, if (active) .primary else .subtle, .{
             .mouseable = true,
             .hoverable = true,
-            .style = st,
+            .class = if (active) "button.primary" else "button.subtle",
         });
     }
 
     const bar = protocol.Node{ .hbox = .{
         .id = bar_id,
+        .class = "surface",
         .gap = 1,
         .children = bar_children,
     } };
@@ -268,6 +305,7 @@ pub fn tabs(
     children[1] = content;
     return .{ .vbox = .{
         .id = id,
+        .class = "surface",
         .gap = 1,
         .children = children,
     } };
@@ -280,6 +318,7 @@ pub fn textarea(
 ) protocol.Node {
     return .{ .textarea = .{
         .id = id,
+        .class = common.class orelse "field",
         .w = common.w,
         .h = common.h,
         .hoverable = common.hoverable,
@@ -315,6 +354,7 @@ pub fn progressBar(
 
     return .{ .text = .{
         .id = id,
+        .class = common.class orelse "muted",
         .w = node_w,
         .h = common.h,
         .hoverable = common.hoverable,
@@ -337,6 +377,7 @@ pub fn spinner(
     const w: ?usize = common.w orelse 1;
     return .{ .text = .{
         .id = id,
+        .class = common.class orelse "accent",
         .w = w,
         .h = common.h,
         .hoverable = common.hoverable,
@@ -376,17 +417,15 @@ pub fn table(
     for (columns, 0..) |col, idx| {
         header_children[idx] = .{ .text = .{
             .id = col.id,
+            .class = "table.header",
             .w = col.width,
             .text = col.label,
-            .style = .{
-                .attrs_set = style.ATTR_BOLD,
-                .attrs_values = style.ATTR_BOLD,
-            },
         } };
     }
 
     const header = protocol.Node{ .hbox = .{
         .id = header_id,
+        .class = "surface",
         .gap = 1,
         .children = header_children,
     } };
@@ -405,11 +444,12 @@ pub fn table(
             while (pad > 0) : (pad -= 1) try w.writeByte(' ');
         }
         const row_text = try allocator.dupe(u8, row_buf.items);
-        list_children[idx] = .{ .text = .{ .id = row.id, .text = row_text } };
+        list_children[idx] = .{ .text = .{ .id = row.id, .class = "text", .text = row_text } };
     }
 
     const list_node = protocol.Node{ .list = .{
         .id = id,
+        .class = "table",
         .height = height,
         .hoverable = common.hoverable,
         .mouseable = common.mouseable,
@@ -434,6 +474,7 @@ pub fn table(
     children[1] = scroll_node;
     return .{ .vbox = .{
         .id = try joinId(allocator, id, "wrap"),
+        .class = "surface",
         .gap = 1,
         .children = children,
     } };
@@ -462,11 +503,12 @@ pub fn tree(
         @memset(indent, ' ');
         const glyph: []const u8 = if (!row.has_children) "  " else if (row.expanded) "▾ " else "▸ ";
         const text = try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ indent, glyph, row.label });
-        list_children[idx] = .{ .text = .{ .id = row.id, .text = text } };
+        list_children[idx] = .{ .text = .{ .id = row.id, .class = "text", .text = text } };
     }
 
     const list_node = protocol.Node{ .list = .{
         .id = id,
+        .class = "menu",
         .height = height,
         .hoverable = common.hoverable,
         .mouseable = common.mouseable,

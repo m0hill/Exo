@@ -215,6 +215,8 @@ pub fn main() !void {
         .radio_choice = .alpha,
         .active_tab = .one,
     };
+    const theme_cycle = [_]protocol.ThemeName{ .default, .light, .ocean };
+    var theme_idx: usize = 0;
 
     var md_blocks: ?tui.markdown.StreamBlocks = null;
     defer if (md_blocks) |*s| s.deinit();
@@ -305,7 +307,9 @@ pub fn main() !void {
             .{ .key = "]", .mods = 0, .action = .focus_scope_next },
         };
         try protocol.writeConfigJsonl(out, .{
-            .global = global_rules[0..],
+            .keybindings = .{
+                .global = global_rules[0..],
+            },
         });
     }
     try out.flush();
@@ -667,6 +671,12 @@ pub fn main() !void {
                                 );
                                 std.debug.print("PATCH_TX target=status\n", .{});
                                 try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                                try out.flush();
+                            } else if (std.mem.eql(u8, k.key, "t") and k.mods == 0) {
+                                theme_idx = (theme_idx + 1) % theme_cycle.len;
+                                const next_theme = theme_cycle[theme_idx];
+                                std.debug.print("CONFIG_TX kind=theme name={s}\n", .{@tagName(next_theme)});
+                                try protocol.writeThemeJsonl(out, next_theme);
                                 try out.flush();
                             } else if ((std.mem.eql(u8, k.key, "x") and k.mods == 0) or
                                 std.mem.eql(u8, k.key, "ctrl-c") or

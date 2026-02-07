@@ -54,6 +54,38 @@ test "render: focused input shows cursor + placeholder" {
     try std.testing.expect(std.mem.indexOf(u8, out, "\x1b[4;3H") != null);
 }
 
+test "render: class-based theme styles differ across presets" {
+    var frame_default: Frame = .{};
+    defer frame_default.deinit(std.testing.allocator);
+    try frame_default.resize(std.testing.allocator, 1, 8);
+    frame_default.clear(' ');
+
+    var frame_light: Frame = .{};
+    defer frame_light.deinit(std.testing.allocator);
+    try frame_light.resize(std.testing.allocator, 1, 8);
+    frame_light.clear(' ');
+
+    const root = protocol.Node{ .text = .{ .id = "t", .class = "accent", .text = "X" } };
+    render.renderToFrame(root, .{ .theme = &render.default_theme }, &frame_default);
+    render.renderToFrame(root, .{ .theme = &render.light_theme }, &frame_light);
+
+    try std.testing.expectEqual(@as(u1, 1), frame_default.rowSlice(0)[0].style.has_fg);
+    try std.testing.expectEqual(@as(u1, 1), frame_light.rowSlice(0)[0].style.has_fg);
+    try std.testing.expect(frame_default.rowSlice(0)[0].style.fg != frame_light.rowSlice(0)[0].style.fg);
+}
+
+test "render: theme chrome changes input prefix" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 12);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .input = .{ .id = "i", .placeholder = "name" } };
+    const st: render.InputState = .{ .id = "i", .value = "", .cursor = 0, .scroll_x = 0 };
+    render.renderToFrame(root, .{ .theme = &render.ocean_theme, .focused_id = "i", .inputs = &.{st} }, &frame);
+    try std.testing.expectEqualStrings("»", cellText(&frame, 0, 0));
+}
+
 test "render: box draws border" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);

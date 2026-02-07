@@ -27,6 +27,8 @@ const ClipboardEvent = protocol.ClipboardEvent;
 const PasteSource = protocol.PasteSource;
 const PasteEvent = protocol.PasteEvent;
 const ConfigMsg = protocol.ConfigMsg;
+const ThemeName = protocol.ThemeName;
+const ThemeMsg = protocol.ThemeMsg;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
@@ -185,15 +187,30 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
     } else if (std.mem.eql(u8, type_str, "config")) {
         const cfg = try parseConfigMsg(allocator, obj);
         return .{ .config = cfg };
+    } else if (std.mem.eql(u8, type_str, "theme")) {
+        const name = try parseThemeName(try getRequiredString(obj, "name"));
+        const tm: ThemeMsg = .{ .name = name };
+        return .{ .theme = tm };
     } else {
         return error.UnknownMsgType;
     }
 }
 
 fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!ConfigMsg {
-    const keybindings_val = try getRequired(obj, "keybindings");
-    const keybindings_obj = try asObject(keybindings_val);
-    return .{ .keybindings = try parseKeybindingsConfig(allocator, keybindings_obj) };
+    const keybindings: ?KeybindingsConfig = if (obj.get("keybindings")) |keybindings_val| blk: {
+        const keybindings_obj = try asObject(keybindings_val);
+        break :blk try parseKeybindingsConfig(allocator, keybindings_obj);
+    } else null;
+    const theme: ?ThemeName = if (try getOptionalString(obj, "theme")) |name| try parseThemeName(name) else null;
+    if (keybindings == null and theme == null) return error.MissingField;
+    return .{ .keybindings = keybindings, .theme = theme };
+}
+
+fn parseThemeName(s: []const u8) ParseMsgError!ThemeName {
+    if (std.mem.eql(u8, s, "default")) return .default;
+    if (std.mem.eql(u8, s, "light")) return .light;
+    if (std.mem.eql(u8, s, "ocean")) return .ocean;
+    return error.UnknownThemeName;
 }
 
 fn parseKeybindingsConfig(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!KeybindingsConfig {
@@ -551,6 +568,12 @@ fn parseListMarker(obj: std.json.ObjectMap) ParseMsgError!ListMarker {
     return error.UnknownListMarker;
 }
 
+fn parseClass(obj: std.json.ObjectMap) ParseMsgError!?[]const u8 {
+    const cls = try getOptionalString(obj, "class") orelse return null;
+    if (cls.len == 0) return null;
+    return cls;
+}
+
 fn parsePointerKind(obj: std.json.ObjectMap) ParseMsgError!PointerKind {
     const s = try getRequiredString(obj, "kind");
     if (std.mem.eql(u8, s, "down")) return .down;
@@ -575,6 +598,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
     const type_str = try getRequiredString(obj, "type");
     if (std.mem.eql(u8, type_str, "vbox")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -601,6 +625,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         }
         return .{ .vbox = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -627,6 +652,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "hbox")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -653,6 +679,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         }
         return .{ .hbox = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -679,6 +706,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "grid")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -707,6 +735,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         }
         return .{ .grid = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -735,6 +764,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "box")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -759,6 +789,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         child.* = child_node;
         return .{ .box = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -785,6 +816,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "scroll")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -808,6 +840,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         child.* = child_node;
         return .{ .scroll = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -833,6 +866,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "overlay")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -863,6 +897,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
 
         return .{ .overlay = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -887,6 +922,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "text")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -905,6 +941,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const text = try getRequiredString(obj, "text");
         return .{ .text = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -928,6 +965,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "styled_text")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -951,6 +989,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         }
         return .{ .styled_text = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -974,6 +1013,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "input")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -999,6 +1039,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const selection_end = try getOptionalUsize(obj, "selection_end");
         return .{ .input = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -1029,6 +1070,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "textarea")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -1053,6 +1095,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const selection_end = try getOptionalUsize(obj, "selection_end");
         return .{ .textarea = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,
@@ -1082,6 +1125,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         } };
     } else if (std.mem.eql(u8, type_str, "list")) {
         const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
         const h = try getOptionalUsize(obj, "h");
         const flex = try getOptionalUsize(obj, "flex") orelse 0;
@@ -1108,6 +1152,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         }
         return .{ .list = .{
             .id = id,
+            .class = class,
             .w = w,
             .h = h,
             .flex = flex,

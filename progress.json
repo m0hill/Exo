@@ -931,4 +931,37 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 33,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Design system + theming: class-based theme hooks, runtime theme switching, semantic token presets, and theme-aware chrome rendering",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig + src/lib/protocol/mod.zig: protocol v0.19 adds optional node class, theme message ({type:\"theme\",name}), and config.theme with preset names (default|light|ocean)",
+      "src/lib/render/theme.zig: new Theme model with semantic tokens (surface/text/muted/border/accent/success/warn/error), per-state overlays, class rules by node type, component chrome config, and presets (default_theme, light_theme, ocean_theme)",
+      "src/lib/render/mod.zig: style resolution order updated to theme class base -> state overlays -> node style override; render state now carries active theme; input/list/box chrome now theme-driven (prefix/markers/inverse/border glyphs/placeholder brackets)",
+      "src/bin/runtime/app.zig: runtime applies theme updates from both config.theme and theme messages and injects active theme into render state",
+      "src/lib/widget_kit/mod.zig: widgets now emit token-oriented classes; button variants (primary|secondary|danger|subtle|outline) added via buttonVariant; tabs/table/tree/radio/toggle/textarea/list nodes updated to rely on classes over ad-hoc inline styles",
+      "src/lib/scheduler.zig + src/lib/tree.zig + src/bin/runtime/ui/node_util.zig: clone/morph paths preserve node class metadata",
+      "src/bin/demo/main.zig: demo now supports live theme cycling (press t) by emitting protocol theme messages",
+      "src/test/protocol.zig + src/test/render.zig: coverage for class parse/write roundtrip, theme/config theme parsing, and theme-dependent render differences while preserving default behavior",
+      "docs/PROTOCOL.md: documented class, theme message schema, and config.theme"
+    ],
+    "boundaries_hit": [
+      "Stable theming API uses exact class hooks (no selector engine) to keep protocol/backends simple",
+      "Backward compatibility preserved: nodes without class render as before under default theme and node style still has highest precedence",
+      "Theme changes are runtime-configurable without restart through both config and dedicated theme messages"
+    ],
+    "timestamp": "2026-02-07",
+    "manual_repro": [
+      "zig build demo",
+      "In the demo, press t repeatedly to cycle themes (default -> light -> ocean) at runtime",
+      "Confirm chrome changes with theme (input prefix, list markers, and box border style) without restarting",
+      "Confirm same widget tree renders with visibly different accent/text colors across presets",
+      "Confirm existing interactions still work (Tab focus, input/list editing, pointer interactions)",
+      "zig build test",
+      "Exit demo with x"
+    ]
+  }
 ]
