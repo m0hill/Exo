@@ -470,8 +470,6 @@ pub fn run() !void {
                 },
                 .stdin_bytes => |bytes| {
                     defer allocator.free(bytes);
-                    const max_decoded_per_iter: usize = 256;
-                    var processed: usize = 0;
                     var pending_input_event: bool = false;
                     var need_backend_flush: bool = false;
 
@@ -493,9 +491,7 @@ pub fn run() !void {
 
                     const byte_now_ns = timing.monotonicNowNs();
                     for (bytes) |b| {
-                        if (processed >= max_decoded_per_iter) break;
                         const decoded = decoder.feedByte(b, byte_now_ns) orelse continue;
-                        processed += 1;
 
                         switch (decoded) {
                             .mouse => |mev| if (current_root != null) {
@@ -759,6 +755,9 @@ pub fn run() !void {
                         need_backend_flush = true;
                     }
                     if (need_backend_flush) try child_in.flush();
+                },
+                .backend_line_too_long => {
+                    log.logPrint(&log_sink, "PATCH_ERR reason=line_too_long\n", .{});
                 },
             }
         }

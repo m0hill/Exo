@@ -77,16 +77,33 @@ fn tryReadHostClipboard(allocator: std.mem.Allocator) Error![]u8 {
     };
 }
 
+fn commandTermOk(term: std.process.Child.Term) bool {
+    return switch (term) {
+        .Exited => |code| code == 0,
+        else => false,
+    };
+}
+
 fn writeViaCommand(data: []const u8, argv: []const []const u8) !void {
     var child = std.process.Child.init(argv, std.heap.page_allocator);
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Ignore;
     child.stderr_behavior = .Ignore;
     try child.spawn();
-    const in = child.stdin orelse return error.SystemFailure;
-    try in.writeAll(data);
+    const in = child.stdin orelse {
+        _ = child.kill() catch {};
+        _ = child.wait() catch {};
+        return error.SystemFailure;
+    };
+    in.writeAll(data) catch {
+        in.close();
+        _ = child.kill() catch {};
+        _ = child.wait() catch {};
+        return error.SystemFailure;
+    };
     in.close();
-    _ = try child.wait();
+    const term = child.wait() catch return error.SystemFailure;
+    if (!commandTermOk(term)) return error.SystemFailure;
 }
 
 fn readViaCommand(allocator: std.mem.Allocator, argv: []const []const u8) Error![]u8 {
@@ -105,12 +122,13 @@ fn readViaCommand(allocator: std.mem.Allocator, argv: []const []const u8) Error!
 
     var tmp: [4096]u8 = undefined;
     while (true) {
-        const n = out.read(&tmp) catch break;
+        const n = out.read(&tmp) catch return error.SystemFailure;
         if (n == 0) break;
         if (buf.items.len + n > 1024 * 1024) return error.TooLarge;
         buf.appendSlice(allocator, tmp[0..n]) catch return error.SystemFailure;
     }
-    _ = child.wait() catch {};
+    const term = child.wait() catch return error.SystemFailure;
+    if (!commandTermOk(term)) return error.SystemFailure;
     return buf.toOwnedSlice(allocator) catch return error.SystemFailure;
 }
 

@@ -14,6 +14,7 @@ pub const ExitSignal = enum {
 pub const Event = union(enum) {
     stdin_bytes: []u8,
     backend_line: []u8,
+    backend_line_too_long,
     backend_stderr: []u8,
     resize: terminal.Size,
     exit_signal: ExitSignal,
@@ -194,7 +195,11 @@ pub const IOMux = struct {
         defer lr.deinit();
 
         while (true) {
-            const n = lr.readMore() catch {
+            const n = lr.readMore() catch |e| {
+                if (e == error.LineTooLong) {
+                    _ = self.queue.push(.backend_line_too_long);
+                    continue;
+                }
                 _ = self.queue.push(.backend_closed);
                 return;
             };
