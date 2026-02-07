@@ -25,6 +25,10 @@ const ClipboardTarget = protocol.ClipboardTarget;
 const ClipboardEvent = protocol.ClipboardEvent;
 const PasteSource = protocol.PasteSource;
 const PasteEvent = protocol.PasteEvent;
+const ConfigMsg = protocol.ConfigMsg;
+const KeybindingsConfig = protocol.KeybindingsConfig;
+const KeybindingRule = protocol.KeybindingRule;
+const KeyAction = protocol.KeyAction;
 const ValidationState = protocol.ValidationState;
 const ListMarker = protocol.ListMarker;
 const ParseMsgError = protocol.ParseMsgError;
@@ -176,9 +180,121 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 return .{ .clipboard = .{ .read = .{ .request_id = request_id, .target = target } } };
             },
         }
+    } else if (std.mem.eql(u8, type_str, "config")) {
+        const cfg = try parseConfigMsg(allocator, obj);
+        return .{ .config = cfg };
     } else {
         return error.UnknownMsgType;
     }
+}
+
+fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!ConfigMsg {
+    const keybindings_val = try getRequired(obj, "keybindings");
+    const keybindings_obj = try asObject(keybindings_val);
+    return .{ .keybindings = try parseKeybindingsConfig(allocator, keybindings_obj) };
+}
+
+fn parseKeybindingsConfig(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!KeybindingsConfig {
+    return .{
+        .global = try parseOptionalKeybindingRuleArrayLeaky(allocator, obj, "global"),
+        .input = try parseOptionalKeybindingRuleArrayLeaky(allocator, obj, "input"),
+        .textarea = try parseOptionalKeybindingRuleArrayLeaky(allocator, obj, "textarea"),
+        .list = try parseOptionalKeybindingRuleArrayLeaky(allocator, obj, "list"),
+        .scroll = try parseOptionalKeybindingRuleArrayLeaky(allocator, obj, "scroll"),
+        .action = try parseOptionalKeybindingRuleArrayLeaky(allocator, obj, "action"),
+    };
+}
+
+fn parseOptionalKeybindingRuleArrayLeaky(
+    allocator: std.mem.Allocator,
+    obj: std.json.ObjectMap,
+    field: []const u8,
+) ParseMsgError!?[]KeybindingRule {
+    const rules_val = obj.get(field) orelse return null;
+    const arr = asArray(rules_val) catch return error.InvalidKeybindingRule;
+    const parsed = try parseKeybindingRuleArrayLeaky(allocator, arr);
+    return parsed;
+}
+
+fn parseKeybindingRuleArrayLeaky(allocator: std.mem.Allocator, arr: std.json.Array) ParseMsgError![]KeybindingRule {
+    var out = try allocator.alloc(KeybindingRule, arr.items.len);
+    for (arr.items, 0..) |item, idx| {
+        out[idx] = parseKeybindingRule(item) catch |e| switch (e) {
+            error.UnknownKeyAction => return error.UnknownKeyAction,
+            else => return error.InvalidKeybindingRule,
+        };
+    }
+    return out;
+}
+
+fn parseKeybindingRule(v: std.json.Value) ParseMsgError!KeybindingRule {
+    const rule_obj = asObject(v) catch return error.InvalidKeybindingRule;
+
+    const key = getRequiredString(rule_obj, "key") catch return error.InvalidKeybindingRule;
+    if (key.len == 0) return error.InvalidKeybindingRule;
+
+    const action_name = getRequiredString(rule_obj, "action") catch return error.InvalidKeybindingRule;
+    const action = parseKeyAction(action_name) catch |e| switch (e) {
+        error.UnknownKeyAction => return error.UnknownKeyAction,
+        else => return error.InvalidKeybindingRule,
+    };
+
+    const mods = parseKeybindingMods(rule_obj) catch return error.InvalidKeybindingRule;
+    return .{
+        .key = key,
+        .mods = mods,
+        .action = action,
+    };
+}
+
+fn parseKeybindingMods(obj: std.json.ObjectMap) ParseMsgError!u8 {
+    const mods_val = obj.get("mods") orelse return 0;
+    return switch (mods_val) {
+        .integer => |n| blk: {
+            if (n < 0 or n > 7) return error.InvalidKeybindingRule;
+            break :blk @as(u8, @intCast(n));
+        },
+        else => error.InvalidKeybindingRule,
+    };
+}
+
+fn parseKeyAction(s: []const u8) ParseMsgError!KeyAction {
+    if (std.mem.eql(u8, s, "noop")) return .noop;
+    if (std.mem.eql(u8, s, "focus_next")) return .focus_next;
+    if (std.mem.eql(u8, s, "focus_prev")) return .focus_prev;
+    if (std.mem.eql(u8, s, "focus_clear")) return .focus_clear;
+    if (std.mem.eql(u8, s, "list_prev")) return .list_prev;
+    if (std.mem.eql(u8, s, "list_next")) return .list_next;
+    if (std.mem.eql(u8, s, "list_activate")) return .list_activate;
+    if (std.mem.eql(u8, s, "scroll_line_up")) return .scroll_line_up;
+    if (std.mem.eql(u8, s, "scroll_line_down")) return .scroll_line_down;
+    if (std.mem.eql(u8, s, "scroll_page_up")) return .scroll_page_up;
+    if (std.mem.eql(u8, s, "scroll_page_down")) return .scroll_page_down;
+    if (std.mem.eql(u8, s, "scroll_home")) return .scroll_home;
+    if (std.mem.eql(u8, s, "scroll_end")) return .scroll_end;
+    if (std.mem.eql(u8, s, "action_activate")) return .action_activate;
+    if (std.mem.eql(u8, s, "input_left")) return .input_left;
+    if (std.mem.eql(u8, s, "input_right")) return .input_right;
+    if (std.mem.eql(u8, s, "input_word_left")) return .input_word_left;
+    if (std.mem.eql(u8, s, "input_word_right")) return .input_word_right;
+    if (std.mem.eql(u8, s, "input_home")) return .input_home;
+    if (std.mem.eql(u8, s, "input_end")) return .input_end;
+    if (std.mem.eql(u8, s, "input_delete")) return .input_delete;
+    if (std.mem.eql(u8, s, "input_backspace")) return .input_backspace;
+    if (std.mem.eql(u8, s, "textarea_left")) return .textarea_left;
+    if (std.mem.eql(u8, s, "textarea_right")) return .textarea_right;
+    if (std.mem.eql(u8, s, "textarea_up")) return .textarea_up;
+    if (std.mem.eql(u8, s, "textarea_down")) return .textarea_down;
+    if (std.mem.eql(u8, s, "textarea_word_left")) return .textarea_word_left;
+    if (std.mem.eql(u8, s, "textarea_word_right")) return .textarea_word_right;
+    if (std.mem.eql(u8, s, "textarea_home")) return .textarea_home;
+    if (std.mem.eql(u8, s, "textarea_end")) return .textarea_end;
+    if (std.mem.eql(u8, s, "textarea_page_up")) return .textarea_page_up;
+    if (std.mem.eql(u8, s, "textarea_page_down")) return .textarea_page_down;
+    if (std.mem.eql(u8, s, "textarea_delete")) return .textarea_delete;
+    if (std.mem.eql(u8, s, "textarea_backspace")) return .textarea_backspace;
+    if (std.mem.eql(u8, s, "textarea_newline")) return .textarea_newline;
+    return error.UnknownKeyAction;
 }
 
 fn parseClipboardOp(obj: std.json.ObjectMap) ParseMsgError!ClipboardOp {

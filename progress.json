@@ -790,4 +790,35 @@
       "Windows cross-compile: `zig build -Dtarget=x86_64-windows` succeeds"
     ]
   }
+  ,
+  {
+    "slice": 29,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Configurable keybindings: backend-driven keybinding config with context-aware resolution (global, input, textarea, list, scroll, action)",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig: protocol v0.15 adds `config` message type with `keybindings` map and `KeyAction` enum",
+      "src/bin/runtime/keybindings.zig: KeymapState with per-context rule tables and default keybindings",
+      "src/bin/runtime/app.zig: config message handling, key event routing through keymap resolution",
+      "src/bin/runtime/ui/mod.zig: apply*Action helper functions (applyInputAction, applyTextareaAction, applyListAction, applyScrollAction, applyActionWidgetAction)",
+      "src/test/keybindings.zig: unit tests for keymap resolution and config application",
+      "docs/PROTOCOL.md: document config message and keybinding rules"
+    ],
+    "boundaries_hit": [
+      "Context-first resolution (widget context → global fallback)",
+      "Exact match semantics (key + mods bitmask)",
+      "Replace-style config (omitted contexts keep defaults)",
+      "Malformed config rejection (atomic apply)"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build demo",
+      "Confirm Tab/Shift-Tab still cycles focus, Escape clears focus",
+      "In an input: Left/Right arrows move cursor, Alt-b/Alt-f word jump, Home/End jump to line edges",
+      "In a list: j/k or Up/Down move selection, Enter activates",
+      "In a textarea: arrows move, Alt-b/f word jump, PgUp/PgDn page scroll, Enter inserts newline",
+      "Confirm all local keybindings still work via the new keymap system",
+      "Exit with 'x'"
+    ]
+  }
 ]

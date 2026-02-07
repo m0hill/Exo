@@ -14,6 +14,7 @@ Every line is a single JSON object with a `type`:
 - `patch` (backend → runtime)
 - `event` (runtime → backend)
 - `clipboard` (backend → runtime)
+- `config` (backend → runtime)
 
 ### Patch (backend → runtime)
 
@@ -51,6 +52,38 @@ Read:
 ```json
 {"type":"clipboard","op":"read","request_id":1,"target":"clipboard"}
 ```
+
+### Config (backend -> runtime)
+
+Runtime keybindings can be replaced at runtime with a strict, replace-style message:
+
+```json
+{
+  "type":"config",
+  "keybindings":{
+    "global":[{"key":"Tab","action":"focus_next"}],
+    "list":[{"key":"j","action":"list_next"},{"key":"k","action":"list_prev"}]
+  }
+}
+```
+
+Rules:
+
+- each rule is `{ "key": string, "mods": number (optional, default 0), "action": string }`
+- `mods` uses the runtime bitmask: `shift=1`, `ctrl=2`, `alt=4`
+- contexts are optional: `global`, `input`, `textarea`, `list`, `scroll`, `action`
+- omitted contexts keep runtime defaults
+- explicit empty arrays clear defaults for that context
+- matching is exact (`key` + `mods`), context-first and then `global`
+- malformed rules reject the entire config message
+
+Action names:
+
+- focus/actions: `noop`, `focus_next`, `focus_prev`, `focus_clear`, `action_activate`
+- list: `list_prev`, `list_next`, `list_activate`
+- scroll: `scroll_line_up`, `scroll_line_down`, `scroll_page_up`, `scroll_page_down`, `scroll_home`, `scroll_end`
+- input: `input_left`, `input_right`, `input_word_left`, `input_word_right`, `input_home`, `input_end`, `input_delete`, `input_backspace`
+- textarea: `textarea_left`, `textarea_right`, `textarea_up`, `textarea_down`, `textarea_word_left`, `textarea_word_right`, `textarea_home`, `textarea_end`, `textarea_page_up`, `textarea_page_down`, `textarea_delete`, `textarea_backspace`, `textarea_newline`
 
 ### Event (runtime → backend)
 

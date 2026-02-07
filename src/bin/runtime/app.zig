@@ -16,6 +16,7 @@ const timing = @import("timing.zig");
 const ui = @import("ui/mod.zig");
 const pointer = @import("ui/pointer.zig");
 const iomux_mod = @import("iomux.zig");
+const keybindings = @import("keybindings.zig");
 
 fn keyEventAsciiByte(ev: keys.KeyEvent) ?u8 {
     return switch (ev.key) {
@@ -30,89 +31,29 @@ fn keyEventIsCtrlLetter(ev: keys.KeyEvent, letter: u8) bool {
     return b == letter;
 }
 
-fn keyEventIsText(ev: keys.KeyEvent, b: u8) bool {
-    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
-    const got = keyEventAsciiByte(ev) orelse return false;
-    return got == b;
-}
-
-fn keyEventIsNamed(ev: keys.KeyEvent, k: keys.NamedKey) bool {
-    return switch (ev.key) {
-        .named => |kk| kk == k,
-        else => false,
+fn keyEventToProtocolParts(ev: keys.KeyEvent, fbuf: *[4]u8) struct { key: []const u8, mods: u8, seq: ?[]const u8 } {
+    return .{
+        .key = keys.keyToString(ev.key, fbuf),
+        .mods = ev.mods.toMask(),
+        .seq = switch (ev.key) {
+            .unknown_escape => |s| s,
+            else => null,
+        },
     };
-}
-
-fn isInputLocalKey(ev: keys.KeyEvent) bool {
-    switch (ev.key) {
-        .text => |s| {
-            if (!ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) return true;
-            if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift and s.len == 1) {
-                return s[0] == 'b' or s[0] == 'f';
-            }
-            return false;
-        },
-        .named => |k| switch (k) {
-            .left, .right, .home, .end, .delete, .backspace, .insert => return !ev.mods.ctrl and !ev.mods.shift,
-            else => return false,
-        },
-        else => return false,
-    }
-}
-
-fn isListLocalKey(ev: keys.KeyEvent) bool {
-    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
-    if (keyEventIsNamed(ev, .up) or keyEventIsNamed(ev, .down) or keyEventIsNamed(ev, .enter)) return true;
-    const b = keyEventAsciiByte(ev) orelse return false;
-    return b == 'j' or b == 'k';
-}
-
-fn isScrollLocalKey(ev: keys.KeyEvent) bool {
-    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
-    if (keyEventIsNamed(ev, .page_up) or keyEventIsNamed(ev, .page_down) or keyEventIsNamed(ev, .home) or keyEventIsNamed(ev, .end)) return true;
-    const b = keyEventAsciiByte(ev) orelse return false;
-    return b == 'j' or b == 'k';
-}
-
-fn isTextareaLocalKey(ev: keys.KeyEvent) bool {
-    switch (ev.key) {
-        .text => return !ev.mods.ctrl and !ev.mods.shift,
-        .named => |k| switch (k) {
-            .left,
-            .right,
-            .up,
-            .down,
-            .home,
-            .end,
-            .page_up,
-            .page_down,
-            .delete,
-            .backspace,
-            .enter,
-            => return !ev.mods.ctrl and !ev.mods.shift,
-            else => return false,
-        },
-        else => return false,
-    }
 }
 
 fn sendKeyEventToBackend(log_sink: *log.LogSink, backend_in: anytype, ev: keys.KeyEvent) !void {
     var fbuf: [4]u8 = undefined;
-    const key_str = keys.keyToString(ev.key, &fbuf);
-    const mods_mask = ev.mods.toMask();
-    const seq: ?[]const u8 = switch (ev.key) {
-        .unknown_escape => |s| s,
-        else => null,
-    };
+    const parts = keyEventToProtocolParts(ev, &fbuf);
 
-    if (seq) |s| {
-        log.logPrint(log_sink, "EVENT_TX name=key key={s} mods={d} seq_len={d}\n", .{ key_str, mods_mask, s.len });
-    } else if (mods_mask != 0) {
-        log.logPrint(log_sink, "EVENT_TX name=key key={s} mods={d}\n", .{ key_str, mods_mask });
+    if (parts.seq) |s| {
+        log.logPrint(log_sink, "EVENT_TX name=key key={s} mods={d} seq_len={d}\n", .{ parts.key, parts.mods, s.len });
+    } else if (parts.mods != 0) {
+        log.logPrint(log_sink, "EVENT_TX name=key key={s} mods={d}\n", .{ parts.key, parts.mods });
     } else {
-        log.logPrint(log_sink, "EVENT_TX name=key key={s}\n", .{key_str});
+        log.logPrint(log_sink, "EVENT_TX name=key key={s}\n", .{parts.key});
     }
-    try protocol.writeKeyEventJsonlFull(backend_in, key_str, mods_mask, seq);
+    try protocol.writeKeyEventJsonlFull(backend_in, parts.key, parts.mods, parts.seq);
 }
 
 fn maybeSendPendingResizeEvent(
@@ -132,6 +73,16 @@ fn maybeSendPendingResizeEvent(
     try backend_in.flush();
     last_resize_tx_ns.* = now_ns;
     pending_resize.* = null;
+}
+
+fn contextForFocusedKind(kind: ui.FocusKind) keybindings.Context {
+    return switch (kind) {
+        .input => .input,
+        .textarea => .textarea,
+        .list => .list,
+        .scroll => .scroll,
+        .action => .action,
+    };
 }
 
 pub fn run() !void {
@@ -232,6 +183,8 @@ pub fn run() !void {
     var last_resize_tx_ns: u64 = 0;
     var decoder = try key_decode.Decoder.init(allocator, .{});
     defer decoder.deinit();
+    var keymap = try keybindings.KeymapState.initDefaults(allocator);
+    defer keymap.deinit();
     var emergency_last_ns: u64 = 0;
     const emergency_window_ns: u64 = 900 * std.time.ns_per_ms;
 
@@ -331,6 +284,8 @@ pub fn run() !void {
                     const msg = protocol.parseMsgLeaky(next_arena.allocator(), line_owned) catch |e| {
                         if (e == error.UnknownPatchMode) {
                             log.logPrint(&log_sink, "PATCH_ERR reason=unknown_mode\n", .{});
+                        } else if (e == error.UnknownKeyAction or e == error.InvalidKeybindingRule) {
+                            log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
                         } else {
                             log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
                         }
@@ -464,6 +419,13 @@ pub fn run() !void {
                                     try child_in.flush();
                                 },
                             }
+                        },
+                        .config => |cfg| {
+                            keymap.applyConfigReplace(cfg.keybindings) catch |e| {
+                                log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
+                                break;
+                            };
+                            log.logPrint(&log_sink, "CONFIG_APPLY kind=keybindings\n", .{});
                         },
                         else => {},
                     }
@@ -604,32 +566,6 @@ pub fn run() !void {
                                     continue;
                                 }
 
-                                if (!handled_input_this_iter and keyEventIsNamed(kev, .tab) and !kev.mods.alt and !kev.mods.ctrl) {
-                                    if (current_root != null) {
-                                        const dir: isize = if (kev.mods.shift) -1 else 1;
-                                        const next_focus = try ui.cycleFocusInTreeDir(allocator, current_root.?, focused_id, dir);
-                                        try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
-                                    } else {
-                                        try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
-                                    }
-                                    log.logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
-                                    try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
-                                    need_backend_flush = true;
-                                    requested_reason = .input;
-                                    continue;
-                                }
-
-                                if (!handled_input_this_iter and keyEventIsNamed(kev, .escape) and !kev.mods.alt and !kev.mods.ctrl and !kev.mods.shift) {
-                                    if (focused_id != null) {
-                                        try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
-                                        log.logPrint(&log_sink, "EVENT_TX name=focus id=\n", .{});
-                                        try protocol.writeFocusEventJsonl(child_in, "");
-                                        need_backend_flush = true;
-                                        requested_reason = .input;
-                                        continue;
-                                    }
-                                }
-
                                 if (keyEventIsCtrlLetter(kev, 'c')) {
                                     try sendKeyEventToBackend(&log_sink, child_in, kev);
                                     need_backend_flush = true;
@@ -637,112 +573,191 @@ pub fn run() !void {
                                 }
 
                                 var consumed: bool = false;
-                                if (!handled_input_this_iter and focused_id != null and current_root != null and focused_kind != null) {
-                                    switch (focused_kind.?) {
-                                        .input => if (isInputLocalKey(kev)) {
-                                            const rows: usize = @as(usize, last_term_size.rows);
-                                            const cols: usize = @as(usize, last_term_size.cols);
-                                            var visible_cols: usize = ui.inputVisibleCols(cols);
-                                            if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
-                                                visible_cols = ui.inputVisibleCols(r.w);
-                                            }
-                                            const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
-                                            consumed = ui.handleFocusedInputKey(
-                                                allocator,
-                                                &widgets,
-                                                focused_id.?,
-                                                kev,
-                                                readonly,
-                                                visible_cols,
-                                            ) catch false;
-                                            if (consumed) {
-                                                pending_input_event = true;
-                                                requested_reason = .input;
-                                                handled_input_this_iter = true;
-                                            }
-                                        },
-                                        .list => if (isListLocalKey(kev)) {
-                                            const rows: usize = @as(usize, last_term_size.rows);
-                                            const cols: usize = @as(usize, last_term_size.cols);
-                                            consumed = ui.handleFocusedListKey(
-                                                allocator,
-                                                &log_sink,
-                                                child_in,
-                                                &widgets,
-                                                current_root.?,
-                                                rows,
-                                                cols,
-                                                focused_id.?,
-                                                kev,
-                                            ) catch false;
-                                            if (consumed) {
-                                                requested_reason = .input;
-                                                handled_input_this_iter = true;
-                                                need_backend_flush = true;
-                                            }
-                                        },
-                                        .scroll => if (isScrollLocalKey(kev)) {
-                                            const rows: usize = @as(usize, last_term_size.rows);
-                                            const cols: usize = @as(usize, last_term_size.cols);
-                                            const changed = ui.handleFocusedScrollKey(
-                                                allocator,
-                                                &log_sink,
-                                                child_in,
-                                                &widgets,
-                                                current_root.?,
-                                                rows,
-                                                cols,
-                                                focused_id.?,
-                                                kev,
-                                            ) catch false;
-                                            if (changed) {
+                                if (!handled_input_this_iter) {
+                                    var fbuf: [4]u8 = undefined;
+                                    const parts = keyEventToProtocolParts(kev, &fbuf);
+                                    const context = if (focused_kind) |fk| contextForFocusedKind(fk) else keybindings.Context.global;
+
+                                    if (keymap.resolve(context, parts.key, parts.mods)) |action| {
+                                        switch (action) {
+                                            .noop => consumed = true,
+                                            .focus_next, .focus_prev => {
+                                                if (current_root != null) {
+                                                    const dir: isize = if (action == .focus_prev) -1 else 1;
+                                                    const next_focus = try ui.cycleFocusInTreeDir(allocator, current_root.?, focused_id, dir);
+                                                    try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
+                                                } else {
+                                                    try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
+                                                }
+                                                log.logPrint(&log_sink, "EVENT_TX name=focus id={s}\n", .{focused_id orelse ""});
+                                                try protocol.writeFocusEventJsonl(child_in, focused_id orelse "");
                                                 need_backend_flush = true;
                                                 requested_reason = .input;
-                                            }
-                                            consumed = changed;
-                                        },
-                                        .textarea => if (isTextareaLocalKey(kev)) {
-                                            const rows: usize = @as(usize, last_term_size.rows);
-                                            const cols: usize = @as(usize, last_term_size.cols);
-                                            var visible_rows: usize = rows;
-                                            var visible_cols: usize = cols;
-                                            if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
-                                                visible_rows = r.h;
-                                                visible_cols = r.w;
-                                            }
-                                            const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
-                                            const changed = ui.handleFocusedTextareaKey(
-                                                allocator,
-                                                &widgets,
-                                                focused_id.?,
-                                                kev,
-                                                readonly,
-                                                visible_rows,
-                                                visible_cols,
-                                            ) catch false;
-                                            if (changed) {
-                                                pending_input_event = true;
-                                                requested_reason = .input;
-                                            }
-                                            consumed = changed;
-                                        },
-                                        .action => {
-                                            const pressed_space: bool = switch (kev.key) {
-                                                .text => |s| s.len == 1 and s[0] == ' ' and !kev.mods.ctrl and !kev.mods.alt and !kev.mods.shift,
-                                                else => false,
-                                            };
-                                            const pressed_enter: bool = keyEventIsNamed(kev, .enter) and !kev.mods.ctrl and !kev.mods.alt and !kev.mods.shift;
-                                            if (pressed_space or pressed_enter) {
                                                 consumed = true;
-                                                try ui.activateActionForId(&log_sink, child_in, focused_id.?);
-                                                need_backend_flush = true;
-                                                requested_reason = .input;
-                                            }
-                                        },
+                                            },
+                                            .focus_clear => {
+                                                if (focused_id != null) {
+                                                    try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);
+                                                    log.logPrint(&log_sink, "EVENT_TX name=focus id=\n", .{});
+                                                    try protocol.writeFocusEventJsonl(child_in, "");
+                                                    need_backend_flush = true;
+                                                    requested_reason = .input;
+                                                    consumed = true;
+                                                }
+                                            },
+                                            else => if (focused_id != null and focused_kind != null and current_root != null) {
+                                                const rows: usize = @as(usize, last_term_size.rows);
+                                                const cols: usize = @as(usize, last_term_size.cols);
+                                                switch (focused_kind.?) {
+                                                    .input => {
+                                                        var visible_cols: usize = ui.inputVisibleCols(cols);
+                                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                            visible_cols = ui.inputVisibleCols(r.w);
+                                                        }
+                                                        const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
+                                                        consumed = ui.applyInputAction(
+                                                            allocator,
+                                                            &widgets,
+                                                            focused_id.?,
+                                                            action,
+                                                            readonly,
+                                                            visible_cols,
+                                                        ) catch false;
+                                                        if (consumed) {
+                                                            pending_input_event = true;
+                                                            requested_reason = .input;
+                                                        }
+                                                    },
+                                                    .textarea => {
+                                                        var visible_rows: usize = rows;
+                                                        var visible_cols: usize = cols;
+                                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                            visible_rows = r.h;
+                                                            visible_cols = r.w;
+                                                        }
+                                                        const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
+                                                        consumed = ui.applyTextareaAction(
+                                                            allocator,
+                                                            &widgets,
+                                                            focused_id.?,
+                                                            action,
+                                                            readonly,
+                                                            visible_rows,
+                                                            visible_cols,
+                                                        ) catch false;
+                                                        if (consumed) {
+                                                            pending_input_event = true;
+                                                            requested_reason = .input;
+                                                        }
+                                                    },
+                                                    .list => {
+                                                        consumed = ui.applyListAction(
+                                                            allocator,
+                                                            &log_sink,
+                                                            child_in,
+                                                            &widgets,
+                                                            current_root.?,
+                                                            rows,
+                                                            cols,
+                                                            focused_id.?,
+                                                            action,
+                                                        ) catch false;
+                                                        if (consumed) {
+                                                            need_backend_flush = true;
+                                                            requested_reason = .input;
+                                                        }
+                                                    },
+                                                    .scroll => {
+                                                        consumed = ui.applyScrollAction(
+                                                            allocator,
+                                                            &log_sink,
+                                                            child_in,
+                                                            &widgets,
+                                                            current_root.?,
+                                                            rows,
+                                                            cols,
+                                                            focused_id.?,
+                                                            action,
+                                                        ) catch false;
+                                                        if (consumed) {
+                                                            need_backend_flush = true;
+                                                            requested_reason = .input;
+                                                        }
+                                                    },
+                                                    .action => {
+                                                        consumed = ui.applyActionWidgetAction(
+                                                            &log_sink,
+                                                            child_in,
+                                                            focused_id.?,
+                                                            action,
+                                                        ) catch false;
+                                                        if (consumed) {
+                                                            need_backend_flush = true;
+                                                            requested_reason = .input;
+                                                        }
+                                                    },
+                                                }
+                                            },
+                                        }
+                                    }
+
+                                    if (!consumed and focused_id != null and current_root != null and focused_kind != null) {
+                                        switch (focused_kind.?) {
+                                            .input => {
+                                                const rows: usize = @as(usize, last_term_size.rows);
+                                                const cols: usize = @as(usize, last_term_size.cols);
+                                                var visible_cols: usize = ui.inputVisibleCols(cols);
+                                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                    visible_cols = ui.inputVisibleCols(r.w);
+                                                }
+                                                const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
+                                                consumed = ui.handleFocusedInputKey(
+                                                    allocator,
+                                                    &widgets,
+                                                    focused_id.?,
+                                                    kev,
+                                                    readonly,
+                                                    visible_cols,
+                                                ) catch false;
+                                                if (consumed) {
+                                                    pending_input_event = true;
+                                                    requested_reason = .input;
+                                                }
+                                            },
+                                            .textarea => {
+                                                const rows: usize = @as(usize, last_term_size.rows);
+                                                const cols: usize = @as(usize, last_term_size.cols);
+                                                var visible_rows: usize = rows;
+                                                var visible_cols: usize = cols;
+                                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                    visible_rows = r.h;
+                                                    visible_cols = r.w;
+                                                }
+                                                const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
+                                                consumed = ui.handleFocusedTextareaKey(
+                                                    allocator,
+                                                    &widgets,
+                                                    focused_id.?,
+                                                    kev,
+                                                    readonly,
+                                                    visible_rows,
+                                                    visible_cols,
+                                                ) catch false;
+                                                if (consumed) {
+                                                    pending_input_event = true;
+                                                    requested_reason = .input;
+                                                }
+                                            },
+                                            else => {},
+                                        }
+                                    }
+
+                                    if (consumed) {
+                                        handled_input_this_iter = true;
                                     }
                                 }
 
-                                if (!consumed and !focused_is_text_edit) {
+                                if (!consumed) {
                                     try sendKeyEventToBackend(&log_sink, child_in, kev);
                                     need_backend_flush = true;
                                 }

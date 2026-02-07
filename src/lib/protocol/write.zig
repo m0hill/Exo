@@ -20,6 +20,9 @@ const PointerEvent = protocol.PointerEvent;
 const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
 const PasteSource = protocol.PasteSource;
+const KeybindingsConfig = protocol.KeybindingsConfig;
+const KeybindingRule = protocol.KeybindingRule;
+const KeyAction = protocol.KeyAction;
 const ParseMsgError = protocol.ParseMsgError;
 
 pub fn writeJsonString(writer: anytype, s: []const u8) !void {
@@ -203,6 +206,83 @@ pub fn writePasteEventJsonl(writer: anytype, source: PasteSource, bytes: usize) 
         .clipboard => "clipboard",
     });
     try writer.print(",\"bytes\":{d}}}\n", .{bytes});
+}
+
+pub fn writeConfigJsonl(writer: anytype, cfg: KeybindingsConfig) !void {
+    try writer.writeAll("{\"type\":\"config\",\"keybindings\":{");
+    var wrote_context = false;
+    try writeKeybindingContext(writer, "global", cfg.global, &wrote_context);
+    try writeKeybindingContext(writer, "input", cfg.input, &wrote_context);
+    try writeKeybindingContext(writer, "textarea", cfg.textarea, &wrote_context);
+    try writeKeybindingContext(writer, "list", cfg.list, &wrote_context);
+    try writeKeybindingContext(writer, "scroll", cfg.scroll, &wrote_context);
+    try writeKeybindingContext(writer, "action", cfg.action, &wrote_context);
+    try writer.writeAll("}}\n");
+}
+
+fn writeKeybindingContext(
+    writer: anytype,
+    name: []const u8,
+    rules_opt: ?[]const KeybindingRule,
+    wrote_context: *bool,
+) !void {
+    const rules = rules_opt orelse return;
+    if (wrote_context.*) try writer.writeByte(',');
+    wrote_context.* = true;
+    try writeJsonString(writer, name);
+    try writer.writeAll(":[");
+    for (rules, 0..) |rule, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        try writer.writeAll("{\"key\":");
+        try writeJsonString(writer, rule.key);
+        if (rule.mods != 0) {
+            try writer.print(",\"mods\":{d}", .{rule.mods});
+        }
+        try writer.writeAll(",\"action\":");
+        try writeJsonString(writer, keyActionString(rule.action));
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+}
+
+fn keyActionString(action: KeyAction) []const u8 {
+    return switch (action) {
+        .noop => "noop",
+        .focus_next => "focus_next",
+        .focus_prev => "focus_prev",
+        .focus_clear => "focus_clear",
+        .list_prev => "list_prev",
+        .list_next => "list_next",
+        .list_activate => "list_activate",
+        .scroll_line_up => "scroll_line_up",
+        .scroll_line_down => "scroll_line_down",
+        .scroll_page_up => "scroll_page_up",
+        .scroll_page_down => "scroll_page_down",
+        .scroll_home => "scroll_home",
+        .scroll_end => "scroll_end",
+        .action_activate => "action_activate",
+        .input_left => "input_left",
+        .input_right => "input_right",
+        .input_word_left => "input_word_left",
+        .input_word_right => "input_word_right",
+        .input_home => "input_home",
+        .input_end => "input_end",
+        .input_delete => "input_delete",
+        .input_backspace => "input_backspace",
+        .textarea_left => "textarea_left",
+        .textarea_right => "textarea_right",
+        .textarea_up => "textarea_up",
+        .textarea_down => "textarea_down",
+        .textarea_word_left => "textarea_word_left",
+        .textarea_word_right => "textarea_word_right",
+        .textarea_home => "textarea_home",
+        .textarea_end => "textarea_end",
+        .textarea_page_up => "textarea_page_up",
+        .textarea_page_down => "textarea_page_down",
+        .textarea_delete => "textarea_delete",
+        .textarea_backspace => "textarea_backspace",
+        .textarea_newline => "textarea_newline",
+    };
 }
 
 fn writeWidgetStateFields(

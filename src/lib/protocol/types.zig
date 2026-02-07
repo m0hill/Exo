@@ -5,6 +5,7 @@ pub const Msg = union(enum) {
     patch: PatchMsg,
     event: EventMsg,
     clipboard: ClipboardMsg,
+    config: ConfigMsg,
 };
 
 pub const PatchMsg = union(enum) {
@@ -61,6 +62,63 @@ pub const PasteSource = enum {
 pub const PasteEvent = struct {
     source: PasteSource,
     bytes: usize,
+};
+
+pub const ConfigMsg = struct {
+    keybindings: KeybindingsConfig,
+};
+
+pub const KeybindingsConfig = struct {
+    global: ?[]KeybindingRule = null,
+    input: ?[]KeybindingRule = null,
+    textarea: ?[]KeybindingRule = null,
+    list: ?[]KeybindingRule = null,
+    scroll: ?[]KeybindingRule = null,
+    action: ?[]KeybindingRule = null,
+};
+
+pub const KeybindingRule = struct {
+    key: []const u8,
+    mods: u8 = 0,
+    action: KeyAction,
+};
+
+pub const KeyAction = enum {
+    noop,
+    focus_next,
+    focus_prev,
+    focus_clear,
+    list_prev,
+    list_next,
+    list_activate,
+    scroll_line_up,
+    scroll_line_down,
+    scroll_page_up,
+    scroll_page_down,
+    scroll_home,
+    scroll_end,
+    action_activate,
+    input_left,
+    input_right,
+    input_word_left,
+    input_word_right,
+    input_home,
+    input_end,
+    input_delete,
+    input_backspace,
+    textarea_left,
+    textarea_right,
+    textarea_up,
+    textarea_down,
+    textarea_word_left,
+    textarea_word_right,
+    textarea_home,
+    textarea_end,
+    textarea_page_up,
+    textarea_page_down,
+    textarea_delete,
+    textarea_backspace,
+    textarea_newline,
 };
 
 pub const ValidationState = enum {
@@ -394,4 +452,6 @@ pub const ParseMsgError = error{
     UnknownClipboardOp,
     UnknownClipboardTarget,
     UnknownPasteSource,
+    UnknownKeyAction,
+    InvalidKeybindingRule,
 } || std.mem.Allocator.Error;

@@ -17,4 +17,5 @@ comptime {
     _ = @import("key_decode.zig");
     _ = @import("clipboard.zig");
     _ = @import("termcaps.zig");
+    _ = @import("keybindings.zig");
 }

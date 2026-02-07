@@ -23,6 +23,10 @@ const node_util = @import("node_util.zig");
 
 pub const pointer = @import("pointer.zig");
 
+pub fn makeNoopLogSink() log.LogSink {
+    return .{};
+}
+
 pub fn effectiveTermSize(sz: terminal.Size) terminal.Size {
     var rows = sz.rows;
     var cols = sz.cols;
@@ -1579,7 +1583,26 @@ pub fn activateListForId(log_sink: *log.LogSink, backend_in: anytype, widgets: [
     try protocol.writeActivateEventJsonl(backend_in, list_id, st.selected_id.items);
 }
 
-pub fn handleFocusedListKey(
+fn mapListKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
+    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return null;
+    return switch (ev.key) {
+        .named => |k| switch (k) {
+            .up => .list_prev,
+            .down => .list_next,
+            .enter => .list_activate,
+            else => null,
+        },
+        .text => |s| blk: {
+            if (s.len != 1) break :blk null;
+            if (s[0] == 'k') break :blk .list_prev;
+            if (s[0] == 'j') break :blk .list_next;
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+pub fn applyListAction(
     allocator: std.mem.Allocator,
     log_sink: *log.LogSink,
     backend_in: anytype,
@@ -1588,31 +1611,20 @@ pub fn handleFocusedListKey(
     rows: usize,
     cols: usize,
     list_id: []const u8,
-    ev: keys.KeyEvent,
+    action: protocol.KeyAction,
 ) !bool {
-    if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
-
-    if (ev.key == .named and ev.key.named == .enter) {
-        try activateListForId(log_sink, backend_in, widgets.items, list_id);
-        return true;
+    switch (action) {
+        .list_activate => {
+            try activateListForId(log_sink, backend_in, widgets.items, list_id);
+            return true;
+        },
+        .list_prev, .list_next => {},
+        else => return false,
     }
 
-    const delta: isize = blk: {
-        if (ev.key == .named and ev.key.named == .up) break :blk -1;
-        if (ev.key == .named and ev.key.named == .down) break :blk 1;
-        const b = switch (ev.key) {
-            .text => |s| if (s.len == 1 and s[0] < 0x80) s[0] else break :blk 0,
-            else => break :blk 0,
-        };
-        if (b == 'k') break :blk -1;
-        if (b == 'j') break :blk 1;
-        break :blk 0;
-    };
-    if (delta == 0) return false;
-
+    const delta: isize = if (action == .list_prev) -1 else 1;
     const changed = try moveListSelectionForId(allocator, log_sink, backend_in, widgets, root, list_id, delta);
 
-    // Clamp scroll to actual visible height when we can compute it from layout.
     const l = node_util.findListNodeById(root, list_id) orelse return changed;
     var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
     defer scroll_states.deinit(allocator);
@@ -1629,9 +1641,35 @@ pub fn handleFocusedListKey(
     return changed or (stw.scroll != before_scroll);
 }
 
+pub fn handleFocusedListKey(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+    ev: keys.KeyEvent,
+) !bool {
+    const action = mapListKeyToAction(ev) orelse return false;
+    return applyListAction(allocator, log_sink, backend_in, widgets, root, rows, cols, list_id, action);
+}
+
 pub fn activateActionForId(log_sink: *log.LogSink, backend_in: anytype, id: []const u8) !void {
     log.logPrint(log_sink, "EVENT_TX name=activate id={s} item=\n", .{id});
     try protocol.writeActivateEventJsonl(backend_in, id, "");
+}
+
+pub fn applyActionWidgetAction(
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    id: []const u8,
+    action: protocol.KeyAction,
+) !bool {
+    if (action != .action_activate) return false;
+    try activateActionForId(log_sink, backend_in, id);
+    return true;
 }
 
 pub fn handleFocusedInputKey(
@@ -1642,7 +1680,68 @@ pub fn handleFocusedInputKey(
     readonly: bool,
     visible_cols: usize,
 ) !bool {
+    const action_opt = mapInputKeyToAction(ev);
+    if (action_opt) |action| {
+        return applyInputAction(allocator, widgets, input_id, action, readonly, visible_cols);
+    }
+
+    const s = switch (ev.key) {
+        .text => |txt| txt,
+        else => return false,
+    };
+    if (ev.mods.ctrl or ev.mods.shift or ev.mods.alt) return false;
+    if (s.len == 0) return false;
+
     const max_input_bytes: usize = 16 * 1024;
+    const idx = try ensureWidgetKind(allocator, widgets, input_id, .input);
+    var st = &widgets.items[idx].state.input;
+    if (readonly) return false;
+
+    if (st.value.items.len + s.len > max_input_bytes) return false;
+    var changed: bool = false;
+    if (s.len == 1 and s[0] < 0x80) {
+        changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
+    } else {
+        changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
+    }
+
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+    if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
+    const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
+    return changed or scroll_changed;
+}
+
+fn mapInputKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
+    return switch (ev.key) {
+        .text => |s| blk: {
+            if (ev.mods.ctrl or ev.mods.shift) break :blk null;
+            if (ev.mods.alt and s.len == 1) {
+                if (s[0] == 'b') break :blk .input_word_left;
+                if (s[0] == 'f') break :blk .input_word_right;
+            }
+            break :blk null;
+        },
+        .named => |k| switch (k) {
+            .left => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .input_word_left else if (!ev.mods.ctrl and !ev.mods.shift) .input_left else null,
+            .right => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .input_word_right else if (!ev.mods.ctrl and !ev.mods.shift) .input_right else null,
+            .home => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_home else null,
+            .end => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_end else null,
+            .delete => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_delete else null,
+            .backspace => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_backspace else null,
+            else => null,
+        },
+        else => null,
+    };
+}
+
+pub fn applyInputAction(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    input_id: []const u8,
+    action: protocol.KeyAction,
+    readonly: bool,
+    visible_cols: usize,
+) !bool {
     const idx = try ensureWidgetKind(allocator, widgets, input_id, .input);
     var st = &widgets.items[idx].state.input;
 
@@ -1651,97 +1750,54 @@ pub fn handleFocusedInputKey(
     const before_scroll: usize = st.scroll_x;
 
     var changed: bool = false;
-    switch (ev.key) {
-        .text => |s| {
-            if (ev.mods.ctrl or ev.mods.shift) return false;
-
-            if (ev.mods.alt and s.len == 1) {
-                if (s[0] == 'b') {
-                    const next = input.word_left(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                    // handled
-                } else if (s[0] == 'f') {
-                    const next = input.word_right(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                    // handled
-                } else {
-                    return false;
-                }
-            } else if (ev.mods.alt) {
-                return false;
-            } else {
-                if (readonly) return false;
-                if (s.len == 0) return false;
-                if (st.value.items.len + s.len > max_input_bytes) return false;
-
-                if (s.len == 1 and s[0] < 0x80) {
-                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
-                } else {
-                    changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
-                }
+    switch (action) {
+        .input_left => {
+            const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
             }
         },
-        .named => |k| switch (k) {
-            .left => {
-                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
-                    const next = input.word_left(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                } else {
-                    const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
-                    if (next != st.cursor) {
-                        st.cursor = next;
-                        changed = true;
-                    }
-                }
-            },
-            .right => {
-                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
-                    const next = input.word_right(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                } else {
-                    const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
-                    if (next != st.cursor) {
-                        st.cursor = next;
-                        changed = true;
-                    }
-                }
-            },
-            .home => if (st.cursor != 0) {
-                st.cursor = 0;
+        .input_right => {
+            const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
                 changed = true;
-            },
-            .end => if (st.cursor != st.value.items.len) {
-                st.cursor = st.value.items.len;
+            }
+        },
+        .input_word_left => {
+            const next = input.word_left(st.value.items, st.cursor);
+            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+            if (clamped != st.cursor) {
+                st.cursor = clamped;
                 changed = true;
-            },
-            .delete => {
-                if (readonly) return false;
-                changed = input.delete_at_cursor(&st.value, &st.cursor);
-            },
-            .backspace => {
-                if (readonly) return false;
-                if (st.cursor != 0) {
-                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
-                }
-            },
-            .insert => return false,
-            else => return false,
+            }
+        },
+        .input_word_right => {
+            const next = input.word_right(st.value.items, st.cursor);
+            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+            if (clamped != st.cursor) {
+                st.cursor = clamped;
+                changed = true;
+            }
+        },
+        .input_home => if (st.cursor != 0) {
+            st.cursor = 0;
+            changed = true;
+        },
+        .input_end => if (st.cursor != st.value.items.len) {
+            st.cursor = st.value.items.len;
+            changed = true;
+        },
+        .input_delete => {
+            if (readonly) return false;
+            changed = input.delete_at_cursor(&st.value, &st.cursor);
+        },
+        .input_backspace => {
+            if (readonly) return false;
+            if (st.cursor != 0) {
+                changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
+            }
         },
         else => return false,
     }
@@ -1970,6 +2026,77 @@ pub fn handleFocusedTextareaKey(
     visible_rows: usize,
     visible_cols: usize,
 ) !bool {
+    const action_opt = mapTextareaKeyToAction(ev);
+    if (action_opt) |action| {
+        return applyTextareaAction(allocator, widgets, textarea_id, action, readonly, visible_rows, visible_cols);
+    }
+
+    const s = switch (ev.key) {
+        .text => |txt| txt,
+        else => return false,
+    };
+    if (ev.mods.ctrl or ev.mods.shift or ev.mods.alt) return false;
+    if (s.len == 0) return false;
+
+    const max_textarea_bytes: usize = 64 * 1024;
+    const idx = try ensureWidgetKind(allocator, widgets, textarea_id, .textarea);
+    var st = &widgets.items[idx].state.textarea;
+    if (readonly) return false;
+
+    if (st.value.items.len + s.len > max_textarea_bytes) return false;
+    var changed: bool = false;
+    if (s.len == 1 and s[0] < 0x80) {
+        changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
+    } else {
+        changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
+    }
+
+    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+    const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, visible_cols);
+    const content_h = textareaVisualLines(st.value.items, visible_cols);
+    const next_scroll_y = state.scrollIntoView(st.scroll_y, visible_rows, cursor_y, cursor_y + 1, content_h);
+    const scroll_changed = next_scroll_y != st.scroll_y;
+    st.scroll_y = next_scroll_y;
+    return changed or scroll_changed;
+}
+
+fn mapTextareaKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
+    return switch (ev.key) {
+        .text => |s| blk: {
+            if (ev.mods.ctrl or ev.mods.shift) break :blk null;
+            if (ev.mods.alt and s.len == 1) {
+                if (s[0] == 'b') break :blk .textarea_word_left;
+                if (s[0] == 'f') break :blk .textarea_word_right;
+            }
+            break :blk null;
+        },
+        .named => |k| switch (k) {
+            .left => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .textarea_word_left else if (!ev.mods.ctrl and !ev.mods.shift) .textarea_left else null,
+            .right => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .textarea_word_right else if (!ev.mods.ctrl and !ev.mods.shift) .textarea_right else null,
+            .up => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_up else null,
+            .down => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_down else null,
+            .home => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_home else null,
+            .end => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_end else null,
+            .page_up => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_page_up else null,
+            .page_down => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_page_down else null,
+            .delete => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_delete else null,
+            .backspace => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_backspace else null,
+            .enter => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_newline else null,
+            else => null,
+        },
+        else => null,
+    };
+}
+
+pub fn applyTextareaAction(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    textarea_id: []const u8,
+    action: protocol.KeyAction,
+    readonly: bool,
+    visible_rows: usize,
+    visible_cols: usize,
+) !bool {
     const max_textarea_bytes: usize = 64 * 1024;
     const idx = try ensureWidgetKind(allocator, widgets, textarea_id, .textarea);
     var st = &widgets.items[idx].state.textarea;
@@ -1979,144 +2106,104 @@ pub fn handleFocusedTextareaKey(
     const before_scroll_y: usize = st.scroll_y;
 
     var changed: bool = false;
-    switch (ev.key) {
-        .text => |s| {
-            if (ev.mods.ctrl or ev.mods.shift) return false;
-
-            if (ev.mods.alt and s.len == 1) {
-                if (s[0] == 'b') {
-                    const next = input.word_left(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                } else if (s[0] == 'f') {
-                    const next = input.word_right(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                } else {
-                    return false;
-                }
-            } else if (ev.mods.alt) {
-                return false;
-            } else {
-                if (readonly) return false;
-                if (s.len == 0) return false;
-                if (st.value.items.len + s.len > max_textarea_bytes) return false;
-
-                if (s.len == 1 and s[0] < 0x80) {
-                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
-                } else {
-                    changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
-                }
+    switch (action) {
+        .textarea_left => {
+            const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
             }
         },
-        .named => |k| switch (k) {
-            .left => {
-                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
-                    const next = input.word_left(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                } else {
-                    const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
-                    if (next != st.cursor) {
-                        st.cursor = next;
-                        changed = true;
-                    }
-                }
-            },
-            .right => {
-                if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) {
-                    const next = input.word_right(st.value.items, st.cursor);
-                    const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
-                    if (clamped != st.cursor) {
-                        st.cursor = clamped;
-                        changed = true;
-                    }
-                } else {
-                    const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
-                    if (next != st.cursor) {
-                        st.cursor = next;
-                        changed = true;
-                    }
-                }
-            },
-            .up, .down => {
-                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
-                const content_h = textareaVisualLines(st.value.items, visible_cols);
-                if (content_h == 0) return false;
-                const target_y: usize = if (k == .up)
-                    (if (pos.y > 0) pos.y - 1 else 0)
-                else
-                    @min(pos.y + 1, content_h - 1);
-                const next = textareaByteIndexForVisualPos(st.value.items, target_y, pos.x, visible_cols);
-                if (next != st.cursor) {
-                    st.cursor = next;
-                    changed = true;
-                }
-            },
-            .home => {
-                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
-                const next = textareaByteIndexForVisualPos(st.value.items, pos.y, 0, visible_cols);
-                if (next != st.cursor) {
-                    st.cursor = next;
-                    changed = true;
-                }
-            },
-            .end => {
-                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
-                const next = textareaByteIndexForVisualPos(st.value.items, pos.y, std.math.maxInt(usize), visible_cols);
-                if (next != st.cursor) {
-                    st.cursor = next;
-                    changed = true;
-                }
-            },
-            .page_up, .page_down => {
-                const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
-                const content_h = textareaVisualLines(st.value.items, visible_cols);
-                if (content_h == 0) return false;
-                const step: usize = if (visible_rows > 1) visible_rows - 1 else 1;
-                const target_y: usize = if (k == .page_up)
-                    (if (pos.y > step) pos.y - step else 0)
-                else
-                    @min(pos.y + step, content_h - 1);
-                const next = textareaByteIndexForVisualPos(st.value.items, target_y, pos.x, visible_cols);
-                if (next != st.cursor) {
-                    st.cursor = next;
-                    changed = true;
-                }
-            },
-            .delete => {
-                if (readonly) return false;
-                changed = input.delete_at_cursor(&st.value, &st.cursor);
-            },
-            .backspace => {
-                if (readonly) return false;
-                if (st.cursor != 0) {
-                    changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
-                }
-            },
-            .enter => {
-                if (readonly) return false;
-                if (st.value.items.len + 1 > max_textarea_bytes) return false;
-                if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
-                st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
-                if (st.cursor == st.value.items.len) {
-                    try st.value.append(allocator, '\n');
-                } else {
-                    try st.value.insert(allocator, st.cursor, '\n');
-                }
-                st.cursor += 1;
+        .textarea_right => {
+            const next = unicode.nextGraphemeBoundary(st.value.items, st.cursor);
+            if (next != st.cursor) {
+                st.cursor = next;
                 changed = true;
-            },
-            else => return false,
+            }
+        },
+        .textarea_word_left => {
+            const next = input.word_left(st.value.items, st.cursor);
+            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+            if (clamped != st.cursor) {
+                st.cursor = clamped;
+                changed = true;
+            }
+        },
+        .textarea_word_right => {
+            const next = input.word_right(st.value.items, st.cursor);
+            const clamped = unicode.clampGraphemeBoundary(st.value.items, next);
+            if (clamped != st.cursor) {
+                st.cursor = clamped;
+                changed = true;
+            }
+        },
+        .textarea_up, .textarea_down => {
+            const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+            const content_h = textareaVisualLines(st.value.items, visible_cols);
+            if (content_h == 0) return false;
+            const target_y: usize = if (action == .textarea_up)
+                (if (pos.y > 0) pos.y - 1 else 0)
+            else
+                @min(pos.y + 1, content_h - 1);
+            const next = textareaByteIndexForVisualPos(st.value.items, target_y, pos.x, visible_cols);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
+        },
+        .textarea_home => {
+            const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+            const next = textareaByteIndexForVisualPos(st.value.items, pos.y, 0, visible_cols);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
+        },
+        .textarea_end => {
+            const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+            const next = textareaByteIndexForVisualPos(st.value.items, pos.y, std.math.maxInt(usize), visible_cols);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
+        },
+        .textarea_page_up, .textarea_page_down => {
+            const pos = textareaCursorVisualPos(st.value.items, st.cursor, visible_cols);
+            const content_h = textareaVisualLines(st.value.items, visible_cols);
+            if (content_h == 0) return false;
+            const step: usize = if (visible_rows > 1) visible_rows - 1 else 1;
+            const target_y: usize = if (action == .textarea_page_up)
+                (if (pos.y > step) pos.y - step else 0)
+            else
+                @min(pos.y + step, content_h - 1);
+            const next = textareaByteIndexForVisualPos(st.value.items, target_y, pos.x, visible_cols);
+            if (next != st.cursor) {
+                st.cursor = next;
+                changed = true;
+            }
+        },
+        .textarea_delete => {
+            if (readonly) return false;
+            changed = input.delete_at_cursor(&st.value, &st.cursor);
+        },
+        .textarea_backspace => {
+            if (readonly) return false;
+            if (st.cursor != 0) {
+                changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
+            }
+        },
+        .textarea_newline => {
+            if (readonly) return false;
+            if (st.value.items.len + 1 > max_textarea_bytes) return false;
+            if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+            st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
+            if (st.cursor == st.value.items.len) {
+                try st.value.append(allocator, '\n');
+            } else {
+                try st.value.insert(allocator, st.cursor, '\n');
+            }
+            st.cursor += 1;
+            changed = true;
         },
         else => return false,
     }
@@ -2265,35 +2352,62 @@ pub fn handleFocusedScrollKey(
     scroll_id: []const u8,
     ev: keys.KeyEvent,
 ) !bool {
+    const action = mapScrollKeyToAction(ev) orelse return false;
+    return applyScrollAction(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, action);
+}
+
+fn mapScrollKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
+    return switch (ev.key) {
+        .text => |s| blk: {
+            if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) break :blk null;
+            if (s.len != 1) break :blk null;
+            if (s[0] == 'j') break :blk .scroll_line_down;
+            if (s[0] == 'k') break :blk .scroll_line_up;
+            break :blk null;
+        },
+        .named => |k| switch (k) {
+            .page_down => if (!ev.mods.ctrl and !ev.mods.alt and !ev.mods.shift) .scroll_page_down else null,
+            .page_up => if (!ev.mods.ctrl and !ev.mods.alt and !ev.mods.shift) .scroll_page_up else null,
+            .home => if (!ev.mods.ctrl and !ev.mods.alt and !ev.mods.shift) .scroll_home else null,
+            .end => if (!ev.mods.ctrl and !ev.mods.alt and !ev.mods.shift) .scroll_end else null,
+            else => null,
+        },
+        else => null,
+    };
+}
+
+pub fn applyScrollAction(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    scroll_id: []const u8,
+    action: protocol.KeyAction,
+) !bool {
     const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
     const st = &widgets.items[idx].state.scroll;
 
     // Make sure page-scrolling uses the current viewport size.
     syncScrollForId(widgets, root, rows, cols, scroll_id);
 
-    switch (ev.key) {
-        .text => |s| {
-            if (ev.mods.ctrl or ev.mods.alt or ev.mods.shift) return false;
-            if (s.len != 1) return false;
-            if (s[0] == 'j') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 1);
-            if (s[0] == 'k') return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -1);
-            return false;
+    switch (action) {
+        .scroll_line_down => return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 1),
+        .scroll_line_up => return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -1),
+        .scroll_page_down => {
+            const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
+            return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, step);
         },
-        .named => |k| switch (k) {
-            .page_down => {
-                const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
-                return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, step);
-            },
-            .page_up => {
-                const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
-                return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -step);
-            },
-            .home => return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 0),
-            .end => {
-                const max_scroll: usize = if (st.content_h > st.viewport_h) st.content_h - st.viewport_h else 0;
-                return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, max_scroll);
-            },
-            else => return false,
+        .scroll_page_up => {
+            const step: isize = if (st.viewport_h > 1) @as(isize, @intCast(st.viewport_h - 1)) else 1;
+            return try scrollViewportById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, -step);
+        },
+        .scroll_home => return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, 0),
+        .scroll_end => {
+            const max_scroll: usize = if (st.content_h > st.viewport_h) st.content_h - st.viewport_h else 0;
+            return try setScrollViewportYById(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, max_scroll);
         },
         else => return false,
     }

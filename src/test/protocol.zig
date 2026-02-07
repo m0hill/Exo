@@ -506,3 +506,48 @@ test "protocol: write+parse clipboard messages and events" {
         else => return error.TestUnexpectedResult,
     }
 }
+
+test "protocol: parse config keybindings message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"config\",\"keybindings\":{" ++
+        "\"global\":[{\"key\":\"Tab\",\"action\":\"focus_next\"}]," ++
+        "\"list\":[{\"key\":\"j\",\"action\":\"list_next\"},{\"key\":\"k\",\"action\":\"list_prev\"}]" ++
+        "}}";
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const cfg = switch (msg) {
+        .config => |c| c.keybindings,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(cfg.global != null);
+    try std.testing.expectEqual(@as(usize, 1), cfg.global.?.len);
+    try std.testing.expectEqual(protocol.KeyAction.focus_next, cfg.global.?[0].action);
+    try std.testing.expect(cfg.list != null);
+    try std.testing.expectEqual(@as(usize, 2), cfg.list.?.len);
+    try std.testing.expectEqual(protocol.KeyAction.list_next, cfg.list.?[0].action);
+}
+
+test "protocol: reject unknown keybinding action" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"action\":\"focus_later\"}]}}";
+    try std.testing.expectError(error.UnknownKeyAction, protocol.parseMsgLeaky(arena.allocator(), line));
+}
+
+test "protocol: reject malformed keybinding rule" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const bad_mods =
+        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"mods\":99,\"action\":\"focus_next\"}]}}";
+    try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), bad_mods));
+
+    const missing_key =
+        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"action\":\"focus_next\"}]}}";
+    try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), missing_key));
+}
