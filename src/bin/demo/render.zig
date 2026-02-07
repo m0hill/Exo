@@ -699,6 +699,73 @@ fn writeWidgetsPanelNode(
     try children.append(allocator, textarea_node);
     try children.append(allocator, textarea_ro);
 
+    var controlled_input_buf: [96]u8 = undefined;
+    const controlled_input_value = try std.fmt.bufPrint(
+        &controlled_input_buf,
+        "backend controlled tick={d}",
+        .{tick},
+    );
+    const controlled_selected_id: []const u8 = if ((tick % 2) == 0) "w-ctl-item-a" else "w-ctl-item-b";
+
+    var controlled_list_children = [_]protocol.Node{
+        .{ .text = .{ .id = "w-ctl-item-a", .text = "Controlled item A" } },
+        .{ .text = .{ .id = "w-ctl-item-b", .text = "Controlled item B" } },
+    };
+    const controlled_list = protocol.Node{ .list = .{
+        .id = "w-controlled-list",
+        .hoverable = true,
+        .mouseable = true,
+        .height = 2,
+        .state_mode = .controlled,
+        .selected_id = controlled_selected_id,
+        .scroll = 0,
+        .children = controlled_list_children[0..],
+    } };
+
+    var controlled_scroll_text_buf: [160]u8 = undefined;
+    const controlled_scroll_text = try std.fmt.bufPrint(
+        &controlled_scroll_text_buf,
+        "line 1\nline 2\nline 3\nline 4\nline 5\ny={d}",
+        .{@as(usize, @intCast((tick / 2) % 4))},
+    );
+    const controlled_scroll_child = try allocator.create(protocol.Node);
+    controlled_scroll_child.* = .{
+        .text = .{
+            .id = "w-controlled-scroll-body",
+            .text = controlled_scroll_text,
+        },
+    };
+    const controlled_scroll = protocol.Node{ .scroll = .{
+        .id = "w-controlled-scroll",
+        .h = 3,
+        .mouseable = true,
+        .state_mode = .controlled,
+        .scroll_y = @as(usize, @intCast((tick / 2) % 4)),
+        .child = controlled_scroll_child,
+    } };
+
+    var controlled_row_children = try allocator.alloc(protocol.Node, 3);
+    controlled_row_children[0] = .{ .input = .{
+        .id = "w-controlled-input",
+        .state_mode = .controlled,
+        .value = controlled_input_value,
+        .cursor = controlled_input_value.len,
+        .placeholder = "backend controlled",
+        .hoverable = true,
+        .mouseable = true,
+    } };
+    controlled_row_children[1] = controlled_list;
+    controlled_row_children[2] = controlled_scroll;
+    try children.append(allocator, .{
+        .text = .{
+            .id = "w-sec-controlled",
+            .h = 1,
+            .style = dim_style,
+            .text = "Controlled state demo (state_mode=controlled): backend drives input/list/scroll each tick",
+        },
+    });
+    try children.append(allocator, .{ .hbox = .{ .id = "w-controlled-row", .gap = 1, .children = controlled_row_children } });
+
     const percent: usize = @intCast(tick % 101);
     const progress = try widget_kit.progressBar(allocator, "w-progress", 12, percent, .{});
     const spin = widget_kit.spinner("w-spinner", @intCast(tick), .{});

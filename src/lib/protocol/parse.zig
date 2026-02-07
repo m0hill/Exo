@@ -31,6 +31,7 @@ const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
 const ValidationState = protocol.ValidationState;
+const StateMode = protocol.StateMode;
 const ListMarker = protocol.ListMarker;
 const ParseMsgError = protocol.ParseMsgError;
 
@@ -451,6 +452,14 @@ fn parseValidation(obj: std.json.ObjectMap) ParseMsgError!ValidationState {
     return error.UnknownValidationState;
 }
 
+fn parseStateMode(obj: std.json.ObjectMap) ParseMsgError!StateMode {
+    const s = try getOptionalString(obj, "state_mode") orelse return .uncontrolled;
+    if (std.mem.eql(u8, s, "uncontrolled")) return .uncontrolled;
+    if (std.mem.eql(u8, s, "init")) return .init;
+    if (std.mem.eql(u8, s, "controlled")) return .controlled;
+    return error.UnknownStateMode;
+}
+
 fn parseFocusable(obj: std.json.ObjectMap, default: bool) ParseMsgError!bool {
     if (obj.get("focusable")) |v| {
         return switch (v) {
@@ -791,6 +800,8 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
+        const state_mode = try parseStateMode(obj);
+        const scroll_y = try getOptionalUsize(obj, "scroll_y");
         const child_val = try getRequired(obj, "child");
         const child_node = try parseNodeLeaky(allocator, child_val);
         const child = try allocator.create(Node);
@@ -816,6 +827,8 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .col_span = gp.col_span,
             .grid_area = gp.grid_area,
             .style = st,
+            .state_mode = state_mode,
+            .scroll_y = scroll_y,
             .child = child,
         } };
     } else if (std.mem.eql(u8, type_str, "overlay")) {
@@ -978,6 +991,12 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const sel_st = try getOptionalStyleOverride(obj, "selection_style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
         const placeholder = try getOptionalString(obj, "placeholder");
+        const state_mode = try parseStateMode(obj);
+        const value = try getOptionalString(obj, "value");
+        const cursor = try getOptionalUsize(obj, "cursor");
+        const scroll_x = try getOptionalUsize(obj, "scroll_x");
+        const selection_start = try getOptionalUsize(obj, "selection_start");
+        const selection_end = try getOptionalUsize(obj, "selection_end");
         return .{ .input = .{
             .id = id,
             .w = w,
@@ -1001,6 +1020,12 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .selection_style = sel_st,
             .placeholder_style = ph_st,
             .placeholder = placeholder,
+            .state_mode = state_mode,
+            .value = value,
+            .cursor = cursor,
+            .scroll_x = scroll_x,
+            .selection_start = selection_start,
+            .selection_end = selection_end,
         } };
     } else if (std.mem.eql(u8, type_str, "textarea")) {
         const id = try getRequiredString(obj, "id");
@@ -1020,6 +1045,12 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const sel_st = try getOptionalStyleOverride(obj, "selection_style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
         const placeholder = try getOptionalString(obj, "placeholder");
+        const state_mode = try parseStateMode(obj);
+        const value = try getOptionalString(obj, "value");
+        const cursor = try getOptionalUsize(obj, "cursor");
+        const scroll_y = try getOptionalUsize(obj, "scroll_y");
+        const selection_start = try getOptionalUsize(obj, "selection_start");
+        const selection_end = try getOptionalUsize(obj, "selection_end");
         return .{ .textarea = .{
             .id = id,
             .w = w,
@@ -1042,6 +1073,12 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .selection_style = sel_st,
             .placeholder_style = ph_st,
             .placeholder = placeholder,
+            .state_mode = state_mode,
+            .value = value,
+            .cursor = cursor,
+            .scroll_y = scroll_y,
+            .selection_start = selection_start,
+            .selection_end = selection_end,
         } };
     } else if (std.mem.eql(u8, type_str, "list")) {
         const id = try getRequiredString(obj, "id");
@@ -1058,6 +1095,9 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focusable = try parseFocusable(obj, true);
         const focus_scope = try parseFocusScope(obj);
         const marker = try parseListMarker(obj);
+        const state_mode = try parseStateMode(obj);
+        const selected_id = try getOptionalString(obj, "selected_id");
+        const scroll = try getOptionalUsize(obj, "scroll");
         const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
@@ -1087,6 +1127,9 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .col_span = gp.col_span,
             .grid_area = gp.grid_area,
             .style = st,
+            .state_mode = state_mode,
+            .selected_id = selected_id,
+            .scroll = scroll,
             .children = out,
         } };
     } else {

@@ -310,6 +310,98 @@ test "protocol: write+parse textarea + list marker" {
     try std.testing.expectEqual(protocol.ListMarker.none, l.marker);
 }
 
+test "protocol: write+parse controlled state fields" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var scroll_child = protocol.Node{ .text = .{ .id = "scroll-body", .text = "line1\nline2\nline3" } };
+    var list_children = [_]protocol.Node{
+        .{ .text = .{ .id = "row-1", .text = "Row 1" } },
+        .{ .text = .{ .id = "row-2", .text = "Row 2" } },
+    };
+    var children = [_]protocol.Node{
+        .{ .input = .{
+            .id = "in",
+            .state_mode = .controlled,
+            .value = "hello",
+            .cursor = 4,
+            .scroll_x = 1,
+            .selection_start = 1,
+            .selection_end = 4,
+        } },
+        .{ .textarea = .{
+            .id = "ta",
+            .state_mode = .init,
+            .value = "a\nb",
+            .cursor = 2,
+            .scroll_y = 1,
+            .selection_start = 0,
+            .selection_end = 2,
+        } },
+        .{ .list = .{
+            .id = "list",
+            .state_mode = .controlled,
+            .selected_id = "row-2",
+            .scroll = 1,
+            .children = list_children[0..],
+        } },
+        .{ .scroll = .{
+            .id = "sv",
+            .state_mode = .controlled,
+            .scroll_y = 2,
+            .child = &scroll_child,
+        } },
+    };
+    const node = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
+    try buf.appendSlice(std.testing.allocator, "}");
+
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"state_mode\":\"controlled\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"selection_start\":1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"selected_id\":\"row-2\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"scroll_y\":2") != null);
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const v = switch (root) {
+        .vbox => |vv| vv,
+        else => return error.TestUnexpectedResult,
+    };
+
+    const in = v.children[0].input;
+    try std.testing.expectEqual(protocol.StateMode.controlled, in.state_mode);
+    try std.testing.expectEqualStrings("hello", in.value orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(@as(usize, 4), in.cursor orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(@as(usize, 1), in.scroll_x orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(@as(usize, 1), in.selection_start orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(@as(usize, 4), in.selection_end orelse return error.TestUnexpectedResult);
+
+    const ta = v.children[1].textarea;
+    try std.testing.expectEqual(protocol.StateMode.init, ta.state_mode);
+    try std.testing.expectEqualStrings("a\nb", ta.value orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(@as(usize, 1), ta.scroll_y orelse return error.TestUnexpectedResult);
+
+    const l = v.children[2].list;
+    try std.testing.expectEqual(protocol.StateMode.controlled, l.state_mode);
+    try std.testing.expectEqualStrings("row-2", l.selected_id orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(@as(usize, 1), l.scroll orelse return error.TestUnexpectedResult);
+
+    const sv = v.children[3].scroll;
+    try std.testing.expectEqual(protocol.StateMode.controlled, sv.state_mode);
+    try std.testing.expectEqual(@as(usize, 2), sv.scroll_y orelse return error.TestUnexpectedResult);
+}
+
 test "protocol: write+parse pointer event" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

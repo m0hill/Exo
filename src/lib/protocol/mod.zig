@@ -18,6 +18,7 @@ pub const KeybindingRule = types.KeybindingRule;
 pub const KeyAction = types.KeyAction;
 pub const Node = types.Node;
 pub const ValidationState = types.ValidationState;
+pub const StateMode = types.StateMode;
 
 pub const PointerKind = types.PointerKind;
 pub const PointerButton = types.PointerButton;

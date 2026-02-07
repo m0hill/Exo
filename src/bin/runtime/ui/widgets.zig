@@ -62,4 +62,5 @@ pub const WidgetState = union(enum) {
 pub const WidgetEntry = struct {
     id: std.ArrayList(u8) = .empty,
     state: WidgetState,
+    state_initialized: bool = false,
 };

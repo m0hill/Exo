@@ -13,8 +13,11 @@ pub const inputSelectedTextAlloc = ui.inputSelectedTextAlloc;
 pub const textareaSelectedTextAlloc = ui.textareaSelectedTextAlloc;
 pub const cycleFocusInTreeDir = ui.cycleFocusInTreeDir;
 pub const cycleFocusScopeInTreeDir = ui.cycleFocusScopeInTreeDir;
+pub const syncUiAfterPatch = ui.syncUiAfterPatch;
+pub const setFocusId = ui.setFocusId;
 pub const KeymapState = keybindings.KeymapState;
 pub const KeyContext = keybindings.Context;
+pub const makeNoopLogSink = ui.makeNoopLogSink;
 
 pub fn applyListAction(
     allocator: std.mem.Allocator,

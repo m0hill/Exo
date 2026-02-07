@@ -158,6 +158,46 @@ Node types (current):
 - validation: `validation` (`none|error|warning|success`)
 - `style` (object, optional): style overrides
 
+### Controlled State
+
+State-capable widgets support `state_mode`:
+
+- `uncontrolled` (default): runtime is source of truth for local widget state
+- `init`: apply backend state once when the widget first appears
+- `controlled`: backend is source of truth on every patch
+
+Patch application rule:
+
+- runtime never emits events just because a patch applied widget state
+- exception kept for compatibility: uncontrolled `list` still auto-selects first item and emits initial `select`
+
+State fields by widget:
+
+- `input`: `value`, `cursor`, `scroll_x`, `selection_start`, `selection_end`
+- `textarea`: `value`, `cursor`, `scroll_y`, `selection_start`, `selection_end`
+- `list`: `selected_id`, `scroll`
+- `scroll`: `scroll_y`
+
+Examples:
+
+Controlled input:
+
+```json
+{"type":"patch","root":{"type":"input","id":"query","state_mode":"controlled","value":"hello","cursor":5}}
+```
+
+Controlled list selection:
+
+```json
+{"type":"patch","root":{"type":"list","id":"results","state_mode":"controlled","selected_id":"row-2","children":[{"type":"text","id":"row-1","text":"A"},{"type":"text","id":"row-2","text":"B"}]}}
+```
+
+Controlled scroll viewport:
+
+```json
+{"type":"patch","root":{"type":"scroll","id":"viewport","state_mode":"controlled","scroll_y":12,"child":{"type":"text","id":"body","text":"...content..."}}}
+```
+
 `focus_scope` behavior:
 
 - focus traversal (`focus_next` / `focus_prev`) is trapped within the currently focused node's scope

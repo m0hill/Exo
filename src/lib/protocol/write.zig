@@ -24,6 +24,7 @@ const PasteSource = protocol.PasteSource;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
+const StateMode = protocol.StateMode;
 const ParseMsgError = protocol.ParseMsgError;
 
 pub fn writeJsonString(writer: anytype, s: []const u8) !void {
@@ -364,6 +365,16 @@ fn writeGridPlacementFields(
     }
 }
 
+fn writeStateModeField(writer: anytype, mode: StateMode) !void {
+    if (mode == .uncontrolled) return;
+    try writer.writeAll(",\"state_mode\":");
+    try writeJsonString(writer, switch (mode) {
+        .uncontrolled => "uncontrolled",
+        .init => "init",
+        .controlled => "controlled",
+    });
+}
+
 fn writeGridTrackJson(writer: anytype, t: GridTrack) !void {
     switch (t) {
         .fixed => |v| try writer.print("{d}", .{v}),
@@ -593,6 +604,8 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
             }
+            try writeStateModeField(writer, s.state_mode);
+            if (s.scroll_y) |scroll_y| try writer.print(",\"scroll_y\":{d}", .{scroll_y});
             try writer.writeAll(",\"child\":");
             try writeNodeJson(writer, s.child.*);
             try writer.writeByte('}');
@@ -791,6 +804,15 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                 try writer.writeAll(",\"placeholder\":");
                 try writeJsonString(writer, ph);
             }
+            try writeStateModeField(writer, inp.state_mode);
+            if (inp.value) |value| {
+                try writer.writeAll(",\"value\":");
+                try writeJsonString(writer, value);
+            }
+            if (inp.cursor) |cursor| try writer.print(",\"cursor\":{d}", .{cursor});
+            if (inp.scroll_x) |scroll_x| try writer.print(",\"scroll_x\":{d}", .{scroll_x});
+            if (inp.selection_start) |selection_start| try writer.print(",\"selection_start\":{d}", .{selection_start});
+            if (inp.selection_end) |selection_end| try writer.print(",\"selection_end\":{d}", .{selection_end});
             try writer.writeByte('}');
         },
         .textarea => |ta| {
@@ -828,6 +850,15 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                 try writer.writeAll(",\"placeholder\":");
                 try writeJsonString(writer, ph);
             }
+            try writeStateModeField(writer, ta.state_mode);
+            if (ta.value) |value| {
+                try writer.writeAll(",\"value\":");
+                try writeJsonString(writer, value);
+            }
+            if (ta.cursor) |cursor| try writer.print(",\"cursor\":{d}", .{cursor});
+            if (ta.scroll_y) |scroll_y| try writer.print(",\"scroll_y\":{d}", .{scroll_y});
+            if (ta.selection_start) |selection_start| try writer.print(",\"selection_start\":{d}", .{selection_start});
+            if (ta.selection_end) |selection_end| try writer.print(",\"selection_end\":{d}", .{selection_end});
             try writer.writeByte('}');
         },
         .list => |l| {
@@ -861,6 +892,12 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
             }
+            try writeStateModeField(writer, l.state_mode);
+            if (l.selected_id) |selected_id| {
+                try writer.writeAll(",\"selected_id\":");
+                try writeJsonString(writer, selected_id);
+            }
+            if (l.scroll) |scroll| try writer.print(",\"scroll\":{d}", .{scroll});
             try writer.writeAll(",\"children\":[");
             for (l.children, 0..) |child, i| {
                 if (i != 0) try writer.writeByte(',');

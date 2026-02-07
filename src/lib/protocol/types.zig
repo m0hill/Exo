@@ -154,6 +154,12 @@ pub const ValidationState = enum {
     success,
 };
 
+pub const StateMode = enum {
+    uncontrolled,
+    init,
+    controlled,
+};
+
 pub const Node = union(enum) {
     vbox: VBoxNode,
     hbox: HBoxNode,
@@ -336,6 +342,8 @@ pub const ScrollNode = struct {
     col_span: usize = 1,
     grid_area: ?[]const u8 = null,
     style: ?style.StyleOverride = null,
+    state_mode: StateMode = .uncontrolled,
+    scroll_y: ?usize = null,
     child: *Node,
 };
 
@@ -467,6 +475,12 @@ pub const InputNode = struct {
     selection_style: ?style.StyleOverride = null,
     placeholder_style: ?style.StyleOverride = null,
     placeholder: ?[]const u8 = null,
+    state_mode: StateMode = .uncontrolled,
+    value: ?[]const u8 = null,
+    cursor: ?usize = null,
+    scroll_x: ?usize = null,
+    selection_start: ?usize = null,
+    selection_end: ?usize = null,
 };
 
 pub const TextareaNode = struct {
@@ -491,6 +505,12 @@ pub const TextareaNode = struct {
     selection_style: ?style.StyleOverride = null,
     placeholder_style: ?style.StyleOverride = null,
     placeholder: ?[]const u8 = null,
+    state_mode: StateMode = .uncontrolled,
+    value: ?[]const u8 = null,
+    cursor: ?usize = null,
+    scroll_y: ?usize = null,
+    selection_start: ?usize = null,
+    selection_end: ?usize = null,
 };
 
 pub const ListMarker = enum {
@@ -519,6 +539,9 @@ pub const ListNode = struct {
     col_span: usize = 1,
     grid_area: ?[]const u8 = null,
     style: ?style.StyleOverride = null,
+    state_mode: StateMode = .uncontrolled,
+    selected_id: ?[]const u8 = null,
+    scroll: ?usize = null,
     children: []Node,
 };
 
@@ -565,6 +588,7 @@ pub const ParseMsgError = error{
     UnknownEventName,
     InvalidColor,
     UnknownValidationState,
+    UnknownStateMode,
     UnknownListMarker,
     UnknownOverlayPlacement,
     UnknownOverlayAlign,

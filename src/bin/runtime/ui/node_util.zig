@@ -47,6 +47,12 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .selection_style = i.selection_style,
             .placeholder_style = i.placeholder_style,
             .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
+            .state_mode = i.state_mode,
+            .value = if (i.value) |v| try allocator.dupe(u8, v) else null,
+            .cursor = i.cursor,
+            .scroll_x = i.scroll_x,
+            .selection_start = i.selection_start,
+            .selection_end = i.selection_end,
         } },
         .textarea => |t| .{ .textarea = .{
             .id = try allocator.dupe(u8, t.id),
@@ -64,6 +70,12 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .selection_style = t.selection_style,
             .placeholder_style = t.placeholder_style,
             .placeholder = if (t.placeholder) |p| try allocator.dupe(u8, p) else null,
+            .state_mode = t.state_mode,
+            .value = if (t.value) |v| try allocator.dupe(u8, v) else null,
+            .cursor = t.cursor,
+            .scroll_y = t.scroll_y,
+            .selection_start = t.selection_start,
+            .selection_end = t.selection_end,
         } },
         .vbox => |v| blk: {
             var children = try allocator.alloc(protocol.Node, v.children.len);
@@ -178,6 +190,8 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .validation = s.validation,
             .focusable = s.focusable,
             .style = s.style,
+            .state_mode = s.state_mode,
+            .scroll_y = s.scroll_y,
             .child = blk: {
                 const child_node = try cloneNodeLeaky(allocator, s.child.*);
                 const child = try allocator.create(protocol.Node);
@@ -246,6 +260,9 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .focusable = l.focusable,
                 .marker = l.marker,
                 .style = l.style,
+                .state_mode = l.state_mode,
+                .selected_id = if (l.selected_id) |v| try allocator.dupe(u8, v) else null,
+                .scroll = l.scroll,
                 .children = children,
             } };
         },
@@ -307,6 +324,98 @@ pub fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode 
         .list => |l| blk: {
             for (l.children) |child| {
                 if (findListNodeById(child, id)) |ll| break :blk ll;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+pub fn findInputNodeById(root: protocol.Node, id: []const u8) ?protocol.InputNode {
+    if (std.mem.eql(u8, nodeId(root), id)) {
+        return switch (root) {
+            .input => |i| i,
+            else => null,
+        };
+    }
+
+    return switch (root) {
+        .vbox => |v| blk: {
+            for (v.children) |child| {
+                if (findInputNodeById(child, id)) |i| break :blk i;
+            }
+            break :blk null;
+        },
+        .hbox => |h| blk: {
+            for (h.children) |child| {
+                if (findInputNodeById(child, id)) |i| break :blk i;
+            }
+            break :blk null;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
+                if (findInputNodeById(child, id)) |i| break :blk i;
+            }
+            break :blk null;
+        },
+        .box => |b| return findInputNodeById(b.child.*, id),
+        .scroll => |s| return findInputNodeById(s.child.*, id),
+        .overlay => |o| blk: {
+            if (findInputNodeById(o.base.*, id)) |i| break :blk i;
+            for (o.layers) |layer| {
+                if (findInputNodeById(layer.node.*, id)) |i| break :blk i;
+            }
+            break :blk null;
+        },
+        .list => |l| blk: {
+            for (l.children) |child| {
+                if (findInputNodeById(child, id)) |i| break :blk i;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+pub fn findTextareaNodeById(root: protocol.Node, id: []const u8) ?protocol.TextareaNode {
+    if (std.mem.eql(u8, nodeId(root), id)) {
+        return switch (root) {
+            .textarea => |t| t,
+            else => null,
+        };
+    }
+
+    return switch (root) {
+        .vbox => |v| blk: {
+            for (v.children) |child| {
+                if (findTextareaNodeById(child, id)) |t| break :blk t;
+            }
+            break :blk null;
+        },
+        .hbox => |h| blk: {
+            for (h.children) |child| {
+                if (findTextareaNodeById(child, id)) |t| break :blk t;
+            }
+            break :blk null;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
+                if (findTextareaNodeById(child, id)) |t| break :blk t;
+            }
+            break :blk null;
+        },
+        .box => |b| return findTextareaNodeById(b.child.*, id),
+        .scroll => |s| return findTextareaNodeById(s.child.*, id),
+        .overlay => |o| blk: {
+            if (findTextareaNodeById(o.base.*, id)) |t| break :blk t;
+            for (o.layers) |layer| {
+                if (findTextareaNodeById(layer.node.*, id)) |t| break :blk t;
+            }
+            break :blk null;
+        },
+        .list => |l| blk: {
+            for (l.children) |child| {
+                if (findTextareaNodeById(child, id)) |t| break :blk t;
             }
             break :blk null;
         },

@@ -261,6 +261,11 @@ const Focusable = struct {
     scope: ?[]const u8,
 };
 
+const StateWidgetSpec = struct {
+    id: []const u8,
+    kind: FocusKind,
+};
+
 fn deinitTextareaHistory(allocator: std.mem.Allocator, st: anytype) void {
     for (st.undo.items) |entry| allocator.free(entry.value);
     for (st.redo.items) |entry| allocator.free(entry.value);
@@ -913,9 +918,14 @@ pub fn syncUiAfterPatch(
 
     var focusables = try collectFocusables(allocator, root);
     defer focusables.deinit(allocator);
+    var state_widgets = try collectStateWidgets(allocator, root);
+    defer state_widgets.deinit(allocator);
+    var widget_specs = try mergeWidgetSpecs(allocator, state_widgets.items, focusables.items);
+    defer widget_specs.deinit(allocator);
 
-    pruneWidgetsNotInFocusables(allocator, widgets, focusables.items);
-    try ensureWidgetsForFocusables(allocator, widgets, focusables.items);
+    pruneWidgetsNotInStateWidgets(allocator, widgets, widget_specs.items);
+    try ensureWidgetsForStateWidgets(allocator, widgets, widget_specs.items);
+    try applyStateFromTree(allocator, widgets, root, rows, cols, state_widgets.items);
 
     if (findTopmostModalLayer(root)) |modal_ptr| {
         var modal_focusables = try collectFocusables(allocator, modal_ptr.*);
@@ -954,14 +964,14 @@ pub fn syncUiAfterPatch(
         }
     }
 
-    for (focusables.items) |f| {
-        if (f.kind != .list) continue;
-        try syncListForId(allocator, log_sink, backend_in, widgets, root, f.id);
+    for (state_widgets.items) |spec| {
+        if (spec.kind != .list) continue;
+        try syncListForId(allocator, log_sink, backend_in, widgets, root, rows, cols, spec.id);
     }
 
-    for (focusables.items) |f| {
-        if (f.kind != .scroll) continue;
-        syncScrollForId(widgets, root, rows, cols, f.id);
+    for (state_widgets.items) |spec| {
+        if (spec.kind != .scroll) continue;
+        syncScrollForId(widgets, root, rows, cols, spec.id);
     }
 
     if (!optEql(before_focus, focused_id.*)) {
@@ -1335,16 +1345,257 @@ fn handleMouseWheel(
     return false;
 }
 
-fn pruneWidgetsNotInFocusables(
+fn collectStateWidgets(allocator: std.mem.Allocator, root: protocol.Node) !std.ArrayList(StateWidgetSpec) {
+    var out: std.ArrayList(StateWidgetSpec) = .empty;
+    errdefer out.deinit(allocator);
+    try collectStateWidgetsInto(allocator, &out, root);
+    return out;
+}
+
+fn collectStateWidgetsInto(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(StateWidgetSpec),
+    node: protocol.Node,
+) !void {
+    switch (node) {
+        .input => |i| try out.append(allocator, .{ .id = i.id, .kind = .input }),
+        .textarea => |t| try out.append(allocator, .{ .id = t.id, .kind = .textarea }),
+        .list => |l| {
+            try out.append(allocator, .{ .id = l.id, .kind = .list });
+            for (l.children) |child| try collectStateWidgetsInto(allocator, out, child);
+        },
+        .scroll => |s| {
+            try out.append(allocator, .{ .id = s.id, .kind = .scroll });
+            try collectStateWidgetsInto(allocator, out, s.child.*);
+        },
+        .vbox => |v| for (v.children) |child| try collectStateWidgetsInto(allocator, out, child),
+        .hbox => |h| for (h.children) |child| try collectStateWidgetsInto(allocator, out, child),
+        .grid => |g| for (g.children) |child| try collectStateWidgetsInto(allocator, out, child),
+        .box => |b| try collectStateWidgetsInto(allocator, out, b.child.*),
+        .overlay => |o| {
+            try collectStateWidgetsInto(allocator, out, o.base.*);
+            for (o.layers) |layer| try collectStateWidgetsInto(allocator, out, layer.node.*);
+        },
+        .text, .styled_text => {},
+    }
+}
+
+fn mergeWidgetSpecs(
+    allocator: std.mem.Allocator,
+    state_widgets: []const StateWidgetSpec,
+    focusables: []const Focusable,
+) !std.ArrayList(StateWidgetSpec) {
+    var out: std.ArrayList(StateWidgetSpec) = .empty;
+    errdefer out.deinit(allocator);
+
+    for (state_widgets) |spec| {
+        try out.append(allocator, spec);
+    }
+    for (focusables) |f| {
+        if (stateWidgetsContainsId(out.items, f.id)) continue;
+        try out.append(allocator, .{ .id = f.id, .kind = f.kind });
+    }
+    return out;
+}
+
+fn applyStateFromTree(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
-    focusables: []const Focusable,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    state_widgets: []const StateWidgetSpec,
+) !void {
+    for (state_widgets) |spec| {
+        const idx = findWidgetIndex(widgets.items, spec.id) orelse continue;
+        switch (spec.kind) {
+            .input => try applyInputStateFromNode(allocator, widgets, idx, root, rows, cols),
+            .textarea => try applyTextareaStateFromNode(allocator, widgets, idx, root, rows, cols),
+            .list => try applyListStateFromNode(allocator, widgets, idx, root, rows, cols),
+            .scroll => try applyScrollStateFromNode(widgets, idx, root),
+            .action => {},
+        }
+    }
+}
+
+fn shouldApplyState(mode: protocol.StateMode, state_initialized: bool) bool {
+    return switch (mode) {
+        .uncontrolled => false,
+        .init => !state_initialized,
+        .controlled => true,
+    };
+}
+
+fn applyInputStateFromNode(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    idx: usize,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+) !void {
+    const input_node = node_util.findInputNodeById(root, widgets.items[idx].id.items) orelse return;
+    var entry = &widgets.items[idx];
+    var st = &entry.state.input;
+    const apply_mode = shouldApplyState(input_node.state_mode, entry.state_initialized);
+
+    if (apply_mode) {
+        if (input_node.value) |value| {
+            st.value.clearRetainingCapacity();
+            try st.value.appendSlice(allocator, value);
+            st.selection_anchor = null;
+            inputClearHistory(allocator, &st.undo);
+            inputClearHistory(allocator, &st.redo);
+        }
+        if (input_node.cursor) |cursor| st.cursor = cursor;
+        if (input_node.scroll_x) |scroll_x| st.scroll_x = scroll_x;
+
+        var next_anchor = st.selection_anchor;
+        var next_cursor = st.cursor;
+        if (input_node.selection_start) |selection_start| next_anchor = selection_start;
+        if (input_node.selection_end) |selection_end| next_cursor = selection_end;
+        st.cursor = next_cursor;
+        st.selection_anchor = next_anchor;
+
+        if (input_node.state_mode == .init) entry.state_initialized = true;
+    }
+
+    st.cursor = unicode.clampGraphemeBoundary(st.value.items, @min(st.cursor, st.value.items.len));
+    st.selection_anchor = if (st.selection_anchor) |a|
+        unicode.clampGraphemeBoundary(st.value.items, @min(a, st.value.items.len))
+    else
+        null;
+    if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+
+    if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
+    var visible_cols = inputVisibleCols(cols);
+    if (render.findRectForId(root, rows, cols, entry.id.items)) |r| visible_cols = inputVisibleCols(r.w);
+    const max_scroll = if (st.value.items.len > visible_cols) st.value.items.len - visible_cols else 0;
+    if (st.scroll_x > max_scroll) st.scroll_x = max_scroll;
+}
+
+fn applyTextareaStateFromNode(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    idx: usize,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+) !void {
+    const textarea_node = node_util.findTextareaNodeById(root, widgets.items[idx].id.items) orelse return;
+    var entry = &widgets.items[idx];
+    var st = &entry.state.textarea;
+    const apply_mode = shouldApplyState(textarea_node.state_mode, entry.state_initialized);
+
+    if (apply_mode) {
+        if (textarea_node.value) |value| {
+            st.value.clearRetainingCapacity();
+            try st.value.appendSlice(allocator, value);
+            st.selection_anchor = null;
+            textareaClearHistory(allocator, &st.undo);
+            textareaClearHistory(allocator, &st.redo);
+        }
+        if (textarea_node.cursor) |cursor| st.cursor = cursor;
+        if (textarea_node.scroll_y) |scroll_y| st.scroll_y = scroll_y;
+
+        var next_anchor = st.selection_anchor;
+        var next_cursor = st.cursor;
+        if (textarea_node.selection_start) |selection_start| next_anchor = selection_start;
+        if (textarea_node.selection_end) |selection_end| next_cursor = selection_end;
+        st.cursor = next_cursor;
+        st.selection_anchor = next_anchor;
+
+        if (textarea_node.state_mode == .init) entry.state_initialized = true;
+    }
+
+    st.cursor = unicode.clampGraphemeBoundary(st.value.items, @min(st.cursor, st.value.items.len));
+    st.selection_anchor = if (st.selection_anchor) |a|
+        unicode.clampGraphemeBoundary(st.value.items, @min(a, st.value.items.len))
+    else
+        null;
+    if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+
+    var visible_rows: usize = rows;
+    var visible_cols: usize = cols;
+    if (render.findRectForId(root, rows, cols, entry.id.items)) |r| {
+        visible_rows = r.h;
+        visible_cols = r.w;
+    }
+    const content_h = textareaVisualLines(st.value.items, visible_cols);
+    st.scroll_y = state.clampScrollY(st.scroll_y, visible_rows, content_h);
+}
+
+fn listModeSuppressesAutoSelect(mode: protocol.StateMode) bool {
+    return switch (mode) {
+        .uncontrolled => false,
+        .controlled => true,
+        .init => true,
+    };
+}
+
+fn applyListStateFromNode(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    idx: usize,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+) !void {
+    const list_node = node_util.findListNodeById(root, widgets.items[idx].id.items) orelse return;
+    var entry = &widgets.items[idx];
+    var st = &entry.state.list;
+    const apply_mode = shouldApplyState(list_node.state_mode, entry.state_initialized);
+
+    if (apply_mode) {
+        if (list_node.selected_id) |selected_id| {
+            st.selected_id.clearRetainingCapacity();
+            try st.selected_id.appendSlice(allocator, selected_id);
+        }
+        if (list_node.scroll) |scroll| st.scroll = scroll;
+        if (list_node.state_mode == .init) entry.state_initialized = true;
+    }
+
+    const rect = render.findRectForId(root, rows, cols, entry.id.items);
+    const visible_height = if (rect) |r| listVisibleHeight(r, list_node) else (list_node.height orelse rows);
+    const effective_height = if (visible_height == 0) list_node.children.len else visible_height;
+    const max_scroll = if (list_node.children.len > effective_height) list_node.children.len - effective_height else 0;
+    if (st.scroll > max_scroll) st.scroll = max_scroll;
+
+    if (st.selected_id.items.len == 0) return;
+    for (list_node.children) |child| {
+        if (std.mem.eql(u8, node_util.nodeId(child), st.selected_id.items)) return;
+    }
+    if (!listModeSuppressesAutoSelect(list_node.state_mode)) {
+        st.selected_id.clearRetainingCapacity();
+    }
+}
+
+fn applyScrollStateFromNode(
+    widgets: *std.ArrayList(WidgetEntry),
+    idx: usize,
+    root: protocol.Node,
+) !void {
+    const scroll_node = node_util.findScrollNodeById(root, widgets.items[idx].id.items) orelse return;
+    var entry = &widgets.items[idx];
+    var st = &entry.state.scroll;
+    const apply_mode = shouldApplyState(scroll_node.state_mode, entry.state_initialized);
+
+    if (apply_mode) {
+        if (scroll_node.scroll_y) |scroll_y| st.scroll_y = scroll_y;
+        if (scroll_node.state_mode == .init) entry.state_initialized = true;
+    }
+}
+
+fn pruneWidgetsNotInStateWidgets(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    state_widgets: []const StateWidgetSpec,
 ) void {
     var i: usize = widgets.items.len;
     while (i > 0) {
         i -= 1;
         const id = widgets.items[i].id.items;
-        if (focusablesContainsId(focusables, id)) continue;
+        if (stateWidgetsContainsId(state_widgets, id)) continue;
         deinitWidgetEntry(allocator, &widgets.items[i]);
         _ = widgets.swapRemove(i);
     }
@@ -1374,13 +1625,20 @@ fn focusablesContainsId(focusables: []const Focusable, id: []const u8) bool {
     return false;
 }
 
-fn ensureWidgetsForFocusables(
+fn stateWidgetsContainsId(state_widgets: []const StateWidgetSpec, id: []const u8) bool {
+    for (state_widgets) |spec| {
+        if (std.mem.eql(u8, spec.id, id)) return true;
+    }
+    return false;
+}
+
+fn ensureWidgetsForStateWidgets(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
-    focusables: []const Focusable,
+    state_widgets: []const StateWidgetSpec,
 ) !void {
-    for (focusables) |f| {
-        _ = try ensureWidgetKind(allocator, widgets, f.id, f.kind);
+    for (state_widgets) |spec| {
+        _ = try ensureWidgetKind(allocator, widgets, spec.id, spec.kind);
     }
 }
 
@@ -1400,6 +1658,7 @@ fn ensureWidgetKind(
         }
         deinitWidgetEntryState(allocator, &widgets.items[idx]);
         widgets.items[idx].state = initWidgetState(kind);
+        widgets.items[idx].state_initialized = false;
         return idx;
     }
 
@@ -1609,6 +1868,8 @@ fn syncListForId(
     backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
     root: protocol.Node,
+    rows: usize,
+    cols: usize,
     list_id: []const u8,
 ) !void {
     const l = node_util.findListNodeById(root, list_id) orelse return;
@@ -1623,6 +1884,7 @@ fn syncListForId(
 
     const idx = try ensureWidgetKind(allocator, widgets, list_id, .list);
     var st = &widgets.items[idx].state.list;
+    const suppress_auto_select = listModeSuppressesAutoSelect(l.state_mode);
 
     var selected_index: ?usize = null;
     if (st.selected_id.items.len > 0) {
@@ -1635,7 +1897,7 @@ fn syncListForId(
     }
 
     var selection_changed = false;
-    if (selected_index == null) {
+    if (selected_index == null and !suppress_auto_select) {
         const new_id = node_util.nodeId(l.children[0]);
         st.selected_id.clearRetainingCapacity();
         try st.selected_id.appendSlice(allocator, new_id);
@@ -1643,20 +1905,23 @@ fn syncListForId(
         selection_changed = true;
     }
 
-    const height = l.height orelse l.children.len;
-    const effective_height = if (height == 0) l.children.len else height;
+    const rect = render.findRectForId(root, rows, cols, list_id);
+    const visible_height = if (rect) |r| listVisibleHeight(r, l) else (l.height orelse rows);
+    const effective_height = if (visible_height == 0) l.children.len else visible_height;
 
-    const sel_idx = selected_index.?;
     const max_scroll = if (l.children.len > effective_height) l.children.len - effective_height else 0;
     if (st.scroll > max_scroll) st.scroll = max_scroll;
-    if (sel_idx < st.scroll) st.scroll = sel_idx;
-    if (sel_idx >= st.scroll + effective_height) st.scroll = sel_idx - effective_height + 1;
-
-    log.logPrint(
-        log_sink,
-        "LIST_SELECT id={s} item={s} index={d} scroll={d}\n",
-        .{ list_id, st.selected_id.items, sel_idx, st.scroll },
-    );
+    if (!suppress_auto_select) {
+        if (selected_index) |sel_idx| {
+            if (sel_idx < st.scroll) st.scroll = sel_idx;
+            if (sel_idx >= st.scroll + effective_height) st.scroll = sel_idx - effective_height + 1;
+            log.logPrint(
+                log_sink,
+                "LIST_SELECT id={s} item={s} index={d} scroll={d}\n",
+                .{ list_id, st.selected_id.items, sel_idx, st.scroll },
+            );
+        }
+    }
     if (selection_changed) {
         log.logPrint(log_sink, "EVENT_TX name=select id={s} item={s}\n", .{ list_id, st.selected_id.items });
         try protocol.writeSelectEventJsonl(backend_in, list_id, st.selected_id.items);

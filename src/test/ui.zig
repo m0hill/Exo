@@ -26,6 +26,13 @@ const cellByte = prelude.cellByte;
 const cellText = prelude.cellText;
 const keyEventMatchesNamed = prelude.keyEventMatchesNamed;
 
+fn findWidget(widgets: []const runtime_ui.WidgetEntry, id: []const u8) ?runtime_ui.WidgetEntry {
+    for (widgets) |w| {
+        if (std.mem.eql(u8, w.id.items, id)) return w;
+    }
+    return null;
+}
+
 test "ui: hover hit-test list item" {
     var children = [_]protocol.Node{
         .{ .text = .{ .id = "results-0", .text = "0" } },
@@ -201,4 +208,177 @@ test "ui: focus scope jump moves between zones" {
 
     const prev_scope = try runtime_ui.cycleFocusScopeInTreeDir(std.testing.allocator, root, "b-1", -1);
     try std.testing.expectEqualStrings("a-2", prev_scope orelse return error.TestUnexpectedResult);
+}
+
+test "ui: sync preserves focusable action widget entries" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var auto_focus_done = true;
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+
+    const root = protocol.Node{ .text = .{
+        .id = "action-text",
+        .text = "Click me",
+        .focusable = true,
+        .mouseable = true,
+    } };
+
+    const backend_writer = backend_out.writer(std.testing.allocator);
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        backend_writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        5,
+        20,
+    );
+
+    const action_widget = findWidget(widgets.items, "action-text") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(action_widget.state == .action);
+}
+
+test "ui: patch applies controlled state without emitting events" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var auto_focus_done = true;
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+
+    var list_children = [_]protocol.Node{
+        .{ .text = .{ .id = "row-1", .text = "one" } },
+        .{ .text = .{ .id = "row-2", .text = "two" } },
+    };
+    var scroll_child = protocol.Node{ .text = .{ .id = "scroll-body", .text = "a\nb\nc\nd" } };
+    var children = [_]protocol.Node{
+        .{ .input = .{
+            .id = "in",
+            .focusable = false,
+            .state_mode = .controlled,
+            .value = "abc",
+            .cursor = 2,
+            .scroll_x = 1,
+            .selection_start = 0,
+            .selection_end = 2,
+        } },
+        .{ .textarea = .{
+            .id = "ta",
+            .focusable = false,
+            .state_mode = .controlled,
+            .value = "x\ny\nz",
+            .cursor = 2,
+            .scroll_y = 10,
+            .selection_start = 0,
+            .selection_end = 2,
+        } },
+        .{ .list = .{
+            .id = "list",
+            .focusable = false,
+            .state_mode = .controlled,
+            .selected_id = "row-2",
+            .scroll = 99,
+            .children = list_children[0..],
+        } },
+        .{ .scroll = .{
+            .id = "sv",
+            .focusable = false,
+            .state_mode = .controlled,
+            .scroll_y = 99,
+            .child = &scroll_child,
+        } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    const backend_writer = backend_out.writer(std.testing.allocator);
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        backend_writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        10,
+        20,
+    );
+
+    try std.testing.expectEqual(@as(usize, 0), backend_out.items.len);
+
+    const input_widget = findWidget(widgets.items, "in") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("abc", input_widget.state.input.value.items);
+    try std.testing.expectEqual(@as(usize, 2), input_widget.state.input.cursor);
+    try std.testing.expectEqual(@as(usize, 0), input_widget.state.input.selection_anchor.?);
+
+    const textarea_widget = findWidget(widgets.items, "ta") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("x\ny\nz", textarea_widget.state.textarea.value.items);
+    try std.testing.expectEqual(@as(usize, 2), textarea_widget.state.textarea.cursor);
+    try std.testing.expect(textarea_widget.state.textarea.scroll_y <= 10);
+
+    const list_widget = findWidget(widgets.items, "list") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("row-2", list_widget.state.list.selected_id.items);
+    try std.testing.expect(list_widget.state.list.scroll <= 1);
+
+    const scroll_widget = findWidget(widgets.items, "sv") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(scroll_widget.state.scroll.scroll_y <= 3);
+}
+
+test "ui: controlled list does not auto-select on patch" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var auto_focus_done = true;
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "row-1", .text = "one" } },
+        .{ .text = .{ .id = "row-2", .text = "two" } },
+    };
+    const root = protocol.Node{ .list = .{
+        .id = "results",
+        .focusable = false,
+        .state_mode = .controlled,
+        .children = children[0..],
+    } };
+
+    const backend_writer = backend_out.writer(std.testing.allocator);
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        backend_writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        10,
+        20,
+    );
+
+    try std.testing.expectEqual(@as(usize, 0), backend_out.items.len);
+
+    const list_widget = findWidget(widgets.items, "results") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 0), list_widget.state.list.selected_id.items.len);
 }

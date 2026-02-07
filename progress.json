@@ -901,4 +901,34 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 32,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Controlled widget state semantics (`state_mode`) across protocol/runtime with patch-time state application for input/textarea/list/scroll",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig + src/lib/protocol/mod.zig: protocol v0.18 adds `state_mode` (`uncontrolled|init|controlled`) and per-widget state fields (`input`: value/cursor/scroll_x/selection_start/selection_end, `textarea`: value/cursor/scroll_y/selection_start/selection_end, `list`: selected_id/scroll, `scroll`: scroll_y)",
+      "src/bin/runtime/ui/mod.zig + src/bin/runtime/ui/widgets.zig + src/bin/runtime/ui/node_util.zig: patch-time state sync applies backend state by mode, clamps cursor/selection/scroll, clears input/textarea undo history on backend value overwrite, and avoids event emission for patch-driven state updates",
+      "src/bin/runtime/ui/mod.zig: list edge-case handling preserves uncontrolled auto-select behavior, while controlled/init modes suppress implicit auto-select",
+      "src/test/protocol.zig + src/test/ui.zig + src/bin/runtime/ui_test_api.zig: roundtrip protocol coverage and runtime tests for controlled patch application + no patch-driven events + controlled list no auto-select",
+      "docs/PROTOCOL.md: document controlled-state semantics, per-widget state fields, and examples",
+      "src/bin/demo/render.zig: demo includes a controlled-state section (`w-controlled-input`, `w-controlled-list`, `w-controlled-scroll`) that is backend-driven every tick"
+    ],
+    "boundaries_hit": [
+      "Dual ownership model between runtime-local interaction state and backend-authoritative state via explicit `state_mode`",
+      "No synthetic event emission for patch-applied state changes to prevent feedback loops",
+      "Grapheme-safe clamping for cursor/selection when backend patches text values"
+    ],
+    "timestamp": "2026-02-07",
+    "manual_repro": [
+      "zig build demo",
+      "Go to the Widgets panel and find: 'Controlled state demo (state_mode=controlled)'",
+      "Observe `w-controlled-input` value changing every tick (backend writes `value` + `cursor` on patch)",
+      "Observe `w-controlled-list` selection flipping between items as backend patches `selected_id`",
+      "Observe `w-controlled-scroll` viewport y-position changing as backend patches `scroll_y`",
+      "Try interacting locally with those widgets; backend patches continue to re-assert controlled state on subsequent ticks",
+      "Exit with 'x'"
+    ]
+  }
 ]
