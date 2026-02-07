@@ -95,3 +95,45 @@ test "ui: textarea scroll_y keeps cursor visible" {
     );
     try std.testing.expect(!changed);
 }
+
+test "ui: focus cycling is trapped within scope" {
+    var panel_a_children = [_]protocol.Node{
+        .{ .input = .{ .id = "a-1" } },
+        .{ .input = .{ .id = "a-2" } },
+    };
+    var panel_b_children = [_]protocol.Node{
+        .{ .input = .{ .id = "b-1" } },
+    };
+    var root_children = [_]protocol.Node{
+        .{ .vbox = .{ .id = "panel-a", .focus_scope = "a", .children = panel_a_children[0..] } },
+        .{ .vbox = .{ .id = "panel-b", .focus_scope = "b", .children = panel_b_children[0..] } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = root_children[0..] } };
+
+    const next_a = try runtime_ui.cycleFocusInTreeDir(std.testing.allocator, root, "a-1", 1);
+    try std.testing.expectEqualStrings("a-2", next_a orelse return error.TestUnexpectedResult);
+
+    const wrap_a = try runtime_ui.cycleFocusInTreeDir(std.testing.allocator, root, "a-2", 1);
+    try std.testing.expectEqualStrings("a-1", wrap_a orelse return error.TestUnexpectedResult);
+}
+
+test "ui: focus scope jump moves between zones" {
+    var panel_a_children = [_]protocol.Node{
+        .{ .input = .{ .id = "a-1" } },
+        .{ .input = .{ .id = "a-2" } },
+    };
+    var panel_b_children = [_]protocol.Node{
+        .{ .input = .{ .id = "b-1" } },
+    };
+    var root_children = [_]protocol.Node{
+        .{ .vbox = .{ .id = "panel-a", .focus_scope = "a", .children = panel_a_children[0..] } },
+        .{ .vbox = .{ .id = "panel-b", .focus_scope = "b", .children = panel_b_children[0..] } },
+    };
+    const root = protocol.Node{ .vbox = .{ .id = "root", .children = root_children[0..] } };
+
+    const next_scope = try runtime_ui.cycleFocusScopeInTreeDir(std.testing.allocator, root, "a-1", 1);
+    try std.testing.expectEqualStrings("b-1", next_scope orelse return error.TestUnexpectedResult);
+
+    const prev_scope = try runtime_ui.cycleFocusScopeInTreeDir(std.testing.allocator, root, "b-1", -1);
+    try std.testing.expectEqualStrings("a-2", prev_scope orelse return error.TestUnexpectedResult);
+}

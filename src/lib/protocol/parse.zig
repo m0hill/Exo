@@ -262,6 +262,8 @@ fn parseKeyAction(s: []const u8) ParseMsgError!KeyAction {
     if (std.mem.eql(u8, s, "noop")) return .noop;
     if (std.mem.eql(u8, s, "focus_next")) return .focus_next;
     if (std.mem.eql(u8, s, "focus_prev")) return .focus_prev;
+    if (std.mem.eql(u8, s, "focus_scope_next")) return .focus_scope_next;
+    if (std.mem.eql(u8, s, "focus_scope_prev")) return .focus_scope_prev;
     if (std.mem.eql(u8, s, "focus_clear")) return .focus_clear;
     if (std.mem.eql(u8, s, "list_prev")) return .list_prev;
     if (std.mem.eql(u8, s, "list_next")) return .list_next;
@@ -434,6 +436,18 @@ fn parseFocusable(obj: std.json.ObjectMap, default: bool) ParseMsgError!bool {
     return default;
 }
 
+fn parseFocusScope(obj: std.json.ObjectMap) ParseMsgError!?[]const u8 {
+    if (try getOptionalString(obj, "focus_scope")) |scope| {
+        if (scope.len == 0) return null;
+        return scope;
+    }
+    if (try getOptionalString(obj, "focus_group")) |scope| {
+        if (scope.len == 0) return null;
+        return scope;
+    }
+    return null;
+}
+
 fn parseListMarker(obj: std.json.ObjectMap) ParseMsgError!ListMarker {
     const s = try getOptionalString(obj, "marker") orelse return .default;
     if (std.mem.eql(u8, s, "default")) return .default;
@@ -476,6 +490,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, false);
+        const focus_scope = try parseFocusScope(obj);
         const justify_content = try parseJustifyContent(obj);
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
@@ -500,6 +515,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .justify_content = justify_content,
             .align_items = align_items,
             .gap = gap,
@@ -520,6 +536,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, false);
+        const focus_scope = try parseFocusScope(obj);
         const justify_content = try parseJustifyContent(obj);
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
@@ -544,6 +561,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .justify_content = justify_content,
             .align_items = align_items,
             .gap = gap,
@@ -567,6 +585,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, false);
+        const focus_scope = try parseFocusScope(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
@@ -589,6 +608,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .align_self = align_self,
             .style = st,
             .child = child,
@@ -606,6 +626,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, true);
+        const focus_scope = try parseFocusScope(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
@@ -625,6 +646,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .align_self = align_self,
             .style = st,
             .child = child,
@@ -642,6 +664,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, false);
+        const focus_scope = try parseFocusScope(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const st = try getOptionalStyleOverride(obj, "style");
 
@@ -670,6 +693,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .align_self = align_self,
             .style = st,
             .base = base,
@@ -687,6 +711,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, false);
+        const focus_scope = try parseFocusScope(obj);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
@@ -703,6 +728,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .ext_align = ext_align,
             .v_align = v_align,
             .style = st,
@@ -720,6 +746,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, false);
+        const focus_scope = try parseFocusScope(obj);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
         const st = try getOptionalStyleOverride(obj, "style");
@@ -741,6 +768,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .ext_align = ext_align,
             .v_align = v_align,
             .style = st,
@@ -758,6 +786,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, true);
+        const focus_scope = try parseFocusScope(obj);
         const content_align = try parseHorizontalAlignOrDefault(obj, "content_align", .left);
         const st = try getOptionalStyleOverride(obj, "style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
@@ -774,6 +803,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .content_align = content_align,
             .style = st,
             .placeholder_style = ph_st,
@@ -791,6 +821,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, true);
+        const focus_scope = try parseFocusScope(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
         const placeholder = try getOptionalString(obj, "placeholder");
@@ -806,6 +837,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .style = st,
             .placeholder_style = ph_st,
             .placeholder = placeholder,
@@ -823,6 +855,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const readonly = try parseReadonly(obj);
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, true);
+        const focus_scope = try parseFocusScope(obj);
         const marker = try parseListMarker(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
@@ -844,6 +877,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .readonly = readonly,
             .validation = validation,
             .focusable = focusable,
+            .focus_scope = focus_scope,
             .marker = marker,
             .style = st,
             .children = out,

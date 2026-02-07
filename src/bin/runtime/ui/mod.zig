@@ -237,6 +237,7 @@ pub const HoverHit = hover.HoverHit;
 const Focusable = struct {
     id: []const u8,
     kind: FocusKind,
+    scope: ?[]const u8,
 };
 
 pub fn deinitWidgetEntries(allocator: std.mem.Allocator, widgets: *std.ArrayList(WidgetEntry)) void {
@@ -343,8 +344,23 @@ pub fn buildRenderState(
 fn collectFocusables(allocator: std.mem.Allocator, root: protocol.Node) !std.ArrayList(Focusable) {
     var out: std.ArrayList(Focusable) = .empty;
     errdefer out.deinit(allocator);
-    try collectFocusablesInto(allocator, &out, root, false);
+    try collectFocusablesInto(allocator, &out, root, false, null);
     return out;
+}
+
+fn nodeFocusScope(node: protocol.Node) ?[]const u8 {
+    return switch (node) {
+        .vbox => |v| v.focus_scope,
+        .hbox => |h| h.focus_scope,
+        .box => |b| b.focus_scope,
+        .scroll => |s| s.focus_scope,
+        .overlay => |o| o.focus_scope,
+        .text => |t| t.focus_scope,
+        .styled_text => |t| t.focus_scope,
+        .input => |i| i.focus_scope,
+        .textarea => |t| t.focus_scope,
+        .list => |l| l.focus_scope,
+    };
 }
 
 fn collectFocusablesInto(
@@ -352,6 +368,7 @@ fn collectFocusablesInto(
     out: *std.ArrayList(Focusable),
     node: protocol.Node,
     disabled_ancestor: bool,
+    inherited_scope: ?[]const u8,
 ) !void {
     const disabled = disabled_ancestor or switch (node) {
         .vbox => |v| v.disabled,
@@ -366,51 +383,113 @@ fn collectFocusablesInto(
         .list => |l| l.disabled,
     };
     if (disabled) return;
+    const local_scope = nodeFocusScope(node);
+    const scope = if (local_scope != null and local_scope.?.len > 0) local_scope else inherited_scope;
 
     switch (node) {
         .input => |i| {
             if (!i.focusable) return;
-            try out.append(allocator, .{ .id = i.id, .kind = .input });
+            try out.append(allocator, .{ .id = i.id, .kind = .input, .scope = scope });
         },
         .textarea => |t| {
             if (!t.focusable) return;
-            try out.append(allocator, .{ .id = t.id, .kind = .textarea });
+            try out.append(allocator, .{ .id = t.id, .kind = .textarea, .scope = scope });
         },
         .list => |l| {
             if (!l.focusable) return;
-            try out.append(allocator, .{ .id = l.id, .kind = .list });
+            try out.append(allocator, .{ .id = l.id, .kind = .list, .scope = scope });
         },
         .box => |b| {
-            if (b.focusable) try out.append(allocator, .{ .id = b.id, .kind = .action });
-            try collectFocusablesInto(allocator, out, b.child.*, false);
+            if (b.focusable) try out.append(allocator, .{ .id = b.id, .kind = .action, .scope = scope });
+            try collectFocusablesInto(allocator, out, b.child.*, false, scope);
         },
         .scroll => |s| {
             // Prefer leaf focusables (inputs/lists) under the pointer before the viewport itself.
-            try collectFocusablesInto(allocator, out, s.child.*, false);
-            if (s.focusable) try out.append(allocator, .{ .id = s.id, .kind = .scroll });
+            try collectFocusablesInto(allocator, out, s.child.*, false, scope);
+            if (s.focusable) try out.append(allocator, .{ .id = s.id, .kind = .scroll, .scope = scope });
         },
         .overlay => |o| {
-            if (o.focusable) try out.append(allocator, .{ .id = o.id, .kind = .action });
-            try collectFocusablesInto(allocator, out, o.base.*, false);
+            if (o.focusable) try out.append(allocator, .{ .id = o.id, .kind = .action, .scope = scope });
+            try collectFocusablesInto(allocator, out, o.base.*, false, scope);
             for (o.layers) |layer| {
-                try collectFocusablesInto(allocator, out, layer.node.*, false);
+                try collectFocusablesInto(allocator, out, layer.node.*, false, scope);
             }
         },
         .vbox => |v| {
-            if (v.focusable) try out.append(allocator, .{ .id = v.id, .kind = .action });
-            for (v.children) |child| try collectFocusablesInto(allocator, out, child, false);
+            if (v.focusable) try out.append(allocator, .{ .id = v.id, .kind = .action, .scope = scope });
+            for (v.children) |child| try collectFocusablesInto(allocator, out, child, false, scope);
         },
         .hbox => |h| {
-            if (h.focusable) try out.append(allocator, .{ .id = h.id, .kind = .action });
-            for (h.children) |child| try collectFocusablesInto(allocator, out, child, false);
+            if (h.focusable) try out.append(allocator, .{ .id = h.id, .kind = .action, .scope = scope });
+            for (h.children) |child| try collectFocusablesInto(allocator, out, child, false, scope);
         },
         .styled_text => |t| {
-            if (t.focusable) try out.append(allocator, .{ .id = t.id, .kind = .action });
+            if (t.focusable) try out.append(allocator, .{ .id = t.id, .kind = .action, .scope = scope });
         },
         .text => |t| {
-            if (t.focusable) try out.append(allocator, .{ .id = t.id, .kind = .action });
+            if (t.focusable) try out.append(allocator, .{ .id = t.id, .kind = .action, .scope = scope });
         },
     }
+}
+
+fn scopeEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null and b == null) return true;
+    if (a == null or b == null) return false;
+    return std.mem.eql(u8, a.?, b.?);
+}
+
+fn findFocusableIndexById(focusables: []const Focusable, id: ?[]const u8) ?usize {
+    const current = id orelse return null;
+    for (focusables, 0..) |f, idx| {
+        if (std.mem.eql(u8, f.id, current)) return idx;
+    }
+    return null;
+}
+
+fn cycleFocusInCandidates(focusables: []const Focusable, current: ?[]const u8, dir: isize) ?[]const u8 {
+    if (focusables.len == 0) return null;
+
+    const current_idx = findFocusableIndexById(focusables, current);
+    if (current_idx == null) {
+        return if (dir >= 0) focusables[0].id else focusables[focusables.len - 1].id;
+    }
+
+    const scope = focusables[current_idx.?].scope;
+    if (dir >= 0) {
+        for (1..focusables.len + 1) |step| {
+            const idx = (current_idx.? + step) % focusables.len;
+            if (scopeEql(focusables[idx].scope, scope)) return focusables[idx].id;
+        }
+    } else {
+        for (1..focusables.len + 1) |step| {
+            const wrapped = (current_idx.? + focusables.len - (step % focusables.len)) % focusables.len;
+            if (scopeEql(focusables[wrapped].scope, scope)) return focusables[wrapped].id;
+        }
+    }
+    return focusables[current_idx.?].id;
+}
+
+fn cycleFocusScopeInCandidates(focusables: []const Focusable, current: ?[]const u8, dir: isize) ?[]const u8 {
+    if (focusables.len == 0) return null;
+
+    const current_idx = findFocusableIndexById(focusables, current);
+    if (current_idx == null) {
+        return if (dir >= 0) focusables[0].id else focusables[focusables.len - 1].id;
+    }
+
+    const current_scope = focusables[current_idx.?].scope;
+    if (dir >= 0) {
+        for (1..focusables.len + 1) |step| {
+            const idx = (current_idx.? + step) % focusables.len;
+            if (!scopeEql(focusables[idx].scope, current_scope)) return focusables[idx].id;
+        }
+    } else {
+        for (1..focusables.len + 1) |step| {
+            const wrapped = (current_idx.? + focusables.len - (step % focusables.len)) % focusables.len;
+            if (!scopeEql(focusables[wrapped].scope, current_scope)) return focusables[wrapped].id;
+        }
+    }
+    return focusables[current_idx.?].id;
 }
 
 fn treeContainsId(node: protocol.Node, id: []const u8) bool {
@@ -659,54 +738,29 @@ pub fn cycleFocusInTreeDir(
     if (findTopmostModalLayer(root)) |modal_ptr| {
         var modal_focusables = try collectFocusables(allocator, modal_ptr.*);
         defer modal_focusables.deinit(allocator);
-
-        if (modal_focusables.items.len == 0) return null;
-        if (current == null) {
-            return if (dir >= 0) modal_focusables.items[0].id else modal_focusables.items[modal_focusables.items.len - 1].id;
-        }
-
-        var current_idx: ?usize = null;
-        for (modal_focusables.items, 0..) |f, idx| {
-            if (std.mem.eql(u8, f.id, current.?)) {
-                current_idx = idx;
-                break;
-            }
-        }
-
-        if (current_idx == null) {
-            return if (dir >= 0) modal_focusables.items[0].id else modal_focusables.items[modal_focusables.items.len - 1].id;
-        }
-        const idx = current_idx.?;
-        if (dir >= 0) {
-            return if (idx + 1 < modal_focusables.items.len) modal_focusables.items[idx + 1].id else modal_focusables.items[0].id;
-        }
-        return if (idx > 0) modal_focusables.items[idx - 1].id else modal_focusables.items[modal_focusables.items.len - 1].id;
+        return cycleFocusInCandidates(modal_focusables.items, current, dir);
     }
 
     var focusables = try collectFocusables(allocator, root);
     defer focusables.deinit(allocator);
+    return cycleFocusInCandidates(focusables.items, current, dir);
+}
 
-    if (focusables.items.len == 0) return null;
-    if (current == null) {
-        return if (dir >= 0) focusables.items[0].id else focusables.items[focusables.items.len - 1].id;
+pub fn cycleFocusScopeInTreeDir(
+    allocator: std.mem.Allocator,
+    root: protocol.Node,
+    current: ?[]const u8,
+    dir: isize,
+) !?[]const u8 {
+    if (findTopmostModalLayer(root)) |modal_ptr| {
+        var modal_focusables = try collectFocusables(allocator, modal_ptr.*);
+        defer modal_focusables.deinit(allocator);
+        return cycleFocusScopeInCandidates(modal_focusables.items, current, dir);
     }
 
-    var current_idx: ?usize = null;
-    for (focusables.items, 0..) |f, idx| {
-        if (std.mem.eql(u8, f.id, current.?)) {
-            current_idx = idx;
-            break;
-        }
-    }
-
-    if (current_idx == null) {
-        return if (dir >= 0) focusables.items[0].id else focusables.items[focusables.items.len - 1].id;
-    }
-    const idx = current_idx.?;
-    if (dir >= 0) {
-        return if (idx + 1 < focusables.items.len) focusables.items[idx + 1].id else focusables.items[0].id;
-    }
-    return if (idx > 0) focusables.items[idx - 1].id else focusables.items[focusables.items.len - 1].id;
+    var focusables = try collectFocusables(allocator, root);
+    defer focusables.deinit(allocator);
+    return cycleFocusScopeInCandidates(focusables.items, current, dir);
 }
 
 pub fn focusedKindInTree(allocator: std.mem.Allocator, root: protocol.Node, id: []const u8) !?FocusKind {

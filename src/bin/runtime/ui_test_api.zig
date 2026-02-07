@@ -9,6 +9,8 @@ pub const handleFocusedInputKey = ui.handleFocusedInputKey;
 pub const handleFocusedTextareaKey = ui.handleFocusedTextareaKey;
 pub const applyInputAction = ui.applyInputAction;
 pub const applyTextareaAction = ui.applyTextareaAction;
+pub const cycleFocusInTreeDir = ui.cycleFocusInTreeDir;
+pub const cycleFocusScopeInTreeDir = ui.cycleFocusScopeInTreeDir;
 pub const KeymapState = keybindings.KeymapState;
 pub const KeyContext = keybindings.Context;
 

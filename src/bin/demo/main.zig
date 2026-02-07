@@ -294,6 +294,18 @@ pub fn main() !void {
             widgets,
             tick,
         );
+
+        // Demo defaults: keep Tab scoped, and use '['/']' to jump between scopes.
+        var global_rules = [_]protocol.KeybindingRule{
+            .{ .key = "Tab", .mods = 0, .action = .focus_next },
+            .{ .key = "Tab", .mods = 1, .action = .focus_prev },
+            .{ .key = "Escape", .mods = 0, .action = .focus_clear },
+            .{ .key = "[", .mods = 0, .action = .focus_scope_prev },
+            .{ .key = "]", .mods = 0, .action = .focus_scope_next },
+        };
+        try protocol.writeConfigJsonl(out, .{
+            .global = global_rules[0..],
+        });
     }
     try out.flush();
 

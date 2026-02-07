@@ -821,4 +821,38 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 30,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Focus groups/scopes: scoped focus traversal (trap in zone) plus explicit scope jumping actions for zone-to-zone navigation",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig: protocol v0.16 adds per-node `focus_scope` metadata (with parse alias `focus_group`) and key actions `focus_scope_next|focus_scope_prev`",
+      "src/bin/runtime/ui/mod.zig: focus collection carries inherited scope; Tab/Shift-Tab traversal is trapped to current scope; new `cycleFocusScopeInTreeDir` jumps between scopes",
+      "src/bin/runtime/app.zig: key action routing handles `focus_scope_next|focus_scope_prev` and emits focus events on scope jumps",
+      "src/lib/tree.zig + src/lib/scheduler.zig: morph/deep-clone paths preserve `focus_scope` on all node types",
+      "src/test/protocol.zig + src/test/ui.zig: tests for focus scope parse/write, `focus_group` alias, trapped cycling, and scope jumps",
+      "docs/PROTOCOL.md: document `focus_scope` semantics and new key action names",
+      "src/bin/demo/render.zig: focus scopes added to all UI zones (scope-left, scope-right, scope-md, scope-align, scope-widgets)",
+      "src/bin/demo/main.zig: demo keybinding config sends scope jump bindings ([ -> focus_scope_prev, ] -> focus_scope_next) on startup",
+      "src/bin/demo/render.zig: updated hint text mentions scoped Tab and [/] for scope jumps"
+    ],
+    "boundaries_hit": [
+      "Inherited focus scoping from containers to descendants without introducing a new node type",
+      "Backwards compatibility via `focus_group` parse alias while standardizing on `focus_scope` output",
+      "Two traversal modes sharing the same focus list: in-scope cycling vs cross-scope jumping"
+    ],
+    "timestamp": "2026-02-07",
+    "manual_repro": [
+      "zig build demo",
+      "Demo includes focus scopes on all UI zones: scope-left (Panel A), scope-right (Panel B), scope-md (markdown sections), scope-align (alignment panel), scope-widgets (widgets panel)",
+      "Confirm Tab/Shift-Tab cycles only within the currently focused scope",
+      "Confirm `[` key triggers focus_scope_prev and `]` key triggers focus_scope_next to jump between scopes",
+      "Confirm the new keys jump focus between scopes while Tab remains scoped",
+      "Confirm hint text in demo UI mentions scoped Tab and [/] for scope jumps",
+      "Confirm focus events continue to emit the resolved focused id after both scoped cycles and scope jumps",
+      "Exit with 'x'"
+    ]
+  }
 ]

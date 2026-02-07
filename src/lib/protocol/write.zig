@@ -250,6 +250,8 @@ fn keyActionString(action: KeyAction) []const u8 {
         .noop => "noop",
         .focus_next => "focus_next",
         .focus_prev => "focus_prev",
+        .focus_scope_next => "focus_scope_next",
+        .focus_scope_prev => "focus_scope_prev",
         .focus_clear => "focus_clear",
         .list_prev => "list_prev",
         .list_next => "list_next",
@@ -292,6 +294,7 @@ fn writeWidgetStateFields(
     validation: protocol.ValidationState,
     focusable: bool,
     focusable_default: bool,
+    focus_scope: ?[]const u8,
 ) !void {
     if (disabled) try writer.writeAll(",\"disabled\":true");
     if (readonly) try writer.writeAll(",\"readonly\":true");
@@ -308,6 +311,12 @@ fn writeWidgetStateFields(
         try writer.writeAll(",\"focusable\":");
         try writer.writeAll(if (focusable) "true" else "false");
     }
+    if (focus_scope) |scope| {
+        if (scope.len > 0) {
+            try writer.writeAll(",\"focus_scope\":");
+            try writeJsonString(writer, scope);
+        }
+    }
 }
 
 pub fn writeNodeJson(writer: anytype, node: Node) !void {
@@ -322,7 +331,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (v.clip) try writer.writeAll(",\"clip\":true");
             if (v.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (v.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, v.disabled, v.readonly, v.validation, v.focusable, false);
+            try writeWidgetStateFields(writer, v.disabled, v.readonly, v.validation, v.focusable, false, v.focus_scope);
             if (v.justify_content != .start) {
                 try writer.writeAll(",\"justify_content\":");
                 try writeJsonString(writer, switch (v.justify_content) {
@@ -374,7 +383,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (h.clip) try writer.writeAll(",\"clip\":true");
             if (h.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (h.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, h.disabled, h.readonly, h.validation, h.focusable, false);
+            try writeWidgetStateFields(writer, h.disabled, h.readonly, h.validation, h.focusable, false, h.focus_scope);
             if (h.justify_content != .start) {
                 try writer.writeAll(",\"justify_content\":");
                 try writeJsonString(writer, switch (h.justify_content) {
@@ -432,7 +441,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (b.shadow) try writer.writeAll(",\"shadow\":true");
             if (b.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (b.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, b.disabled, b.readonly, b.validation, b.focusable, false);
+            try writeWidgetStateFields(writer, b.disabled, b.readonly, b.validation, b.focusable, false, b.focus_scope);
             if (b.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -460,7 +469,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (!s.clip) try writer.writeAll(",\"clip\":false");
             if (s.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (s.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, s.disabled, s.readonly, s.validation, s.focusable, true);
+            try writeWidgetStateFields(writer, s.disabled, s.readonly, s.validation, s.focusable, true, s.focus_scope);
             if (s.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -488,7 +497,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (o.clip) try writer.writeAll(",\"clip\":true");
             if (o.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (o.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, o.disabled, o.readonly, o.validation, o.focusable, false);
+            try writeWidgetStateFields(writer, o.disabled, o.readonly, o.validation, o.focusable, false, o.focus_scope);
             if (o.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -556,7 +565,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             }
             if (t.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (t.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, t.disabled, t.readonly, t.validation, t.focusable, false);
+            try writeWidgetStateFields(writer, t.disabled, t.readonly, t.validation, t.focusable, false, t.focus_scope);
             if (t.ext_align != .left) {
                 try writer.writeAll(",\"ext_align\":");
                 try writeJsonString(writer, switch (t.ext_align) {
@@ -598,7 +607,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             }
             if (t.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (t.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, t.disabled, t.readonly, t.validation, t.focusable, false);
+            try writeWidgetStateFields(writer, t.disabled, t.readonly, t.validation, t.focusable, false, t.focus_scope);
             if (t.ext_align != .left) {
                 try writer.writeAll(",\"ext_align\":");
                 try writeJsonString(writer, switch (t.ext_align) {
@@ -643,7 +652,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             }
             if (inp.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (inp.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, inp.disabled, inp.readonly, inp.validation, inp.focusable, true);
+            try writeWidgetStateFields(writer, inp.disabled, inp.readonly, inp.validation, inp.focusable, true, inp.focus_scope);
             if (inp.content_align != .left) {
                 try writer.writeAll(",\"content_align\":");
                 try writeJsonString(writer, switch (inp.content_align) {
@@ -683,7 +692,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             }
             if (ta.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (ta.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, ta.disabled, ta.readonly, ta.validation, ta.focusable, true);
+            try writeWidgetStateFields(writer, ta.disabled, ta.readonly, ta.validation, ta.focusable, true, ta.focus_scope);
             if (ta.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -716,7 +725,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             }
             if (l.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (l.mouseable) try writer.writeAll(",\"mouseable\":true");
-            try writeWidgetStateFields(writer, l.disabled, l.readonly, l.validation, l.focusable, true);
+            try writeWidgetStateFields(writer, l.disabled, l.readonly, l.validation, l.focusable, true, l.focus_scope);
             if (l.marker != .default) {
                 try writer.writeAll(",\"marker\":");
                 try writeJsonString(writer, switch (l.marker) {

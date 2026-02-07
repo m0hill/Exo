@@ -79,7 +79,7 @@ Rules:
 
 Action names:
 
-- focus/actions: `noop`, `focus_next`, `focus_prev`, `focus_clear`, `action_activate`
+- focus/actions: `noop`, `focus_next`, `focus_prev`, `focus_scope_next`, `focus_scope_prev`, `focus_clear`, `action_activate`
 - list: `list_prev`, `list_next`, `list_activate`
 - scroll: `scroll_line_up`, `scroll_line_down`, `scroll_page_up`, `scroll_page_down`, `scroll_home`, `scroll_end`
 - input: `input_left`, `input_right`, `input_word_left`, `input_word_right`, `input_home`, `input_end`, `input_delete`, `input_backspace`
@@ -154,8 +154,15 @@ Node types (current):
 - `id` (string, required)
 - layout: `w`/`h` (int?), `flex` (int), `pad` (int), `clip` (bool)
 - interaction/state: `hoverable` (bool), `mouseable` (bool), `focusable` (bool), `disabled` (bool), `readonly` (bool)
+- focus scoping: `focus_scope` (string, optional; alias `focus_group` accepted on input)
 - validation: `validation` (`none|error|warning|success`)
 - `style` (object, optional): style overrides
+
+`focus_scope` behavior:
+
+- focus traversal (`focus_next` / `focus_prev`) is trapped within the currently focused node's scope
+- `focus_scope_next` / `focus_scope_prev` jump across scope boundaries
+- nodes without `focus_scope` are in the default global scope (`null`)
 
 ### Styling (`style`)
 

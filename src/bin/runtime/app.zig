@@ -588,10 +588,13 @@ pub fn run() !void {
                                     if (keymap.resolve(context, parts.key, parts.mods)) |action| {
                                         switch (action) {
                                             .noop => consumed = true,
-                                            .focus_next, .focus_prev => {
+                                            .focus_next, .focus_prev, .focus_scope_next, .focus_scope_prev => {
                                                 if (current_root != null) {
-                                                    const dir: isize = if (action == .focus_prev) -1 else 1;
-                                                    const next_focus = try ui.cycleFocusInTreeDir(allocator, current_root.?, focused_id, dir);
+                                                    const dir: isize = if (action == .focus_prev or action == .focus_scope_prev) -1 else 1;
+                                                    const next_focus = switch (action) {
+                                                        .focus_scope_next, .focus_scope_prev => try ui.cycleFocusScopeInTreeDir(allocator, current_root.?, focused_id, dir),
+                                                        else => try ui.cycleFocusInTreeDir(allocator, current_root.?, focused_id, dir),
+                                                    };
                                                     try ui.setFocusId(allocator, &focused_id_buf, &focused_id, next_focus);
                                                 } else {
                                                     try ui.setFocusId(allocator, &focused_id_buf, &focused_id, null);

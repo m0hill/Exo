@@ -166,6 +166,7 @@ fn morphNodeLeaky(
             t.readonly = inc.readonly;
             t.validation = inc.validation;
             t.focusable = inc.focusable;
+            t.focus_scope = inc.focus_scope;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
             t.style = inc.style;
@@ -183,6 +184,7 @@ fn morphNodeLeaky(
             t.readonly = inc.readonly;
             t.validation = inc.validation;
             t.focusable = inc.focusable;
+            t.focus_scope = inc.focus_scope;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
             t.style = inc.style;
@@ -200,6 +202,7 @@ fn morphNodeLeaky(
             i.readonly = inc.readonly;
             i.validation = inc.validation;
             i.focusable = inc.focusable;
+            i.focus_scope = inc.focus_scope;
             i.content_align = inc.content_align;
             i.style = inc.style;
             i.placeholder_style = inc.placeholder_style;
@@ -217,6 +220,7 @@ fn morphNodeLeaky(
             t.readonly = inc.readonly;
             t.validation = inc.validation;
             t.focusable = inc.focusable;
+            t.focus_scope = inc.focus_scope;
             t.style = inc.style;
             t.placeholder_style = inc.placeholder_style;
             t.placeholder = inc.placeholder;
@@ -236,6 +240,7 @@ fn morphNodeLeaky(
             v.readonly = inc.readonly;
             v.validation = inc.validation;
             v.focusable = inc.focusable;
+            v.focus_scope = inc.focus_scope;
             v.justify_content = inc.justify_content;
             v.align_items = inc.align_items;
             v.gap = inc.gap;
@@ -299,6 +304,7 @@ fn morphNodeLeaky(
             h.readonly = inc.readonly;
             h.validation = inc.validation;
             h.focusable = inc.focusable;
+            h.focus_scope = inc.focus_scope;
             h.justify_content = inc.justify_content;
             h.align_items = inc.align_items;
             h.gap = inc.gap;
@@ -363,6 +369,7 @@ fn morphNodeLeaky(
             b.readonly = inc.readonly;
             b.validation = inc.validation;
             b.focusable = inc.focusable;
+            b.focus_scope = inc.focus_scope;
             b.align_self = inc.align_self;
             b.style = inc.style;
 
@@ -387,6 +394,7 @@ fn morphNodeLeaky(
             s.readonly = inc.readonly;
             s.validation = inc.validation;
             s.focusable = inc.focusable;
+            s.focus_scope = inc.focus_scope;
             s.align_self = inc.align_self;
             s.style = inc.style;
 
@@ -413,6 +421,7 @@ fn morphNodeLeaky(
             o.readonly = inc.readonly;
             o.validation = inc.validation;
             o.focusable = inc.focusable;
+            o.focus_scope = inc.focus_scope;
             o.align_self = inc.align_self;
             o.style = inc.style;
 
@@ -491,6 +500,7 @@ fn morphNodeLeaky(
             l.readonly = inc.readonly;
             l.validation = inc.validation;
             l.focusable = inc.focusable;
+            l.focus_scope = inc.focus_scope;
             l.marker = inc.marker;
             l.style = inc.style;
 

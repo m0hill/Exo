@@ -336,6 +336,7 @@ pub fn emitTextPatchByIdStyled(
 fn writePanelNode(
     writer: anytype,
     id: []const u8,
+    focus_scope: []const u8,
     title: []const u8,
     accent_fg: []const u8,
     input_id: []const u8,
@@ -348,6 +349,8 @@ fn writePanelNode(
 
     try writer.writeAll("{\"type\":\"box\",\"id\":");
     try protocol.writeJsonString(writer, id);
+    try writer.writeAll(",\"focus_scope\":");
+    try protocol.writeJsonString(writer, focus_scope);
     try writer.writeAll(",\"flex\":1,\"pad\":1,\"clip\":true");
     try writer.writeAll(",\"style\":{\"bg\":\"#0b1220\",\"fg\":");
     try protocol.writeJsonString(writer, accent_fg);
@@ -376,7 +379,7 @@ fn writePanelNode(
     try writer.writeByte('}');
 }
 
-fn writeAlignmentPanelNode(writer: anytype) !void {
+fn writeAlignmentPanelNode(writer: anytype, focus_scope: []const u8) !void {
     const panel_style: style.StyleOverride = .{
         .bg = .{ .rgb = .{ .r = 0x0B, .g = 0x12, .b = 0x20 } },
         .fg = .{ .rgb = .{ .r = 0xFB, .g = 0x71, .b = 0x85 } },
@@ -473,6 +476,7 @@ fn writeAlignmentPanelNode(writer: anytype) !void {
         .flex = 1,
         .pad = 1,
         .clip = true,
+        .focus_scope = focus_scope,
         .style = panel_style,
         .title = "Alignment",
         .child = &body,
@@ -484,6 +488,7 @@ fn writeAlignmentPanelNode(writer: anytype) !void {
 fn writeWidgetsPanelNode(
     allocator: std.mem.Allocator,
     writer: anytype,
+    focus_scope: []const u8,
     widgets: state.WidgetsState,
     tick: u64,
 ) !void {
@@ -733,6 +738,7 @@ fn writeWidgetsPanelNode(
         .flex = 1,
         .pad = 1,
         .clip = true,
+        .focus_scope = focus_scope,
         .style = panel_style,
         .title = "Widgets",
         .child = scroll_ptr,
@@ -768,7 +774,7 @@ fn writeRootNode(
     try writeTextNodeLayoutStyled(
         writer,
         "hint",
-        "Unicode demo: e\u{0301} 漢 🇯🇵 👩‍👩‍👧‍👦\nTab cycles focus by tree order. Mouse: click input/list to focus; click list row to select; wheel over list scrolls.\nArrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x or Ctrl-C exits.\nEmergency exit chord: Ctrl-G then Ctrl-G (restores terminal and exits immediately).\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
+        "Unicode demo: e\u{0301} 漢 🇯🇵 👩‍👩‍👧‍👦\nTab/Shift-Tab cycle within the current focus scope. '[' and ']' jump across scopes.\nMouse: click input/list to focus; click list row to select; wheel over list scrolls.\nArrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x or Ctrl-C exits.\nEmergency exit chord: Ctrl-G then Ctrl-G (restores terminal and exits immediately).\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
         null,
         3,
         0,
@@ -815,6 +821,7 @@ fn writeRootNode(
             .id = "md-demo-wrap",
             .h = 5,
             .clip = true,
+            .focus_scope = "scope-md",
             .children = md_wrap_children,
         },
     });
@@ -822,7 +829,7 @@ fn writeRootNode(
 
     // Placeholder container for Tracer 18 (backend-streamed markdown).
     // Use flex so the streaming output gets real vertical space.
-    try writer.writeAll("{\"type\":\"box\",\"id\":\"md-stream-wrap\",\"flex\":1,\"pad\":1,\"clip\":true");
+    try writer.writeAll("{\"type\":\"box\",\"id\":\"md-stream-wrap\",\"focus_scope\":\"scope-md\",\"flex\":1,\"pad\":1,\"clip\":true");
     try writer.writeAll(",\"style\":{\"bg\":\"#0b1220\",\"fg\":\"#34d399\"}");
     try writer.writeAll(",\"title\":");
     try protocol.writeJsonString(writer, md_stream_title);
@@ -897,6 +904,7 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-a",
+            "scope-left",
             "Panel A",
             "#93c5fd",
             inputs[0].id,
@@ -908,6 +916,7 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-b",
+            "scope-right",
             "Panel B",
             "#c4b5fd",
             inputs[1].id,
@@ -919,6 +928,7 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-b",
+            "scope-right",
             "Panel B",
             "#c4b5fd",
             inputs[1].id,
@@ -930,6 +940,7 @@ fn writeRootNode(
         try writePanelNode(
             writer,
             "panel-a",
+            "scope-left",
             "Panel A",
             "#93c5fd",
             inputs[0].id,
@@ -939,9 +950,9 @@ fn writeRootNode(
         );
     }
     try writer.writeByte(',');
-    try writeAlignmentPanelNode(writer);
+    try writeAlignmentPanelNode(writer, "scope-align");
     try writer.writeByte(',');
-    try writeWidgetsPanelNode(allocator, writer, widgets, tick);
+    try writeWidgetsPanelNode(allocator, writer, "scope-widgets", widgets, tick);
     try writer.writeAll("]}");
 
     try writer.writeByte(',');

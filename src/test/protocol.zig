@@ -195,6 +195,7 @@ test "protocol: write+parse widget state fields" {
         .readonly = true,
         .validation = .@"error",
         .focusable = true,
+        .focus_scope = "panel-a",
         .child = &child,
     } };
 
@@ -208,6 +209,7 @@ test "protocol: write+parse widget state fields" {
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"readonly\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"validation\":\"error\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"focusable\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"focus_scope\":\"panel-a\"") != null);
 
     const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
     const root = switch (msg) {
@@ -226,6 +228,28 @@ test "protocol: write+parse widget state fields" {
     try std.testing.expect(b.readonly);
     try std.testing.expectEqual(protocol.ValidationState.@"error", b.validation);
     try std.testing.expect(b.focusable);
+    try std.testing.expectEqualStrings("panel-a", b.focus_scope orelse return error.TestUnexpectedResult);
+}
+
+test "protocol: parse focus_group alias" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line = "{\"type\":\"patch\",\"root\":{\"type\":\"input\",\"id\":\"q\",\"focus_group\":\"main\"}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const inp = switch (root) {
+        .input => |i| i,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("main", inp.focus_scope orelse return error.TestUnexpectedResult);
 }
 
 test "protocol: write+parse textarea + list marker" {
@@ -528,6 +552,15 @@ test "protocol: parse config keybindings message" {
     try std.testing.expect(cfg.list != null);
     try std.testing.expectEqual(@as(usize, 2), cfg.list.?.len);
     try std.testing.expectEqual(protocol.KeyAction.list_next, cfg.list.?[0].action);
+
+    const scope_line =
+        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"n\",\"action\":\"focus_scope_next\"}]}}";
+    const scope_msg = try protocol.parseMsgLeaky(arena.allocator(), scope_line);
+    const scope_cfg = switch (scope_msg) {
+        .config => |c| c.keybindings,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(protocol.KeyAction.focus_scope_next, scope_cfg.global.?[0].action);
 }
 
 test "protocol: reject unknown keybinding action" {
