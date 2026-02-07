@@ -584,3 +584,107 @@ test "protocol: reject malformed keybinding rule" {
         "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"action\":\"focus_next\"}]}}";
     try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), missing_key));
 }
+
+test "protocol: parse textarea v2 key actions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"config\",\"keybindings\":{" ++
+        "\"textarea\":[" ++
+        "{\"key\":\"ArrowLeft\",\"mods\":1,\"action\":\"textarea_select_left\"}," ++
+        "{\"key\":\"a\",\"mods\":2,\"action\":\"textarea_select_all\"}," ++
+        "{\"key\":\"z\",\"mods\":2,\"action\":\"textarea_undo\"}" ++
+        "]}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const cfg = switch (msg) {
+        .config => |c| c.keybindings,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(cfg.textarea != null);
+    try std.testing.expectEqual(protocol.KeyAction.textarea_select_left, cfg.textarea.?[0].action);
+    try std.testing.expectEqual(protocol.KeyAction.textarea_select_all, cfg.textarea.?[1].action);
+    try std.testing.expectEqual(protocol.KeyAction.textarea_undo, cfg.textarea.?[2].action);
+}
+
+test "protocol: parse input v2 key actions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"config\",\"keybindings\":{" ++
+        "\"input\":[" ++
+        "{\"key\":\"ArrowLeft\",\"mods\":1,\"action\":\"input_select_left\"}," ++
+        "{\"key\":\"a\",\"mods\":2,\"action\":\"input_select_all\"}," ++
+        "{\"key\":\"z\",\"mods\":2,\"action\":\"input_undo\"}" ++
+        "]}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const cfg = switch (msg) {
+        .config => |c| c.keybindings,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expect(cfg.input != null);
+    try std.testing.expectEqual(protocol.KeyAction.input_select_left, cfg.input.?[0].action);
+    try std.testing.expectEqual(protocol.KeyAction.input_select_all, cfg.input.?[1].action);
+    try std.testing.expectEqual(protocol.KeyAction.input_undo, cfg.input.?[2].action);
+}
+
+test "protocol: parse input selection_style" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"patch\",\"root\":{" ++
+        "\"type\":\"input\",\"id\":\"in\",\"selection_style\":{\"inverse\":true},\"placeholder\":\"Type\"" ++
+        "}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const patch = switch (msg) {
+        .patch => |p| p,
+        else => return error.TestUnexpectedResult,
+    };
+    const root = switch (patch) {
+        .full => |f| f.root,
+        else => return error.TestUnexpectedResult,
+    };
+    switch (root) {
+        .input => |inp| {
+            try std.testing.expect(inp.selection_style != null);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: parse grid node with tracks and placement" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"patch\",\"root\":{" ++
+        "\"type\":\"grid\",\"id\":\"g\",\"rows\":[\"auto\",\"1fr\"],\"cols\":[10,\"2fr\"],\"gap_x\":1,\"gap_y\":1," ++
+        "\"areas\":[\"header header\",\"sidebar content\"]," ++
+        "\"children\":[" ++
+        "{\"type\":\"text\",\"id\":\"t1\",\"grid_area\":\"header\",\"text\":\"Header\"}," ++
+        "{\"type\":\"text\",\"id\":\"t2\",\"grid_row\":1,\"grid_col\":1,\"row_span\":1,\"col_span\":1,\"text\":\"Body\"}" ++
+        "]}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const patch = switch (msg) {
+        .patch => |p| p,
+        else => return error.TestUnexpectedResult,
+    };
+    const root = switch (patch) {
+        .full => |f| f.root,
+        else => return error.TestUnexpectedResult,
+    };
+    switch (root) {
+        .grid => |g| {
+            try std.testing.expectEqual(@as(usize, 2), g.rows.len);
+            try std.testing.expectEqual(@as(usize, 2), g.cols.len);
+            try std.testing.expectEqual(@as(usize, 2), g.children.len);
+            switch (g.rows[0]) {
+                .auto => {},
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}

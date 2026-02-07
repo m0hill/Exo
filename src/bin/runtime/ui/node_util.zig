@@ -44,6 +44,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .validation = i.validation,
             .focusable = i.focusable,
             .style = i.style,
+            .selection_style = i.selection_style,
             .placeholder_style = i.placeholder_style,
             .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
         } },
@@ -60,6 +61,7 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
             .validation = t.validation,
             .focusable = t.focusable,
             .style = t.style,
+            .selection_style = t.selection_style,
             .placeholder_style = t.placeholder_style,
             .placeholder = if (t.placeholder) |p| try allocator.dupe(u8, p) else null,
         } },
@@ -104,6 +106,37 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .validation = h.validation,
                 .focusable = h.focusable,
                 .style = h.style,
+                .children = children,
+            } };
+        },
+        .grid => |g| blk: {
+            var children = try allocator.alloc(protocol.Node, g.children.len);
+            for (g.children, 0..) |child, idx| {
+                children[idx] = try cloneNodeLeaky(allocator, child);
+            }
+            const rows = try allocator.alloc(protocol.GridTrack, g.rows.len);
+            @memcpy(rows, g.rows);
+            const cols = try allocator.alloc(protocol.GridTrack, g.cols.len);
+            @memcpy(cols, g.cols);
+            break :blk .{ .grid = .{
+                .id = try allocator.dupe(u8, g.id),
+                .w = g.w,
+                .h = g.h,
+                .flex = g.flex,
+                .pad = g.pad,
+                .clip = g.clip,
+                .hoverable = g.hoverable,
+                .mouseable = g.mouseable,
+                .disabled = g.disabled,
+                .readonly = g.readonly,
+                .validation = g.validation,
+                .focusable = g.focusable,
+                .style = g.style,
+                .gap_x = g.gap_x,
+                .gap_y = g.gap_y,
+                .rows = rows,
+                .cols = cols,
+                .areas = g.areas,
                 .children = children,
             } };
         },
@@ -223,6 +256,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .grid => |g| g.id,
         .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,
@@ -251,6 +285,12 @@ pub fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode 
         },
         .hbox => |h| blk: {
             for (h.children) |child| {
+                if (findListNodeById(child, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
                 if (findListNodeById(child, id)) |l| break :blk l;
             }
             break :blk null;
@@ -291,6 +331,12 @@ pub fn findScrollNodeById(root: protocol.Node, id: []const u8) ?protocol.ScrollN
         },
         .hbox => |h| blk: {
             for (h.children) |child| {
+                if (findScrollNodeById(child, id)) |s| break :blk s;
+            }
+            break :blk null;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
                 if (findScrollNodeById(child, id)) |s| break :blk s;
             }
             break :blk null;

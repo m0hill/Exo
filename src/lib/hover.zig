@@ -13,6 +13,7 @@ fn nodeDisabled(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.disabled,
         .hbox => |h| h.disabled,
+        .grid => |g| g.disabled,
         .box => |b| b.disabled,
         .scroll => |s| s.disabled,
         .overlay => |o| o.disabled,
@@ -29,6 +30,7 @@ fn nodeHoverable(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.hoverable,
         .hbox => |h| h.hoverable,
+        .grid => |g| g.hoverable,
         .box => |b| b.hoverable,
         .scroll => |s| s.hoverable,
         .overlay => |o| o.hoverable,
@@ -63,6 +65,12 @@ pub fn treeHasHoverables(node: protocol.Node) bool {
             }
             return false;
         },
+        .grid => |g| {
+            for (g.children) |child| {
+                if (treeHasHoverables(child)) return true;
+            }
+            return false;
+        },
         .box => |b| treeHasHoverables(b.child.*),
         .scroll => |s| treeHasHoverables(s.child.*),
         .list => |l| {
@@ -92,6 +100,7 @@ fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) v
         },
         .vbox => |v| for (v.children) |child| findTopmostModalLayerInto(child, out),
         .hbox => |h| for (h.children) |child| findTopmostModalLayerInto(child, out),
+        .grid => |g| for (g.children) |child| findTopmostModalLayerInto(child, out),
         .box => |b| findTopmostModalLayerInto(b.child.*, out),
         .scroll => |s| findTopmostModalLayerInto(s.child.*, out),
         .list => |l| for (l.children) |child| findTopmostModalLayerInto(child, out),
@@ -121,6 +130,7 @@ fn collectHoverablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]con
         },
         .vbox => |v| for (v.children) |child| try collectHoverablesInto(allocator, out, child),
         .hbox => |h| for (h.children) |child| try collectHoverablesInto(allocator, out, child),
+        .grid => |g| for (g.children) |child| try collectHoverablesInto(allocator, out, child),
         .list => |l| for (l.children) |child| try collectHoverablesInto(allocator, out, child),
         else => {},
     }
@@ -151,6 +161,12 @@ fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode {
         },
         .hbox => |h| blk: {
             for (h.children) |child| {
+                if (findListNodeById(child, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
                 if (findListNodeById(child, id)) |l| break :blk l;
             }
             break :blk null;

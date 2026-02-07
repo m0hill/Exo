@@ -855,4 +855,50 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 31,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Grid layout container + full text editing (selection/undo/redo/copy/paste) for textarea and input",
+    "deliverables": [
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig: protocol v0.17 adds grid node with track sizing (fixed/auto/fractional), areas, gap_x/gap_y, and grid placement fields (grid_row/grid_col/row_span/col_span/grid_area)",
+      "src/lib/render/grid.zig: grid layout engine with track resolution, placement precedence (explicit > area), and cell assignment",
+      "src/lib/render/mod.zig: render grid children with resolved rects and clip handling",
+      "src/bin/runtime/ui/mod.zig + node_util.zig + pointer.zig: grid traversal for focus collection, hit-testing, modal detection, and node lookup",
+      "src/lib/scheduler.zig + src/lib/tree.zig: grid cloning and morph support",
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig: new textarea key actions (textarea_select_left/right/up/down, textarea_select_word_left/right, textarea_select_home/end/all, textarea_copy, textarea_paste, textarea_undo, textarea_redo)",
+      "src/bin/runtime/ui/mod.zig + widgets.zig: textarea selection anchor, undo/redo history (max 50 entries), copy/paste, Ctrl+Shift selection shortcuts",
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig: new input key actions (input_select_left/right, input_select_word_left/right, input_select_home/end/all, input_copy, input_paste, input_undo, input_redo)",
+      "src/bin/runtime/ui/mod.zig + widgets.zig: input selection anchor, undo/redo history (max 50 entries), copy/paste, selection-aware editing",
+      "src/bin/runtime/keybindings.zig: default textarea/input selection bindings (Shift+arrows, Ctrl+Shift+arrows for word select, Ctrl+A/C/V/Z/Y)",
+      "src/bin/runtime/app.zig: textarea_copy/input_copy uses clipboard.writeText, textarea_paste/input_paste uses clipboard.readText",
+      "src/bin/demo/render.zig: grid precedence demo node showing explicit placement overriding named areas",
+      "docs/PROTOCOL.md: document grid node, track syntax, areas layout, and new textarea/input actions"
+    ],
+    "boundaries_hit": [
+      "Grid placement precedence: explicit grid_row/grid_col overrides grid_area",
+      "Textarea/input undo history bounded to 50 entries with proper memory cleanup",
+      "Selection-aware editing: replace selection on type/delete/paste",
+      "Clipboard integration for textarea and input via protocol-standard messages",
+      "Input selection rendering coordinates with horizontal scroll viewport"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build demo",
+      "Grid: observe 'Grid precedence (explicit row/col > area)' panel showing area:left, area:right, and explicit row=1,col=1 overriding area:left",
+      "Textarea: focus the demo textarea, type some text",
+      "Shift+Arrow to select text, confirm selection highlights",
+      "Ctrl+C to copy selection, Ctrl+V to paste elsewhere",
+      "Ctrl+Z to undo, Ctrl+Y to redo, confirm history works",
+      "Ctrl+A to select all, confirm entire text selected",
+      "Input: focus a single-line input, type some text",
+      "Shift+Left/Right to select text within input, confirm selection highlights",
+      "Ctrl+Shift+Left/Right to select by word",
+      "Ctrl+C to copy selection, Ctrl+V to paste elsewhere in input",
+      "Ctrl+Z to undo, Ctrl+Y to redo, confirm history works",
+      "Ctrl+A to select all in input, confirm entire text selected",
+      "Exit with 'x'"
+    ]
+  }
 ]

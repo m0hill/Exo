@@ -574,9 +574,20 @@ pub fn run() !void {
                                 }
 
                                 if (keyEventIsCtrlLetter(kev, 'c')) {
-                                    try sendKeyEventToBackend(&log_sink, child_in, kev);
-                                    need_backend_flush = true;
-                                    continue;
+                                    var prefer_local_copy: bool = false;
+                                    if (!handled_input_this_iter and focused_kind != null) {
+                                        var fbuf_copy: [4]u8 = undefined;
+                                        const parts_copy = keyEventToProtocolParts(kev, &fbuf_copy);
+                                        const ctx_copy = contextForFocusedKind(focused_kind.?);
+                                        if (keymap.resolve(ctx_copy, parts_copy.key, parts_copy.mods)) |copy_action| {
+                                            prefer_local_copy = copy_action == .textarea_copy or copy_action == .input_copy;
+                                        }
+                                    }
+                                    if (!prefer_local_copy) {
+                                        try sendKeyEventToBackend(&log_sink, child_in, kev);
+                                        need_backend_flush = true;
+                                        continue;
+                                    }
                                 }
 
                                 var consumed: bool = false;
@@ -625,17 +636,49 @@ pub fn run() !void {
                                                             visible_cols = ui.inputVisibleCols(r.w);
                                                         }
                                                         const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
-                                                        consumed = ui.applyInputAction(
-                                                            allocator,
-                                                            &widgets,
-                                                            focused_id.?,
-                                                            action,
-                                                            readonly,
-                                                            visible_cols,
-                                                        ) catch false;
-                                                        if (consumed) {
-                                                            pending_input_event = true;
-                                                            requested_reason = .input;
+                                                        if (action == .input_copy) {
+                                                            const selected = ui.inputSelectedTextAlloc(allocator, widgets.items, focused_id.?) catch null;
+                                                            if (selected) |payload| {
+                                                                defer allocator.free(payload);
+                                                                clipboard.writeText(&term, allocator, term.caps(), .{}, payload) catch {};
+                                                                consumed = true;
+                                                            } else {
+                                                                consumed = false;
+                                                            }
+                                                        } else if (action == .input_paste) {
+                                                            const payload = clipboard.readText(allocator) catch null;
+                                                            if (payload) |text| {
+                                                                defer allocator.free(text);
+                                                                consumed = ui.handleFocusedInputPaste(
+                                                                    allocator,
+                                                                    &widgets,
+                                                                    focused_id.?,
+                                                                    text,
+                                                                    readonly,
+                                                                    visible_cols,
+                                                                ) catch false;
+                                                                if (consumed) {
+                                                                    pending_input_event = true;
+                                                                    requested_reason = .input;
+                                                                } else {
+                                                                    consumed = true;
+                                                                }
+                                                            } else {
+                                                                consumed = false;
+                                                            }
+                                                        } else {
+                                                            consumed = ui.applyInputAction(
+                                                                allocator,
+                                                                &widgets,
+                                                                focused_id.?,
+                                                                action,
+                                                                readonly,
+                                                                visible_cols,
+                                                            ) catch false;
+                                                            if (consumed) {
+                                                                pending_input_event = true;
+                                                                requested_reason = .input;
+                                                            }
                                                         }
                                                     },
                                                     .textarea => {
@@ -646,18 +689,51 @@ pub fn run() !void {
                                                             visible_cols = r.w;
                                                         }
                                                         const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
-                                                        consumed = ui.applyTextareaAction(
-                                                            allocator,
-                                                            &widgets,
-                                                            focused_id.?,
-                                                            action,
-                                                            readonly,
-                                                            visible_rows,
-                                                            visible_cols,
-                                                        ) catch false;
-                                                        if (consumed) {
-                                                            pending_input_event = true;
-                                                            requested_reason = .input;
+                                                        if (action == .textarea_copy) {
+                                                            const selected = ui.textareaSelectedTextAlloc(allocator, widgets.items, focused_id.?) catch null;
+                                                            if (selected) |payload| {
+                                                                defer allocator.free(payload);
+                                                                clipboard.writeText(&term, allocator, term.caps(), .{}, payload) catch {};
+                                                                consumed = true;
+                                                            } else {
+                                                                consumed = false;
+                                                            }
+                                                        } else if (action == .textarea_paste) {
+                                                            const payload = clipboard.readText(allocator) catch null;
+                                                            if (payload) |text| {
+                                                                defer allocator.free(text);
+                                                                consumed = ui.handleFocusedTextareaPaste(
+                                                                    allocator,
+                                                                    &widgets,
+                                                                    focused_id.?,
+                                                                    text,
+                                                                    readonly,
+                                                                    visible_rows,
+                                                                    visible_cols,
+                                                                ) catch false;
+                                                                if (consumed) {
+                                                                    pending_input_event = true;
+                                                                    requested_reason = .input;
+                                                                } else {
+                                                                    consumed = true;
+                                                                }
+                                                            } else {
+                                                                consumed = false;
+                                                            }
+                                                        } else {
+                                                            consumed = ui.applyTextareaAction(
+                                                                allocator,
+                                                                &widgets,
+                                                                focused_id.?,
+                                                                action,
+                                                                readonly,
+                                                                visible_rows,
+                                                                visible_cols,
+                                                            ) catch false;
+                                                            if (consumed) {
+                                                                pending_input_event = true;
+                                                                requested_reason = .input;
+                                                            }
                                                         }
                                                     },
                                                     .list => {

@@ -169,6 +169,41 @@ test "render: overlay layer can anchor to prior layer node" {
     try std.testing.expectEqual(@as(usize, 1), r.y);
 }
 
+test "render: grid explicit placement overrides area placement" {
+    var rows = [_]protocol.GridTrack{
+        .{ .fixed = 2 },
+        .{ .fixed = 2 },
+    };
+    var cols = [_]protocol.GridTrack{
+        .{ .fixed = 4 },
+        .{ .fixed = 4 },
+    };
+    const areas = [_][]const u8{
+        "left right",
+        "left right",
+    };
+    var children = [_]protocol.Node{
+        .{ .text = .{
+            .id = "explicit",
+            .grid_area = "left",
+            .grid_row = 1,
+            .grid_col = 1,
+            .text = "X",
+        } },
+    };
+    const root = protocol.Node{ .grid = .{
+        .id = "g",
+        .rows = rows[0..],
+        .cols = cols[0..],
+        .areas = areas[0..],
+        .children = children[0..],
+    } };
+
+    const r = render.findRectForId(root, 4, 8, "explicit") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 4), r.x);
+    try std.testing.expectEqual(@as(usize, 2), r.y);
+}
+
 test "render: textarea renders multiline + cursor" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
@@ -260,6 +295,30 @@ test "render: input content_align center pads short value" {
     const cur = frame.cursor orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), cur.row);
     try std.testing.expectEqual(@as(usize, 9), cur.col);
+}
+
+test "render: input selection paints selected graphemes" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 8);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .input = .{ .id = "i" } };
+    const st: render.InputState = .{
+        .id = "i",
+        .value = "abc",
+        .cursor = 3,
+        .scroll_x = 0,
+        .selection_start = 1,
+        .selection_end = 3,
+    };
+    render.renderToFrame(root, .{ .focused_id = "i", .inputs = &.{st} }, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'a'), cellByte(&frame, 0, 2));
+    try std.testing.expectEqual(@as(u8, 'b'), cellByte(&frame, 0, 3));
+    try std.testing.expectEqual(@as(u8, 'c'), cellByte(&frame, 0, 4));
+    try std.testing.expect((frame.rowSlice(0)[3].style.attrs & style.ATTR_INVERSE) != 0);
+    try std.testing.expect((frame.rowSlice(0)[4].style.attrs & style.ATTR_INVERSE) != 0);
 }
 
 test "render: box shadow dims underlying cells" {
@@ -447,7 +506,7 @@ test "render: text wraps and respects hard newlines" {
     try renderer.draw(&term, root, .{});
 
     const out = term.out.items;
-    try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[K\r\nWorld") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[3;1HWorld") != null);
 }
 
 test "render: styled_text wraps and respects hard newlines" {
@@ -466,7 +525,7 @@ test "render: styled_text wraps and respects hard newlines" {
     try renderer.draw(&term, root, .{});
 
     const out = term.out.items;
-    try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[K\r\nWorld") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Hello\x1b[K\r\nWorldWorld\x1b[3;1HWorld") != null);
 }
 
 test "render: focused list shows selection marker and hides cursor" {

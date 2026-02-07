@@ -655,6 +655,7 @@ fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) v
         },
         .vbox => |v| for (v.children) |child| findTopmostModalLayerInto(child, out),
         .hbox => |h| for (h.children) |child| findTopmostModalLayerInto(child, out),
+        .grid => |g| for (g.children) |child| findTopmostModalLayerInto(child, out),
         .box => |b| findTopmostModalLayerInto(b.child.*, out),
         .scroll => |s| findTopmostModalLayerInto(s.child.*, out),
         .list => |l| for (l.children) |child| findTopmostModalLayerInto(child, out),
@@ -673,6 +674,12 @@ fn treeContainsId(node: protocol.Node, id: []const u8) bool {
         },
         .hbox => |h| blk: {
             for (h.children) |child| {
+                if (treeContainsId(child, id)) break :blk true;
+            }
+            break :blk false;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
                 if (treeContainsId(child, id)) break :blk true;
             }
             break :blk false;

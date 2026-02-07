@@ -101,6 +101,7 @@ fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .grid => |g| g.id,
         .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,

@@ -146,6 +146,22 @@ fn textareaVisualLines(value: []const u8, cols: usize) usize {
     return y + 1;
 }
 
+fn textareaSelectionRange(value: []const u8, cursor: usize, anchor: ?usize) ?struct { start: usize, end: usize } {
+    const a_raw = anchor orelse return null;
+    const c = unicode.clampGraphemeBoundary(value, @min(cursor, value.len));
+    const a = unicode.clampGraphemeBoundary(value, @min(a_raw, value.len));
+    if (a == c) return null;
+    return if (a < c) .{ .start = a, .end = c } else .{ .start = c, .end = a };
+}
+
+fn inputSelectionRange(value: []const u8, cursor: usize, anchor: ?usize) ?struct { start: usize, end: usize } {
+    const a_raw = anchor orelse return null;
+    const c = unicode.clampGraphemeBoundary(value, @min(cursor, value.len));
+    const a = unicode.clampGraphemeBoundary(value, @min(a_raw, value.len));
+    if (a == c) return null;
+    return if (a < c) .{ .start = a, .end = c } else .{ .start = c, .end = a };
+}
+
 pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, size: terminal.Size) void {
     const eff = effectiveTermSize(size);
     const rows: usize = @as(usize, eff.rows);
@@ -156,6 +172,11 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
             .input => |*s| {
                 s.cursor = @min(s.cursor, s.value.items.len);
                 if (s.scroll_x > s.value.items.len) s.scroll_x = s.value.items.len;
+                s.selection_anchor = if (s.selection_anchor) |a|
+                    unicode.clampGraphemeBoundary(s.value.items, @min(a, s.value.items.len))
+                else
+                    null;
+                if (s.selection_anchor != null and s.selection_anchor.? == s.cursor) s.selection_anchor = null;
 
                 var visible_cols: usize = inputVisibleCols(cols);
                 if (render.findRectForId(root, rows, cols, e.id.items)) |r| {
@@ -240,12 +261,32 @@ const Focusable = struct {
     scope: ?[]const u8,
 };
 
+fn deinitTextareaHistory(allocator: std.mem.Allocator, st: anytype) void {
+    for (st.undo.items) |entry| allocator.free(entry.value);
+    for (st.redo.items) |entry| allocator.free(entry.value);
+    st.undo.deinit(allocator);
+    st.redo.deinit(allocator);
+}
+
+fn deinitInputHistory(allocator: std.mem.Allocator, st: anytype) void {
+    for (st.undo.items) |entry| allocator.free(entry.value);
+    for (st.redo.items) |entry| allocator.free(entry.value);
+    st.undo.deinit(allocator);
+    st.redo.deinit(allocator);
+}
+
 pub fn deinitWidgetEntries(allocator: std.mem.Allocator, widgets: *std.ArrayList(WidgetEntry)) void {
     for (widgets.items) |*e| {
         e.id.deinit(allocator);
         switch (e.state) {
-            .input => |*s| s.value.deinit(allocator),
-            .textarea => |*s| s.value.deinit(allocator),
+            .input => |*s| {
+                s.value.deinit(allocator);
+                deinitInputHistory(allocator, s);
+            },
+            .textarea => |*s| {
+                s.value.deinit(allocator);
+                deinitTextareaHistory(allocator, s);
+            },
             .list => |*s| s.selected_id.deinit(allocator),
             .scroll => {},
             .action => {},
@@ -274,19 +315,25 @@ pub fn buildRenderState(
     for (widgets) |e| {
         switch (e.state) {
             .input => |s| {
+                const sel = inputSelectionRange(s.value.items, s.cursor, s.selection_anchor);
                 try render_inputs.append(allocator, .{
                     .id = e.id.items,
                     .value = s.value.items,
                     .cursor = s.cursor,
                     .scroll_x = s.scroll_x,
+                    .selection_start = if (sel) |r| r.start else null,
+                    .selection_end = if (sel) |r| r.end else null,
                 });
             },
             .textarea => |s| {
+                const sel = textareaSelectionRange(s.value.items, s.cursor, s.selection_anchor);
                 try render_textareas.append(allocator, .{
                     .id = e.id.items,
                     .value = s.value.items,
                     .cursor = s.cursor,
                     .scroll_y = s.scroll_y,
+                    .selection_start = if (sel) |r| r.start else null,
+                    .selection_end = if (sel) |r| r.end else null,
                 });
             },
             .list => |s| {
@@ -352,6 +399,7 @@ fn nodeFocusScope(node: protocol.Node) ?[]const u8 {
     return switch (node) {
         .vbox => |v| v.focus_scope,
         .hbox => |h| h.focus_scope,
+        .grid => |g| g.focus_scope,
         .box => |b| b.focus_scope,
         .scroll => |s| s.focus_scope,
         .overlay => |o| o.focus_scope,
@@ -373,6 +421,7 @@ fn collectFocusablesInto(
     const disabled = disabled_ancestor or switch (node) {
         .vbox => |v| v.disabled,
         .hbox => |h| h.disabled,
+        .grid => |g| g.disabled,
         .box => |b| b.disabled,
         .scroll => |s| s.disabled,
         .overlay => |o| o.disabled,
@@ -422,6 +471,10 @@ fn collectFocusablesInto(
         .hbox => |h| {
             if (h.focusable) try out.append(allocator, .{ .id = h.id, .kind = .action, .scope = scope });
             for (h.children) |child| try collectFocusablesInto(allocator, out, child, false, scope);
+        },
+        .grid => |g| {
+            if (g.focusable) try out.append(allocator, .{ .id = g.id, .kind = .action, .scope = scope });
+            for (g.children) |child| try collectFocusablesInto(allocator, out, child, false, scope);
         },
         .styled_text => |t| {
             if (t.focusable) try out.append(allocator, .{ .id = t.id, .kind = .action, .scope = scope });
@@ -507,6 +560,12 @@ fn treeContainsId(node: protocol.Node, id: []const u8) bool {
             }
             break :blk false;
         },
+        .grid => |g| blk: {
+            for (g.children) |child| {
+                if (treeContainsId(child, id)) break :blk true;
+            }
+            break :blk false;
+        },
         .box => |b| treeContainsId(b.child.*, id),
         .scroll => |s| treeContainsId(s.child.*, id),
         .overlay => |o| blk: {
@@ -547,6 +606,7 @@ fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) v
         },
         .vbox => |v| for (v.children) |child| findTopmostModalLayerInto(child, out),
         .hbox => |h| for (h.children) |child| findTopmostModalLayerInto(child, out),
+        .grid => |g| for (g.children) |child| findTopmostModalLayerInto(child, out),
         .box => |b| findTopmostModalLayerInto(b.child.*, out),
         .scroll => |s| findTopmostModalLayerInto(s.child.*, out),
         .list => |l| for (l.children) |child| findTopmostModalLayerInto(child, out),
@@ -565,6 +625,7 @@ fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]c
     const disabled = switch (node) {
         .vbox => |v| v.disabled,
         .hbox => |h| h.disabled,
+        .grid => |g| g.disabled,
         .box => |b| b.disabled,
         .scroll => |s| s.disabled,
         .overlay => |o| o.disabled,
@@ -589,6 +650,10 @@ fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]c
         .hbox => |h| {
             if (h.mouseable) try out.append(allocator, h.id);
             for (h.children) |child| try collectHitTestablesInto(allocator, out, child);
+        },
+        .grid => |g| {
+            if (g.mouseable) try out.append(allocator, g.id);
+            for (g.children) |child| try collectHitTestablesInto(allocator, out, child);
         },
         .box => |b| {
             if (b.mouseable) try out.append(allocator, b.id);
@@ -783,6 +848,7 @@ fn nodeReadonlyInTreeInto(node: protocol.Node, id: []const u8, out: *bool) bool 
         out.* = switch (node) {
             .vbox => |v| v.readonly,
             .hbox => |h| h.readonly,
+            .grid => |g| g.readonly,
             .box => |b| b.readonly,
             .scroll => |s| s.readonly,
             .overlay => |o| o.readonly,
@@ -798,6 +864,7 @@ fn nodeReadonlyInTreeInto(node: protocol.Node, id: []const u8, out: *bool) bool 
     switch (node) {
         .vbox => |v| for (v.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
         .hbox => |h| for (h.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
+        .grid => |g| for (g.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
         .box => |b| return nodeReadonlyInTreeInto(b.child.*, id, out),
         .scroll => |s| return nodeReadonlyInTreeInto(s.child.*, id, out),
         .overlay => |o| {
@@ -1286,8 +1353,14 @@ fn pruneWidgetsNotInFocusables(
 fn deinitWidgetEntry(allocator: std.mem.Allocator, e: *WidgetEntry) void {
     e.id.deinit(allocator);
     switch (e.state) {
-        .input => |*s| s.value.deinit(allocator),
-        .textarea => |*s| s.value.deinit(allocator),
+        .input => |*s| {
+            s.value.deinit(allocator);
+            deinitInputHistory(allocator, s);
+        },
+        .textarea => |*s| {
+            s.value.deinit(allocator);
+            deinitTextareaHistory(allocator, s);
+        },
         .list => |*s| s.selected_id.deinit(allocator),
         .scroll => {},
         .action => {},
@@ -1339,8 +1412,14 @@ fn ensureWidgetKind(
 
 fn deinitWidgetEntryState(allocator: std.mem.Allocator, e: *WidgetEntry) void {
     switch (e.state) {
-        .input => |*s| s.value.deinit(allocator),
-        .textarea => |*s| s.value.deinit(allocator),
+        .input => |*s| {
+            s.value.deinit(allocator);
+            deinitInputHistory(allocator, s);
+        },
+        .textarea => |*s| {
+            s.value.deinit(allocator);
+            deinitTextareaHistory(allocator, s);
+        },
         .list => |*s| s.selected_id.deinit(allocator),
         .scroll => {},
         .action => {},
@@ -1504,6 +1583,12 @@ fn findNearestScrollAncestorInto(node: protocol.Node, target_id: []const u8, out
         },
         .hbox => |h| {
             for (h.children) |child| {
+                if (findNearestScrollAncestorInto(child, target_id, out)) return true;
+            }
+            return false;
+        },
+        .grid => |g| {
+            for (g.children) |child| {
                 if (findNearestScrollAncestorInto(child, target_id, out)) return true;
             }
             return false;
@@ -1726,6 +1811,68 @@ pub fn applyActionWidgetAction(
     return true;
 }
 
+const input_max_history: usize = 50;
+
+fn inputClearHistory(allocator: std.mem.Allocator, list: anytype) void {
+    for (list.items) |entry| allocator.free(entry.value);
+    list.clearRetainingCapacity();
+}
+
+fn inputPushHistory(
+    allocator: std.mem.Allocator,
+    list: anytype,
+    value: []const u8,
+    cursor: usize,
+    anchor: ?usize,
+) !void {
+    const Entry = @TypeOf(list.items[0]);
+    if (list.items.len >= input_max_history) {
+        const dropped = list.orderedRemove(0);
+        allocator.free(dropped.value);
+    }
+    const snapshot = Entry{
+        .value = try allocator.dupe(u8, value),
+        .cursor = cursor,
+        .selection_anchor = anchor,
+    };
+    try list.append(allocator, snapshot);
+}
+
+fn inputRecordUndo(allocator: std.mem.Allocator, st: anytype) !void {
+    try inputPushHistory(allocator, &st.undo, st.value.items, st.cursor, st.selection_anchor);
+    inputClearHistory(allocator, &st.redo);
+}
+
+fn inputRestoreFromHistory(allocator: std.mem.Allocator, st: anytype, entry: anytype) !void {
+    st.value.clearRetainingCapacity();
+    try st.value.appendSlice(allocator, entry.value);
+    st.cursor = unicode.clampGraphemeBoundary(st.value.items, @min(entry.cursor, st.value.items.len));
+    st.selection_anchor = if (entry.selection_anchor) |a|
+        unicode.clampGraphemeBoundary(st.value.items, @min(a, st.value.items.len))
+    else
+        null;
+}
+
+fn inputReplaceSelection(allocator: std.mem.Allocator, st: anytype, bytes: []const u8) !bool {
+    const sel = inputSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+    if (sel) |r| {
+        deleteByteRange(&st.value, r.start, r.end);
+        st.cursor = r.start;
+        st.selection_anchor = null;
+    } else {
+        if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+        st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
+    }
+    if (bytes.len == 0) return sel != null;
+    if (st.cursor == st.value.items.len) {
+        try st.value.appendSlice(allocator, bytes);
+    } else {
+        try st.value.insertSlice(allocator, st.cursor, bytes);
+    }
+    st.cursor += bytes.len;
+    return true;
+}
+
 pub fn handleFocusedInputKey(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
@@ -1751,13 +1898,11 @@ pub fn handleFocusedInputKey(
     var st = &widgets.items[idx].state.input;
     if (readonly) return false;
 
-    if (st.value.items.len + s.len > max_input_bytes) return false;
-    var changed: bool = false;
-    if (s.len == 1 and s[0] < 0x80) {
-        changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
-    } else {
-        changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
-    }
+    const sel = inputSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+    const sel_len: usize = if (sel) |r| r.end - r.start else 0;
+    if (st.value.items.len - sel_len + s.len > max_input_bytes) return false;
+    try inputRecordUndo(allocator, st);
+    const changed = try inputReplaceSelection(allocator, st, s);
 
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
@@ -1768,6 +1913,13 @@ pub fn handleFocusedInputKey(
 fn mapInputKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
     return switch (ev.key) {
         .text => |s| blk: {
+            if (ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt and s.len == 1) {
+                if (s[0] == 'a') break :blk .input_select_all;
+                if (s[0] == 'c') break :blk .input_copy;
+                if (s[0] == 'v') break :blk .input_paste;
+                if (s[0] == 'z') break :blk .input_undo;
+                if (s[0] == 'y') break :blk .input_redo;
+            }
             if (ev.mods.ctrl or ev.mods.shift) break :blk null;
             if (ev.mods.alt and s.len == 1) {
                 if (s[0] == 'b') break :blk .input_word_left;
@@ -1776,10 +1928,10 @@ fn mapInputKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
             break :blk null;
         },
         .named => |k| switch (k) {
-            .left => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .input_word_left else if (!ev.mods.ctrl and !ev.mods.shift) .input_left else null,
-            .right => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .input_word_right else if (!ev.mods.ctrl and !ev.mods.shift) .input_right else null,
-            .home => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_home else null,
-            .end => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_end else null,
+            .left => if (ev.mods.shift and ev.mods.ctrl and !ev.mods.alt) .input_select_word_left else if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .input_select_left else if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .input_word_left else if (!ev.mods.ctrl and !ev.mods.shift) .input_left else null,
+            .right => if (ev.mods.shift and ev.mods.ctrl and !ev.mods.alt) .input_select_word_right else if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .input_select_right else if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .input_word_right else if (!ev.mods.ctrl and !ev.mods.shift) .input_right else null,
+            .home => if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .input_select_home else if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_home else null,
+            .end => if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .input_select_end else if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_end else null,
             .delete => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_delete else null,
             .backspace => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .input_backspace else null,
             else => null,
@@ -1802,9 +1954,40 @@ pub fn applyInputAction(
     const before_cursor: usize = st.cursor;
     const before_len: usize = st.value.items.len;
     const before_scroll: usize = st.scroll_x;
+    const before_anchor = st.selection_anchor;
+
+    var select_mode = false;
+    var move_action = action;
+    switch (action) {
+        .input_select_left => {
+            select_mode = true;
+            move_action = .input_left;
+        },
+        .input_select_right => {
+            select_mode = true;
+            move_action = .input_right;
+        },
+        .input_select_word_left => {
+            select_mode = true;
+            move_action = .input_word_left;
+        },
+        .input_select_word_right => {
+            select_mode = true;
+            move_action = .input_word_right;
+        },
+        .input_select_home => {
+            select_mode = true;
+            move_action = .input_home;
+        },
+        .input_select_end => {
+            select_mode = true;
+            move_action = .input_end;
+        },
+        else => {},
+    }
 
     var changed: bool = false;
-    switch (action) {
+    switch (move_action) {
         .input_left => {
             const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
             if (next != st.cursor) {
@@ -1845,18 +2028,75 @@ pub fn applyInputAction(
         },
         .input_delete => {
             if (readonly) return false;
-            changed = input.delete_at_cursor(&st.value, &st.cursor);
+            const sel = inputSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+            const can_delete = if (sel != null)
+                true
+            else blk: {
+                const cur = unicode.clampGraphemeBoundary(st.value.items, @min(st.cursor, st.value.items.len));
+                const next = unicode.nextGraphemeBoundary(st.value.items, cur);
+                break :blk cur < st.value.items.len and next > cur;
+            };
+            if (can_delete) {
+                try inputRecordUndo(allocator, st);
+                if (sel != null) {
+                    _ = try inputReplaceSelection(allocator, st, "");
+                } else {
+                    _ = input.delete_at_cursor(&st.value, &st.cursor);
+                }
+                changed = true;
+            }
         },
         .input_backspace => {
             if (readonly) return false;
-            if (st.cursor != 0) {
+            const sel = inputSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+            if (sel != null) {
+                try inputRecordUndo(allocator, st);
+                _ = try inputReplaceSelection(allocator, st, "");
+                changed = true;
+            } else if (st.cursor != 0) {
+                try inputRecordUndo(allocator, st);
                 changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
             }
         },
+        .input_select_all => {
+            st.selection_anchor = 0;
+            st.cursor = st.value.items.len;
+            changed = true;
+        },
+        .input_undo => {
+            if (st.undo.items.len == 0) return false;
+            try inputPushHistory(allocator, &st.redo, st.value.items, st.cursor, st.selection_anchor);
+            const prev = st.undo.pop().?;
+            defer allocator.free(prev.value);
+            try inputRestoreFromHistory(allocator, st, prev);
+            changed = true;
+        },
+        .input_redo => {
+            if (st.redo.items.len == 0) return false;
+            try inputPushHistory(allocator, &st.undo, st.value.items, st.cursor, st.selection_anchor);
+            const next = st.redo.pop().?;
+            defer allocator.free(next.value);
+            try inputRestoreFromHistory(allocator, st, next);
+            changed = true;
+        },
+        .input_copy, .input_paste => return false,
         else => return false,
     }
 
-    if (!changed and before_cursor == st.cursor and before_len == st.value.items.len and before_scroll == st.scroll_x) return false;
+    if (select_mode) {
+        if (st.selection_anchor == null) st.selection_anchor = before_cursor;
+        if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+    } else if (move_action == .input_left or
+        move_action == .input_right or
+        move_action == .input_word_left or
+        move_action == .input_word_right or
+        move_action == .input_home or
+        move_action == .input_end)
+    {
+        st.selection_anchor = null;
+    }
+
+    if (!changed and before_cursor == st.cursor and before_len == st.value.items.len and before_scroll == st.scroll_x and before_anchor == st.selection_anchor) return false;
 
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
@@ -1880,6 +2120,7 @@ pub fn handleFocusedInputPaste(
     const before_cursor: usize = st.cursor;
     const before_len: usize = st.value.items.len;
     const before_scroll: usize = st.scroll_x;
+    const before_anchor = st.selection_anchor;
 
     var sanitized: std.ArrayList(u8) = .empty;
     defer sanitized.deinit(allocator);
@@ -1887,7 +2128,9 @@ pub fn handleFocusedInputPaste(
 
     var i: usize = 0;
     while (i < payload.len) {
-        if (st.value.items.len + sanitized.items.len >= max_input_bytes) break;
+        const sel = inputSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+        const sel_len: usize = if (sel) |r| r.end - r.start else 0;
+        if (st.value.items.len - sel_len + sanitized.items.len >= max_input_bytes) break;
 
         const b = payload[i];
         if (b == '\r' or b == '\n' or b == '\t' or b < 0x20 or b == 0x7f) {
@@ -1918,28 +2161,22 @@ pub fn handleFocusedInputPaste(
             i += 1;
             continue;
         };
-        if (st.value.items.len + sanitized.items.len + slice.len > max_input_bytes) break;
+        const sel2 = inputSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+        const sel_len2: usize = if (sel2) |r| r.end - r.start else 0;
+        if (st.value.items.len - sel_len2 + sanitized.items.len + slice.len > max_input_bytes) break;
         try sanitized.appendSlice(allocator, slice);
         i += n;
     }
 
     if (sanitized.items.len == 0) return false;
-
-    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
-    st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
-
-    if (st.cursor == st.value.items.len) {
-        try st.value.appendSlice(allocator, sanitized.items);
-    } else {
-        try st.value.insertSlice(allocator, st.cursor, sanitized.items);
-    }
-    st.cursor += sanitized.items.len;
+    try inputRecordUndo(allocator, st);
+    _ = try inputReplaceSelection(allocator, st, sanitized.items);
 
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
     const scroll_changed = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
 
-    const changed = before_cursor != st.cursor or before_len != st.value.items.len or before_scroll != st.scroll_x;
+    const changed = before_cursor != st.cursor or before_len != st.value.items.len or before_scroll != st.scroll_x or before_anchor != st.selection_anchor;
     return changed or scroll_changed;
 }
 
@@ -2071,6 +2308,95 @@ fn textareaByteIndexForVisualPos(value: []const u8, target_y: usize, target_x: u
     return unicode.clampGraphemeBoundary(value, best_byte);
 }
 
+const textarea_max_history: usize = 50;
+
+fn deleteByteRange(buf: *std.ArrayList(u8), start: usize, end: usize) void {
+    if (start >= end or start >= buf.items.len) return;
+    const e = @min(end, buf.items.len);
+    const n = e - start;
+    if (n == 0) return;
+    std.mem.copyForwards(u8, buf.items[start .. buf.items.len - n], buf.items[e..]);
+    buf.items = buf.items[0 .. buf.items.len - n];
+}
+
+fn textareaClearHistory(allocator: std.mem.Allocator, list: anytype) void {
+    for (list.items) |entry| allocator.free(entry.value);
+    list.clearRetainingCapacity();
+}
+
+fn textareaPushHistory(allocator: std.mem.Allocator, list: anytype, value: []const u8, cursor: usize, anchor: ?usize) !void {
+    const Entry = @TypeOf(list.items[0]);
+    if (list.items.len >= textarea_max_history) {
+        const dropped = list.orderedRemove(0);
+        allocator.free(dropped.value);
+    }
+    const snapshot = Entry{
+        .value = try allocator.dupe(u8, value),
+        .cursor = cursor,
+        .selection_anchor = anchor,
+    };
+    try list.append(allocator, snapshot);
+}
+
+fn textareaRecordUndo(allocator: std.mem.Allocator, st: anytype) !void {
+    try textareaPushHistory(allocator, &st.undo, st.value.items, st.cursor, st.selection_anchor);
+    textareaClearHistory(allocator, &st.redo);
+}
+
+fn textareaRestoreFromHistory(allocator: std.mem.Allocator, st: anytype, entry: anytype) !void {
+    st.value.clearRetainingCapacity();
+    try st.value.appendSlice(allocator, entry.value);
+    st.cursor = unicode.clampGraphemeBoundary(st.value.items, @min(entry.cursor, st.value.items.len));
+    st.selection_anchor = if (entry.selection_anchor) |a|
+        unicode.clampGraphemeBoundary(st.value.items, @min(a, st.value.items.len))
+    else
+        null;
+}
+
+fn textareaReplaceSelection(allocator: std.mem.Allocator, st: anytype, bytes: []const u8) !bool {
+    const sel = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+    if (sel) |r| {
+        deleteByteRange(&st.value, r.start, r.end);
+        st.cursor = r.start;
+        st.selection_anchor = null;
+    } else {
+        if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
+        st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
+    }
+    if (bytes.len == 0) return sel != null;
+    if (st.cursor == st.value.items.len) {
+        try st.value.appendSlice(allocator, bytes);
+    } else {
+        try st.value.insertSlice(allocator, st.cursor, bytes);
+    }
+    st.cursor += bytes.len;
+    return true;
+}
+
+pub fn inputSelectedTextAlloc(
+    allocator: std.mem.Allocator,
+    widgets: []const WidgetEntry,
+    input_id: []const u8,
+) !?[]u8 {
+    const idx = findWidgetIndex(widgets, input_id) orelse return null;
+    if (widgets[idx].state != .input) return null;
+    const st = widgets[idx].state.input;
+    const sel = inputSelectionRange(st.value.items, st.cursor, st.selection_anchor) orelse return null;
+    return @as(?[]u8, try allocator.dupe(u8, st.value.items[sel.start..sel.end]));
+}
+
+pub fn textareaSelectedTextAlloc(
+    allocator: std.mem.Allocator,
+    widgets: []const WidgetEntry,
+    textarea_id: []const u8,
+) !?[]u8 {
+    const idx = findWidgetIndex(widgets, textarea_id) orelse return null;
+    if (widgets[idx].state != .textarea) return null;
+    const st = widgets[idx].state.textarea;
+    const sel = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor) orelse return null;
+    return @as(?[]u8, try allocator.dupe(u8, st.value.items[sel.start..sel.end]));
+}
+
 pub fn handleFocusedTextareaKey(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
@@ -2097,13 +2423,11 @@ pub fn handleFocusedTextareaKey(
     var st = &widgets.items[idx].state.textarea;
     if (readonly) return false;
 
-    if (st.value.items.len + s.len > max_textarea_bytes) return false;
-    var changed: bool = false;
-    if (s.len == 1 and s[0] < 0x80) {
-        changed = try input.handleInputByte(allocator, &st.value, &st.cursor, s[0]);
-    } else {
-        changed = try input.insertUtf8Bytes(allocator, &st.value, &st.cursor, s);
-    }
+    const sel = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+    const sel_len: usize = if (sel) |r| r.end - r.start else 0;
+    if (st.value.items.len - sel_len + s.len > max_textarea_bytes) return false;
+    try textareaRecordUndo(allocator, st);
+    const changed = try textareaReplaceSelection(allocator, st, s);
 
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, visible_cols);
@@ -2117,6 +2441,13 @@ pub fn handleFocusedTextareaKey(
 fn mapTextareaKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
     return switch (ev.key) {
         .text => |s| blk: {
+            if (ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt and s.len == 1) {
+                if (s[0] == 'a') break :blk .textarea_select_all;
+                if (s[0] == 'c') break :blk .textarea_copy;
+                if (s[0] == 'v') break :blk .textarea_paste;
+                if (s[0] == 'z') break :blk .textarea_undo;
+                if (s[0] == 'y') break :blk .textarea_redo;
+            }
             if (ev.mods.ctrl or ev.mods.shift) break :blk null;
             if (ev.mods.alt and s.len == 1) {
                 if (s[0] == 'b') break :blk .textarea_word_left;
@@ -2125,12 +2456,12 @@ fn mapTextareaKeyToAction(ev: keys.KeyEvent) ?protocol.KeyAction {
             break :blk null;
         },
         .named => |k| switch (k) {
-            .left => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .textarea_word_left else if (!ev.mods.ctrl and !ev.mods.shift) .textarea_left else null,
-            .right => if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .textarea_word_right else if (!ev.mods.ctrl and !ev.mods.shift) .textarea_right else null,
-            .up => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_up else null,
-            .down => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_down else null,
-            .home => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_home else null,
-            .end => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_end else null,
+            .left => if (ev.mods.shift and ev.mods.ctrl and !ev.mods.alt) .textarea_select_word_left else if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .textarea_select_left else if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .textarea_word_left else if (!ev.mods.ctrl and !ev.mods.shift) .textarea_left else null,
+            .right => if (ev.mods.shift and ev.mods.ctrl and !ev.mods.alt) .textarea_select_word_right else if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .textarea_select_right else if (ev.mods.alt and !ev.mods.ctrl and !ev.mods.shift) .textarea_word_right else if (!ev.mods.ctrl and !ev.mods.shift) .textarea_right else null,
+            .up => if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .textarea_select_up else if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_up else null,
+            .down => if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .textarea_select_down else if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_down else null,
+            .home => if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .textarea_select_home else if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_home else null,
+            .end => if (ev.mods.shift and !ev.mods.ctrl and !ev.mods.alt) .textarea_select_end else if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_end else null,
             .page_up => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_page_up else null,
             .page_down => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_page_down else null,
             .delete => if (!ev.mods.ctrl and !ev.mods.shift and !ev.mods.alt) .textarea_delete else null,
@@ -2158,9 +2489,48 @@ pub fn applyTextareaAction(
     const before_cursor: usize = st.cursor;
     const before_len: usize = st.value.items.len;
     const before_scroll_y: usize = st.scroll_y;
+    const before_anchor = st.selection_anchor;
+
+    var select_mode = false;
+    var move_action = action;
+    switch (action) {
+        .textarea_select_left => {
+            select_mode = true;
+            move_action = .textarea_left;
+        },
+        .textarea_select_right => {
+            select_mode = true;
+            move_action = .textarea_right;
+        },
+        .textarea_select_up => {
+            select_mode = true;
+            move_action = .textarea_up;
+        },
+        .textarea_select_down => {
+            select_mode = true;
+            move_action = .textarea_down;
+        },
+        .textarea_select_word_left => {
+            select_mode = true;
+            move_action = .textarea_word_left;
+        },
+        .textarea_select_word_right => {
+            select_mode = true;
+            move_action = .textarea_word_right;
+        },
+        .textarea_select_home => {
+            select_mode = true;
+            move_action = .textarea_home;
+        },
+        .textarea_select_end => {
+            select_mode = true;
+            move_action = .textarea_end;
+        },
+        else => {},
+    }
 
     var changed: bool = false;
-    switch (action) {
+    switch (move_action) {
         .textarea_left => {
             const next = unicode.prevGraphemeBoundary(st.value.items, st.cursor);
             if (next != st.cursor) {
@@ -2238,31 +2608,78 @@ pub fn applyTextareaAction(
         },
         .textarea_delete => {
             if (readonly) return false;
-            changed = input.delete_at_cursor(&st.value, &st.cursor);
+            const sel = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+            const can_delete = if (sel != null)
+                true
+            else blk: {
+                const cur = unicode.clampGraphemeBoundary(st.value.items, @min(st.cursor, st.value.items.len));
+                const next = unicode.nextGraphemeBoundary(st.value.items, cur);
+                break :blk cur < st.value.items.len and next > cur;
+            };
+            if (can_delete) {
+                try textareaRecordUndo(allocator, st);
+                if (sel != null) {
+                    _ = try textareaReplaceSelection(allocator, st, "");
+                } else {
+                    _ = input.delete_at_cursor(&st.value, &st.cursor);
+                }
+                changed = true;
+            }
         },
         .textarea_backspace => {
             if (readonly) return false;
-            if (st.cursor != 0) {
+            const sel = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+            if (sel != null) {
+                try textareaRecordUndo(allocator, st);
+                _ = try textareaReplaceSelection(allocator, st, "");
+                changed = true;
+            } else if (st.cursor != 0) {
+                try textareaRecordUndo(allocator, st);
                 changed = try input.handleInputByte(allocator, &st.value, &st.cursor, 127);
             }
         },
         .textarea_newline => {
             if (readonly) return false;
-            if (st.value.items.len + 1 > max_textarea_bytes) return false;
-            if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
-            st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
-            if (st.cursor == st.value.items.len) {
-                try st.value.append(allocator, '\n');
-            } else {
-                try st.value.insert(allocator, st.cursor, '\n');
-            }
-            st.cursor += 1;
+            const sel = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+            const sel_len: usize = if (sel) |r| r.end - r.start else 0;
+            if (st.value.items.len - sel_len + 1 > max_textarea_bytes) return false;
+            try textareaRecordUndo(allocator, st);
+            _ = try textareaReplaceSelection(allocator, st, "\n");
             changed = true;
         },
+        .textarea_select_all => {
+            st.selection_anchor = 0;
+            st.cursor = st.value.items.len;
+            changed = true;
+        },
+        .textarea_undo => {
+            if (st.undo.items.len == 0) return false;
+            try textareaPushHistory(allocator, &st.redo, st.value.items, st.cursor, st.selection_anchor);
+            const prev = st.undo.pop().?;
+            defer allocator.free(prev.value);
+            try textareaRestoreFromHistory(allocator, st, prev);
+            changed = true;
+        },
+        .textarea_redo => {
+            if (st.redo.items.len == 0) return false;
+            try textareaPushHistory(allocator, &st.undo, st.value.items, st.cursor, st.selection_anchor);
+            const next = st.redo.pop().?;
+            defer allocator.free(next.value);
+            try textareaRestoreFromHistory(allocator, st, next);
+            changed = true;
+        },
+        .textarea_copy, .textarea_paste => return false,
         else => return false,
     }
 
-    if (!changed and before_cursor == st.cursor and before_len == st.value.items.len and before_scroll_y == st.scroll_y) return false;
+    if (select_mode) {
+        if (st.selection_anchor == null) st.selection_anchor = before_cursor;
+        if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+    } else if (move_action == .textarea_left or move_action == .textarea_right or move_action == .textarea_word_left or move_action == .textarea_word_right or move_action == .textarea_up or move_action == .textarea_down or move_action == .textarea_home or move_action == .textarea_end or move_action == .textarea_page_up or move_action == .textarea_page_down) {
+        st.selection_anchor = null;
+    }
+
+    if (!changed and before_cursor == st.cursor and before_len == st.value.items.len and before_scroll_y == st.scroll_y and before_anchor == st.selection_anchor) return false;
 
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
     const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, visible_cols);
@@ -2290,6 +2707,7 @@ pub fn handleFocusedTextareaPaste(
     const before_cursor: usize = st.cursor;
     const before_len: usize = st.value.items.len;
     const before_scroll_y: usize = st.scroll_y;
+    const before_anchor = st.selection_anchor;
 
     var sanitized: std.ArrayList(u8) = .empty;
     defer sanitized.deinit(allocator);
@@ -2297,7 +2715,9 @@ pub fn handleFocusedTextareaPaste(
 
     var i: usize = 0;
     while (i < payload.len) {
-        if (st.value.items.len + sanitized.items.len >= max_textarea_bytes) break;
+        const sel = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+        const sel_len: usize = if (sel) |r| r.end - r.start else 0;
+        if (st.value.items.len - sel_len + sanitized.items.len >= max_textarea_bytes) break;
 
         const b = payload[i];
         if (b == '\r') {
@@ -2338,29 +2758,24 @@ pub fn handleFocusedTextareaPaste(
             i += 1;
             continue;
         };
-        if (st.value.items.len + sanitized.items.len + slice.len > max_textarea_bytes) break;
+        const sel2 = textareaSelectionRange(st.value.items, st.cursor, st.selection_anchor);
+        const sel_len2: usize = if (sel2) |r| r.end - r.start else 0;
+        if (st.value.items.len - sel_len2 + sanitized.items.len + slice.len > max_textarea_bytes) break;
         try sanitized.appendSlice(allocator, slice);
         i += n;
     }
 
     if (sanitized.items.len == 0) return false;
 
-    if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
-    st.cursor = unicode.clampGraphemeBoundary(st.value.items, st.cursor);
-
-    if (st.cursor == st.value.items.len) {
-        try st.value.appendSlice(allocator, sanitized.items);
-    } else {
-        try st.value.insertSlice(allocator, st.cursor, sanitized.items);
-    }
-    st.cursor += sanitized.items.len;
+    try textareaRecordUndo(allocator, st);
+    _ = try textareaReplaceSelection(allocator, st, sanitized.items);
     if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
 
     const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, visible_cols);
     const content_h = textareaVisualLines(st.value.items, visible_cols);
     st.scroll_y = state.scrollIntoView(st.scroll_y, visible_rows, cursor_y, cursor_y + 1, content_h);
 
-    const changed = before_cursor != st.cursor or before_len != st.value.items.len or before_scroll_y != st.scroll_y;
+    const changed = before_cursor != st.cursor or before_len != st.value.items.len or before_scroll_y != st.scroll_y or before_anchor != st.selection_anchor;
     return changed;
 }
 

@@ -162,6 +162,17 @@ const default_input_rules = [_]BorrowedRule{
     .{ .key = "End", .mods = 0, .action = .input_end },
     .{ .key = "Delete", .mods = 0, .action = .input_delete },
     .{ .key = "Backspace", .mods = 0, .action = .input_backspace },
+    .{ .key = "ArrowLeft", .mods = 1, .action = .input_select_left },
+    .{ .key = "ArrowRight", .mods = 1, .action = .input_select_right },
+    .{ .key = "ArrowLeft", .mods = 3, .action = .input_select_word_left },
+    .{ .key = "ArrowRight", .mods = 3, .action = .input_select_word_right },
+    .{ .key = "Home", .mods = 1, .action = .input_select_home },
+    .{ .key = "End", .mods = 1, .action = .input_select_end },
+    .{ .key = "a", .mods = 2, .action = .input_select_all },
+    .{ .key = "c", .mods = 2, .action = .input_copy },
+    .{ .key = "v", .mods = 2, .action = .input_paste },
+    .{ .key = "z", .mods = 2, .action = .input_undo },
+    .{ .key = "y", .mods = 2, .action = .input_redo },
 };
 
 const default_textarea_rules = [_]BorrowedRule{
@@ -180,6 +191,19 @@ const default_textarea_rules = [_]BorrowedRule{
     .{ .key = "Delete", .mods = 0, .action = .textarea_delete },
     .{ .key = "Backspace", .mods = 0, .action = .textarea_backspace },
     .{ .key = "Enter", .mods = 0, .action = .textarea_newline },
+    .{ .key = "ArrowLeft", .mods = 1, .action = .textarea_select_left },
+    .{ .key = "ArrowRight", .mods = 1, .action = .textarea_select_right },
+    .{ .key = "ArrowUp", .mods = 1, .action = .textarea_select_up },
+    .{ .key = "ArrowDown", .mods = 1, .action = .textarea_select_down },
+    .{ .key = "ArrowLeft", .mods = 3, .action = .textarea_select_word_left },
+    .{ .key = "ArrowRight", .mods = 3, .action = .textarea_select_word_right },
+    .{ .key = "Home", .mods = 1, .action = .textarea_select_home },
+    .{ .key = "End", .mods = 1, .action = .textarea_select_end },
+    .{ .key = "a", .mods = 2, .action = .textarea_select_all },
+    .{ .key = "c", .mods = 2, .action = .textarea_copy },
+    .{ .key = "v", .mods = 2, .action = .textarea_paste },
+    .{ .key = "z", .mods = 2, .action = .textarea_undo },
+    .{ .key = "y", .mods = 2, .action = .textarea_redo },
 };
 
 const default_list_rules = [_]BorrowedRule{

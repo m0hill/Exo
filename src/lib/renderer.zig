@@ -199,7 +199,7 @@ fn fullPaint(
     }
 
     const rows: usize = @as(usize, next.rows);
-    _ = @as(usize, next.cols);
+    const cols: usize = @as(usize, next.cols);
 
     var r: usize = 0;
     while (r < rows) : (r += 1) {
@@ -218,12 +218,17 @@ fn fullPaint(
                 }
             }
         }
-        if (caps.erase_eol) {
+        if (caps.erase_eol and max < cols) {
             try applyStyle(term, metrics, cur_style, mode, .{});
             try termWriteAll(term, metrics, "\x1b[K");
         }
         if (r + 1 < rows) {
-            try termWriteAll(term, metrics, "\r\n");
+            if (max == cols) {
+                // Avoid relying on terminal wrap behavior at the last column.
+                try emitCursorMove(term, metrics, r + 2, 1);
+            } else {
+                try termWriteAll(term, metrics, "\r\n");
+            }
         }
     }
 }

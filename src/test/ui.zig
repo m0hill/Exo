@@ -96,6 +96,71 @@ test "ui: textarea scroll_y keeps cursor visible" {
     try std.testing.expect(!changed);
 }
 
+test "ui: textarea selection and undo redo" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    const ev_a: keys.KeyEvent = .{ .key = .{ .text = "a" } };
+    const ev_b: keys.KeyEvent = .{ .key = .{ .text = "b" } };
+    const ev_c: keys.KeyEvent = .{ .key = .{ .text = "c" } };
+    _ = try runtime_ui.handleFocusedTextareaKey(std.testing.allocator, &widgets, "ta", ev_a, false, 4, 20);
+    _ = try runtime_ui.handleFocusedTextareaKey(std.testing.allocator, &widgets, "ta", ev_b, false, 4, 20);
+    _ = try runtime_ui.handleFocusedTextareaKey(std.testing.allocator, &widgets, "ta", ev_c, false, 4, 20);
+
+    _ = try runtime_ui.applyTextareaAction(std.testing.allocator, &widgets, "ta", .textarea_select_left, false, 4, 20);
+    _ = try runtime_ui.applyTextareaAction(std.testing.allocator, &widgets, "ta", .textarea_select_left, false, 4, 20);
+
+    const selected = try runtime_ui.textareaSelectedTextAlloc(std.testing.allocator, widgets.items, "ta");
+    defer if (selected) |s| std.testing.allocator.free(s);
+    try std.testing.expect(selected != null);
+    try std.testing.expectEqualStrings("bc", selected.?);
+
+    _ = try runtime_ui.applyTextareaAction(std.testing.allocator, &widgets, "ta", .textarea_newline, false, 4, 20);
+    _ = try runtime_ui.applyTextareaAction(std.testing.allocator, &widgets, "ta", .textarea_undo, false, 4, 20);
+    _ = try runtime_ui.applyTextareaAction(std.testing.allocator, &widgets, "ta", .textarea_redo, false, 4, 20);
+
+    var got: []const u8 = "";
+    for (widgets.items) |w| {
+        if (!std.mem.eql(u8, w.id.items, "ta")) continue;
+        got = w.state.textarea.value.items;
+        break;
+    }
+    try std.testing.expectEqualStrings("a\n", got);
+}
+
+test "ui: input selection and undo redo" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    const ev_a: keys.KeyEvent = .{ .key = .{ .text = "a" } };
+    const ev_b: keys.KeyEvent = .{ .key = .{ .text = "b" } };
+    const ev_c: keys.KeyEvent = .{ .key = .{ .text = "c" } };
+    _ = try runtime_ui.handleFocusedInputKey(std.testing.allocator, &widgets, "in", ev_a, false, 20);
+    _ = try runtime_ui.handleFocusedInputKey(std.testing.allocator, &widgets, "in", ev_b, false, 20);
+    _ = try runtime_ui.handleFocusedInputKey(std.testing.allocator, &widgets, "in", ev_c, false, 20);
+
+    _ = try runtime_ui.applyInputAction(std.testing.allocator, &widgets, "in", .input_select_left, false, 20);
+    _ = try runtime_ui.applyInputAction(std.testing.allocator, &widgets, "in", .input_select_left, false, 20);
+
+    const selected = try runtime_ui.inputSelectedTextAlloc(std.testing.allocator, widgets.items, "in");
+    defer if (selected) |s| std.testing.allocator.free(s);
+    try std.testing.expect(selected != null);
+    try std.testing.expectEqualStrings("bc", selected.?);
+
+    const ev_x: keys.KeyEvent = .{ .key = .{ .text = "x" } };
+    _ = try runtime_ui.handleFocusedInputKey(std.testing.allocator, &widgets, "in", ev_x, false, 20);
+    _ = try runtime_ui.applyInputAction(std.testing.allocator, &widgets, "in", .input_undo, false, 20);
+    _ = try runtime_ui.applyInputAction(std.testing.allocator, &widgets, "in", .input_redo, false, 20);
+
+    var got: []const u8 = "";
+    for (widgets.items) |w| {
+        if (!std.mem.eql(u8, w.id.items, "in")) continue;
+        got = w.state.input.value.items;
+        break;
+    }
+    try std.testing.expectEqualStrings("ax", got);
+}
+
 test "ui: focus cycling is trapped within scope" {
     var panel_a_children = [_]protocol.Node{
         .{ .input = .{ .id = "a-1" } },

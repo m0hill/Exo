@@ -16,6 +16,7 @@ const OverlayPlacement = protocol.OverlayPlacement;
 const OverlayAlign = protocol.OverlayAlign;
 const OverlayLayer = protocol.OverlayLayer;
 const Span = protocol.Span;
+const GridTrack = protocol.GridTrack;
 const PointerEvent = protocol.PointerEvent;
 const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
@@ -271,6 +272,17 @@ fn keyActionString(action: KeyAction) []const u8 {
         .input_end => "input_end",
         .input_delete => "input_delete",
         .input_backspace => "input_backspace",
+        .input_select_left => "input_select_left",
+        .input_select_right => "input_select_right",
+        .input_select_word_left => "input_select_word_left",
+        .input_select_word_right => "input_select_word_right",
+        .input_select_home => "input_select_home",
+        .input_select_end => "input_select_end",
+        .input_select_all => "input_select_all",
+        .input_copy => "input_copy",
+        .input_paste => "input_paste",
+        .input_undo => "input_undo",
+        .input_redo => "input_redo",
         .textarea_left => "textarea_left",
         .textarea_right => "textarea_right",
         .textarea_up => "textarea_up",
@@ -284,6 +296,19 @@ fn keyActionString(action: KeyAction) []const u8 {
         .textarea_delete => "textarea_delete",
         .textarea_backspace => "textarea_backspace",
         .textarea_newline => "textarea_newline",
+        .textarea_select_left => "textarea_select_left",
+        .textarea_select_right => "textarea_select_right",
+        .textarea_select_up => "textarea_select_up",
+        .textarea_select_down => "textarea_select_down",
+        .textarea_select_word_left => "textarea_select_word_left",
+        .textarea_select_word_right => "textarea_select_word_right",
+        .textarea_select_home => "textarea_select_home",
+        .textarea_select_end => "textarea_select_end",
+        .textarea_select_all => "textarea_select_all",
+        .textarea_copy => "textarea_copy",
+        .textarea_paste => "textarea_paste",
+        .textarea_undo => "textarea_undo",
+        .textarea_redo => "textarea_redo",
     };
 }
 
@@ -316,6 +341,34 @@ fn writeWidgetStateFields(
             try writer.writeAll(",\"focus_scope\":");
             try writeJsonString(writer, scope);
         }
+    }
+}
+
+fn writeGridPlacementFields(
+    writer: anytype,
+    grid_row: ?usize,
+    grid_col: ?usize,
+    row_span: usize,
+    col_span: usize,
+    grid_area: ?[]const u8,
+) !void {
+    if (grid_row) |v| try writer.print(",\"grid_row\":{d}", .{v});
+    if (grid_col) |v| try writer.print(",\"grid_col\":{d}", .{v});
+    if (row_span != 1) try writer.print(",\"row_span\":{d}", .{row_span});
+    if (col_span != 1) try writer.print(",\"col_span\":{d}", .{col_span});
+    if (grid_area) |a| {
+        if (a.len > 0) {
+            try writer.writeAll(",\"grid_area\":");
+            try writeJsonString(writer, a);
+        }
+    }
+}
+
+fn writeGridTrackJson(writer: anytype, t: GridTrack) !void {
+    switch (t) {
+        .fixed => |v| try writer.print("{d}", .{v}),
+        .auto => try writeJsonString(writer, "auto"),
+        .fr => |v| try writer.print("\"{d}fr\"", .{v}),
     }
 }
 
@@ -362,6 +415,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            try writeGridPlacementFields(writer, v.grid_row, v.grid_col, v.row_span, v.col_span, v.grid_area);
             if (v.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -414,12 +468,66 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            try writeGridPlacementFields(writer, h.grid_row, h.grid_col, h.row_span, h.col_span, h.grid_area);
             if (h.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
             }
             try writer.writeAll(",\"children\":[");
             for (h.children, 0..) |child, i| {
+                if (i != 0) try writer.writeByte(',');
+                try writeNodeJson(writer, child);
+            }
+            try writer.writeAll("]}");
+        },
+        .grid => |g| {
+            try writer.writeAll("{\"type\":\"grid\",\"id\":");
+            try writeJsonString(writer, g.id);
+            if (g.w) |w| try writer.print(",\"w\":{d}", .{w});
+            if (g.h) |h| try writer.print(",\"h\":{d}", .{h});
+            if (g.flex != 0) try writer.print(",\"flex\":{d}", .{g.flex});
+            if (g.pad != 0) try writer.print(",\"pad\":{d}", .{g.pad});
+            if (g.clip) try writer.writeAll(",\"clip\":true");
+            if (g.hoverable) try writer.writeAll(",\"hoverable\":true");
+            if (g.mouseable) try writer.writeAll(",\"mouseable\":true");
+            try writeWidgetStateFields(writer, g.disabled, g.readonly, g.validation, g.focusable, false, g.focus_scope);
+            if (g.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
+            try writeGridPlacementFields(writer, g.grid_row, g.grid_col, g.row_span, g.col_span, g.grid_area);
+            if (g.gap_x != 0) try writer.print(",\"gap_x\":{d}", .{g.gap_x});
+            if (g.gap_y != 0) try writer.print(",\"gap_y\":{d}", .{g.gap_y});
+            try writer.writeAll(",\"rows\":[");
+            for (g.rows, 0..) |t, i| {
+                if (i != 0) try writer.writeByte(',');
+                try writeGridTrackJson(writer, t);
+            }
+            try writer.writeAll("],\"cols\":[");
+            for (g.cols, 0..) |t, i| {
+                if (i != 0) try writer.writeByte(',');
+                try writeGridTrackJson(writer, t);
+            }
+            try writer.writeByte(']');
+            if (g.areas) |areas| {
+                try writer.writeAll(",\"areas\":[");
+                for (areas, 0..) |row, i| {
+                    if (i != 0) try writer.writeByte(',');
+                    try writeJsonString(writer, row);
+                }
+                try writer.writeByte(']');
+            }
+            if (g.style) |st| {
+                try writer.writeAll(",\"style\":");
+                try writeStyleOverrideJson(writer, st);
+            }
+            try writer.writeAll(",\"children\":[");
+            for (g.children, 0..) |child, i| {
                 if (i != 0) try writer.writeByte(',');
                 try writeNodeJson(writer, child);
             }
@@ -451,6 +559,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            try writeGridPlacementFields(writer, b.grid_row, b.grid_col, b.row_span, b.col_span, b.grid_area);
             if (b.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -479,6 +588,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            try writeGridPlacementFields(writer, s.grid_row, s.grid_col, s.row_span, s.col_span, s.grid_area);
             if (s.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -507,6 +617,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .stretch => "stretch",
                 });
             }
+            try writeGridPlacementFields(writer, o.grid_row, o.grid_col, o.row_span, o.col_span, o.grid_area);
             if (o.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -582,6 +693,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .bottom => "bottom",
                 });
             }
+            try writeGridPlacementFields(writer, t.grid_row, t.grid_col, t.row_span, t.col_span, t.grid_area);
             if (t.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -624,6 +736,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .bottom => "bottom",
                 });
             }
+            try writeGridPlacementFields(writer, t.grid_row, t.grid_col, t.row_span, t.col_span, t.grid_area);
             if (t.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);
@@ -661,8 +774,13 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .right => "right",
                 });
             }
+            try writeGridPlacementFields(writer, inp.grid_row, inp.grid_col, inp.row_span, inp.col_span, inp.grid_area);
             if (inp.style) |st| {
                 try writer.writeAll(",\"style\":");
+                try writeStyleOverrideJson(writer, st);
+            }
+            if (inp.selection_style) |st| {
+                try writer.writeAll(",\"selection_style\":");
                 try writeStyleOverrideJson(writer, st);
             }
             if (inp.placeholder_style) |st| {
@@ -693,8 +811,13 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             if (ta.hoverable) try writer.writeAll(",\"hoverable\":true");
             if (ta.mouseable) try writer.writeAll(",\"mouseable\":true");
             try writeWidgetStateFields(writer, ta.disabled, ta.readonly, ta.validation, ta.focusable, true, ta.focus_scope);
+            try writeGridPlacementFields(writer, ta.grid_row, ta.grid_col, ta.row_span, ta.col_span, ta.grid_area);
             if (ta.style) |st| {
                 try writer.writeAll(",\"style\":");
+                try writeStyleOverrideJson(writer, st);
+            }
+            if (ta.selection_style) |st| {
+                try writer.writeAll(",\"selection_style\":");
                 try writeStyleOverrideJson(writer, st);
             }
             if (ta.placeholder_style) |st| {
@@ -733,6 +856,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                     .none => "none",
                 });
             }
+            try writeGridPlacementFields(writer, l.grid_row, l.grid_col, l.row_span, l.col_span, l.grid_area);
             if (l.style) |st| {
                 try writer.writeAll(",\"style\":");
                 try writeStyleOverrideJson(writer, st);

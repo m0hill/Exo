@@ -9,15 +9,33 @@ pub const FocusKind = enum {
 };
 
 const InputWidgetState = struct {
+    const HistoryEntry = struct {
+        value: []u8,
+        cursor: usize,
+        selection_anchor: ?usize,
+    };
+
     value: std.ArrayList(u8) = .empty,
     cursor: usize = 0,
     scroll_x: usize = 0,
+    selection_anchor: ?usize = null,
+    undo: std.ArrayList(HistoryEntry) = .empty,
+    redo: std.ArrayList(HistoryEntry) = .empty,
 };
 
 const TextareaWidgetState = struct {
+    const HistoryEntry = struct {
+        value: []u8,
+        cursor: usize,
+        selection_anchor: ?usize,
+    };
+
     value: std.ArrayList(u8) = .empty,
     cursor: usize = 0,
     scroll_y: usize = 0,
+    selection_anchor: ?usize = null,
+    undo: std.ArrayList(HistoryEntry) = .empty,
+    redo: std.ArrayList(HistoryEntry) = .empty,
 };
 
 const ListWidgetState = struct {

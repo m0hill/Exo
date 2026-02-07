@@ -16,6 +16,7 @@ const OverlayPlacement = protocol.OverlayPlacement;
 const OverlayAlign = protocol.OverlayAlign;
 const OverlayLayer = protocol.OverlayLayer;
 const Span = protocol.Span;
+const GridTrack = protocol.GridTrack;
 const PointerKind = protocol.PointerKind;
 const PointerButton = protocol.PointerButton;
 const PointerEvent = protocol.PointerEvent;
@@ -283,6 +284,17 @@ fn parseKeyAction(s: []const u8) ParseMsgError!KeyAction {
     if (std.mem.eql(u8, s, "input_end")) return .input_end;
     if (std.mem.eql(u8, s, "input_delete")) return .input_delete;
     if (std.mem.eql(u8, s, "input_backspace")) return .input_backspace;
+    if (std.mem.eql(u8, s, "input_select_left")) return .input_select_left;
+    if (std.mem.eql(u8, s, "input_select_right")) return .input_select_right;
+    if (std.mem.eql(u8, s, "input_select_word_left")) return .input_select_word_left;
+    if (std.mem.eql(u8, s, "input_select_word_right")) return .input_select_word_right;
+    if (std.mem.eql(u8, s, "input_select_home")) return .input_select_home;
+    if (std.mem.eql(u8, s, "input_select_end")) return .input_select_end;
+    if (std.mem.eql(u8, s, "input_select_all")) return .input_select_all;
+    if (std.mem.eql(u8, s, "input_copy")) return .input_copy;
+    if (std.mem.eql(u8, s, "input_paste")) return .input_paste;
+    if (std.mem.eql(u8, s, "input_undo")) return .input_undo;
+    if (std.mem.eql(u8, s, "input_redo")) return .input_redo;
     if (std.mem.eql(u8, s, "textarea_left")) return .textarea_left;
     if (std.mem.eql(u8, s, "textarea_right")) return .textarea_right;
     if (std.mem.eql(u8, s, "textarea_up")) return .textarea_up;
@@ -296,6 +308,19 @@ fn parseKeyAction(s: []const u8) ParseMsgError!KeyAction {
     if (std.mem.eql(u8, s, "textarea_delete")) return .textarea_delete;
     if (std.mem.eql(u8, s, "textarea_backspace")) return .textarea_backspace;
     if (std.mem.eql(u8, s, "textarea_newline")) return .textarea_newline;
+    if (std.mem.eql(u8, s, "textarea_select_left")) return .textarea_select_left;
+    if (std.mem.eql(u8, s, "textarea_select_right")) return .textarea_select_right;
+    if (std.mem.eql(u8, s, "textarea_select_up")) return .textarea_select_up;
+    if (std.mem.eql(u8, s, "textarea_select_down")) return .textarea_select_down;
+    if (std.mem.eql(u8, s, "textarea_select_word_left")) return .textarea_select_word_left;
+    if (std.mem.eql(u8, s, "textarea_select_word_right")) return .textarea_select_word_right;
+    if (std.mem.eql(u8, s, "textarea_select_home")) return .textarea_select_home;
+    if (std.mem.eql(u8, s, "textarea_select_end")) return .textarea_select_end;
+    if (std.mem.eql(u8, s, "textarea_select_all")) return .textarea_select_all;
+    if (std.mem.eql(u8, s, "textarea_copy")) return .textarea_copy;
+    if (std.mem.eql(u8, s, "textarea_paste")) return .textarea_paste;
+    if (std.mem.eql(u8, s, "textarea_undo")) return .textarea_undo;
+    if (std.mem.eql(u8, s, "textarea_redo")) return .textarea_redo;
     return error.UnknownKeyAction;
 }
 
@@ -448,6 +473,68 @@ fn parseFocusScope(obj: std.json.ObjectMap) ParseMsgError!?[]const u8 {
     return null;
 }
 
+const GridPlacement = struct {
+    grid_row: ?usize,
+    grid_col: ?usize,
+    row_span: usize,
+    col_span: usize,
+    grid_area: ?[]const u8,
+};
+
+fn parseGridPlacement(obj: std.json.ObjectMap) ParseMsgError!GridPlacement {
+    const row_span = try getOptionalUsize(obj, "row_span") orelse 1;
+    const col_span = try getOptionalUsize(obj, "col_span") orelse 1;
+    return .{
+        .grid_row = try getOptionalUsize(obj, "grid_row"),
+        .grid_col = try getOptionalUsize(obj, "grid_col"),
+        .row_span = if (row_span == 0) 1 else row_span,
+        .col_span = if (col_span == 0) 1 else col_span,
+        .grid_area = try getOptionalString(obj, "grid_area"),
+    };
+}
+
+fn parseGridTrack(v: std.json.Value) ParseMsgError!GridTrack {
+    return switch (v) {
+        .integer => |n| blk: {
+            if (n < 0) return error.WrongType;
+            break :blk .{ .fixed = @as(usize, @intCast(n)) };
+        },
+        .string => |s| blk: {
+            if (std.mem.eql(u8, s, "auto")) break :blk .auto;
+            if (s.len >= 2 and std.mem.endsWith(u8, s, "fr")) {
+                const n = std.fmt.parseUnsigned(usize, s[0 .. s.len - 2], 10) catch return error.UnknownGridTrack;
+                break :blk .{ .fr = if (n == 0) 1 else n };
+            }
+            const fixed = std.fmt.parseUnsigned(usize, s, 10) catch return error.UnknownGridTrack;
+            break :blk .{ .fixed = fixed };
+        },
+        else => error.WrongType,
+    };
+}
+
+fn parseGridTrackArrayLeaky(allocator: std.mem.Allocator, obj: std.json.ObjectMap, field: []const u8) ParseMsgError![]GridTrack {
+    const raw = try getRequired(obj, field);
+    const arr = try asArray(raw);
+    var out = try allocator.alloc(GridTrack, arr.items.len);
+    for (arr.items, 0..) |item, idx| {
+        out[idx] = try parseGridTrack(item);
+    }
+    return out;
+}
+
+fn parseGridAreasLeaky(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!?[]const []const u8 {
+    const raw = obj.get("areas") orelse return null;
+    const arr = try asArray(raw);
+    var out = try allocator.alloc([]const u8, arr.items.len);
+    for (arr.items, 0..) |item, idx| {
+        out[idx] = switch (item) {
+            .string => |s| s,
+            else => return error.WrongType,
+        };
+    }
+    return out;
+}
+
 fn parseListMarker(obj: std.json.ObjectMap) ParseMsgError!ListMarker {
     const s = try getOptionalString(obj, "marker") orelse return .default;
     if (std.mem.eql(u8, s, "default")) return .default;
@@ -495,6 +582,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
         const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -520,6 +608,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .align_items = align_items,
             .gap = gap,
             .align_self = align_self,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
             .children = out,
         } };
@@ -541,6 +634,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const align_items = try parseAlignItemsOrDefault(obj, "align_items", .stretch);
         const gap = try getOptionalUsize(obj, "gap") orelse 0;
         const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -566,6 +660,67 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .align_items = align_items,
             .gap = gap,
             .align_self = align_self,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
+            .style = st,
+            .children = out,
+        } };
+    } else if (std.mem.eql(u8, type_str, "grid")) {
+        const id = try getRequiredString(obj, "id");
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const pad = try getOptionalUsize(obj, "pad") orelse 0;
+        const clip = try getOptionalBool(obj, "clip") orelse false;
+        const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, false);
+        const focus_scope = try parseFocusScope(obj);
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const gp = try parseGridPlacement(obj);
+        const gap_x = try getOptionalUsize(obj, "gap_x") orelse 0;
+        const gap_y = try getOptionalUsize(obj, "gap_y") orelse 0;
+        const rows_tracks = try parseGridTrackArrayLeaky(allocator, obj, "rows");
+        const cols_tracks = try parseGridTrackArrayLeaky(allocator, obj, "cols");
+        const areas = try parseGridAreasLeaky(allocator, obj);
+        const st = try getOptionalStyleOverride(obj, "style");
+        const children_val = try getRequired(obj, "children");
+        const children_arr = try asArray(children_val);
+        var out = try allocator.alloc(Node, children_arr.items.len);
+        for (children_arr.items, 0..) |child_val, i| {
+            out[i] = try parseNodeLeaky(allocator, child_val);
+        }
+        return .{ .grid = .{
+            .id = id,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .pad = pad,
+            .clip = clip,
+            .hoverable = hoverable,
+            .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
+            .focus_scope = focus_scope,
+            .align_self = align_self,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
+            .gap_x = gap_x,
+            .gap_y = gap_y,
+            .rows = rows_tracks,
+            .cols = cols_tracks,
+            .areas = areas,
             .style = st,
             .children = out,
         } };
@@ -587,6 +742,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focusable = try parseFocusable(obj, false);
         const focus_scope = try parseFocusScope(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
         const child_node = try parseNodeLeaky(allocator, child_val);
@@ -610,6 +766,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .focusable = focusable,
             .focus_scope = focus_scope,
             .align_self = align_self,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
             .child = child,
         } };
@@ -628,6 +789,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focusable = try parseFocusable(obj, true);
         const focus_scope = try parseFocusScope(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const child_val = try getRequired(obj, "child");
         const child_node = try parseNodeLeaky(allocator, child_val);
@@ -648,6 +810,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .focusable = focusable,
             .focus_scope = focus_scope,
             .align_self = align_self,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
             .child = child,
         } };
@@ -666,6 +833,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focusable = try parseFocusable(obj, false);
         const focus_scope = try parseFocusScope(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
 
         const base_val = try getRequired(obj, "base");
@@ -695,6 +863,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .focusable = focusable,
             .focus_scope = focus_scope,
             .align_self = align_self,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
             .base = base,
             .layers = layers,
@@ -714,6 +887,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focus_scope = try parseFocusScope(obj);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const text = try getRequiredString(obj, "text");
         return .{ .text = .{
@@ -731,6 +905,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .focus_scope = focus_scope,
             .ext_align = ext_align,
             .v_align = v_align,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
             .text = text,
         } };
@@ -749,6 +928,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focus_scope = try parseFocusScope(obj);
         const ext_align = try parseHorizontalAlignOrDefault(obj, "ext_align", .left);
         const v_align = try parseVerticalAlignOrDefault(obj, "v_align", .top);
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const spans_val = try getRequired(obj, "spans");
         const spans_arr = try asArray(spans_val);
@@ -771,6 +951,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .focus_scope = focus_scope,
             .ext_align = ext_align,
             .v_align = v_align,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
             .spans = spans_out,
         } };
@@ -788,7 +973,9 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focusable = try parseFocusable(obj, true);
         const focus_scope = try parseFocusScope(obj);
         const content_align = try parseHorizontalAlignOrDefault(obj, "content_align", .left);
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
+        const sel_st = try getOptionalStyleOverride(obj, "selection_style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
         const placeholder = try getOptionalString(obj, "placeholder");
         return .{ .input = .{
@@ -805,7 +992,13 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .focusable = focusable,
             .focus_scope = focus_scope,
             .content_align = content_align,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
+            .selection_style = sel_st,
             .placeholder_style = ph_st,
             .placeholder = placeholder,
         } };
@@ -822,7 +1015,9 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const validation = try parseValidation(obj);
         const focusable = try parseFocusable(obj, true);
         const focus_scope = try parseFocusScope(obj);
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
+        const sel_st = try getOptionalStyleOverride(obj, "selection_style");
         const ph_st = try getOptionalStyleOverride(obj, "placeholder_style");
         const placeholder = try getOptionalString(obj, "placeholder");
         return .{ .textarea = .{
@@ -838,7 +1033,13 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .validation = validation,
             .focusable = focusable,
             .focus_scope = focus_scope,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
+            .selection_style = sel_st,
             .placeholder_style = ph_st,
             .placeholder = placeholder,
         } };
@@ -857,6 +1058,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         const focusable = try parseFocusable(obj, true);
         const focus_scope = try parseFocusScope(obj);
         const marker = try parseListMarker(obj);
+        const gp = try parseGridPlacement(obj);
         const st = try getOptionalStyleOverride(obj, "style");
         const children_val = try getRequired(obj, "children");
         const children_arr = try asArray(children_val);
@@ -879,6 +1081,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .focusable = focusable,
             .focus_scope = focus_scope,
             .marker = marker,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
             .style = st,
             .children = out,
         } };

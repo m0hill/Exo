@@ -826,6 +826,8 @@ fn writeRootNode(
         },
     });
     try writer.writeByte(',');
+    try writeGridPlacementPrecedenceDemoNode(writer);
+    try writer.writeByte(',');
 
     // Placeholder container for Tracer 18 (backend-streamed markdown).
     // Use flex so the streaming output gets real vertical space.
@@ -1117,4 +1119,19 @@ fn writeRootNode(
     }
 
     try writer.writeAll("]}"); // end overlay
+}
+
+fn writeGridPlacementPrecedenceDemoNode(writer: anytype) !void {
+    try writer.writeAll("{\"type\":\"box\",\"id\":\"grid-precedence-wrap\",\"h\":6,\"pad\":1");
+    try writer.writeAll(",\"title\":\"Grid precedence (explicit row/col > area)\"");
+    try writer.writeAll(",\"style\":{\"fg\":\"#a7f3d0\"}");
+    try writer.writeAll(",\"child\":");
+    try writer.writeAll("{\"type\":\"grid\",\"id\":\"grid-precedence\",\"rows\":[1,1],\"cols\":[20,20],");
+    try writer.writeAll("\"areas\":[\"left right\",\"left right\"],\"gap_x\":1,\"children\":[");
+    try writer.writeAll("{\"type\":\"text\",\"id\":\"grid-area-left\",\"grid_area\":\"left\",\"text\":\"area:left\"},");
+    try writer.writeAll("{\"type\":\"text\",\"id\":\"grid-area-right\",\"grid_area\":\"right\",\"text\":\"area:right\"},");
+    try writer.writeAll(
+        "{\"type\":\"text\",\"id\":\"grid-explicit-overrides-area\",\"grid_area\":\"left\",\"grid_row\":1,\"grid_col\":1,\"text\":\"explicit row=1,col=1\"}",
+    );
+    try writer.writeAll("]}}");
 }

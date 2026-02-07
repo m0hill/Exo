@@ -30,6 +30,8 @@ pub const VerticalAlign = types.VerticalAlign;
 
 pub const VBoxNode = types.VBoxNode;
 pub const HBoxNode = types.HBoxNode;
+pub const GridTrack = types.GridTrack;
+pub const GridNode = types.GridNode;
 pub const BoxNode = types.BoxNode;
 pub const ScrollNode = types.ScrollNode;
 

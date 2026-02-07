@@ -7,6 +7,7 @@ fn nodeDisabled(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.disabled,
         .hbox => |h| h.disabled,
+        .grid => |g| g.disabled,
         .box => |b| b.disabled,
         .scroll => |s| s.disabled,
         .overlay => |o| o.disabled,
@@ -23,6 +24,7 @@ fn nodeMouseable(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.mouseable,
         .hbox => |h| h.mouseable,
+        .grid => |g| g.mouseable,
         .box => |b| b.mouseable,
         .scroll => |s| s.mouseable,
         .overlay => |o| o.mouseable,
@@ -53,6 +55,12 @@ pub fn treeHasMouseables(node: protocol.Node) bool {
         },
         .hbox => |h| blk: {
             for (h.children) |child| {
+                if (treeHasMouseables(child)) break :blk true;
+            }
+            break :blk false;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
                 if (treeHasMouseables(child)) break :blk true;
             }
             break :blk false;
@@ -90,6 +98,7 @@ fn collectMouseablesInto(
         },
         .vbox => |v| for (v.children) |child| try collectMouseablesInto(allocator, out, child),
         .hbox => |h| for (h.children) |child| try collectMouseablesInto(allocator, out, child),
+        .grid => |g| for (g.children) |child| try collectMouseablesInto(allocator, out, child),
         .box => |b| try collectMouseablesInto(allocator, out, b.child.*),
         .scroll => |s| try collectMouseablesInto(allocator, out, s.child.*),
         .list => |l| for (l.children) |child| try collectMouseablesInto(allocator, out, child),

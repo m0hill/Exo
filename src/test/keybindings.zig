@@ -12,6 +12,10 @@ test "keybindings: defaults and precedence" {
     try std.testing.expectEqual(protocol.KeyAction.focus_prev, keymap.resolve(.global, "Tab", 1) orelse return error.TestUnexpectedResult);
     try std.testing.expectEqual(protocol.KeyAction.list_next, keymap.resolve(.list, "j", 0) orelse return error.TestUnexpectedResult);
     try std.testing.expectEqual(protocol.KeyAction.input_word_left, keymap.resolve(.input, "b", 4) orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(protocol.KeyAction.input_select_left, keymap.resolve(.input, "ArrowLeft", 1) orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(protocol.KeyAction.input_select_all, keymap.resolve(.input, "a", 2) orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(protocol.KeyAction.textarea_select_left, keymap.resolve(.textarea, "ArrowLeft", 1) orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(protocol.KeyAction.textarea_select_all, keymap.resolve(.textarea, "a", 2) orelse return error.TestUnexpectedResult);
 
     var global_rules = [_]protocol.KeybindingRule{
         .{ .key = "j", .action = .focus_next },

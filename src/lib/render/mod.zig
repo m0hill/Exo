@@ -26,6 +26,8 @@ pub const InputState = struct {
     value: []const u8,
     cursor: usize,
     scroll_x: usize,
+    selection_start: ?usize = null,
+    selection_end: ?usize = null,
 };
 
 pub const TextareaState = struct {
@@ -33,6 +35,8 @@ pub const TextareaState = struct {
     value: []const u8,
     cursor: usize,
     scroll_y: usize,
+    selection_start: ?usize = null,
+    selection_end: ?usize = null,
 };
 
 pub const ListState = struct {
@@ -66,6 +70,15 @@ const VBoxMode = enum {
     bounded,
     unbounded,
 };
+
+const GridPlacement = struct {
+    row: usize,
+    col: usize,
+    row_span: usize,
+    col_span: usize,
+};
+
+const max_grid_tracks: usize = 128;
 
 fn screenRect(frame: *Frame) RectI {
     return .{ .x = 0, .y = 0, .w = @as(usize, frame.cols), .h = @as(usize, frame.rows) };
@@ -128,6 +141,7 @@ fn nodeAlignSelf(node: protocol.Node) ?protocol.AlignItems {
     return switch (node) {
         .vbox => |v| v.align_self,
         .hbox => |h| h.align_self,
+        .grid => |g| g.align_self,
         .box => |b| b.align_self,
         .scroll => |s| s.align_self,
         .overlay => |o| o.align_self,
@@ -228,6 +242,237 @@ fn hboxChildY(inner_y: isize, inner_h: usize, child_h: usize, align_mode: protoc
     };
 }
 
+fn nodeGridRow(node: protocol.Node) ?usize {
+    return switch (node) {
+        .vbox => |v| v.grid_row,
+        .hbox => |h| h.grid_row,
+        .grid => |g| g.grid_row,
+        .box => |b| b.grid_row,
+        .scroll => |s| s.grid_row,
+        .overlay => |o| o.grid_row,
+        .text => |t| t.grid_row,
+        .styled_text => |t| t.grid_row,
+        .input => |i| i.grid_row,
+        .textarea => |t| t.grid_row,
+        .list => |l| l.grid_row,
+    };
+}
+
+fn nodeGridCol(node: protocol.Node) ?usize {
+    return switch (node) {
+        .vbox => |v| v.grid_col,
+        .hbox => |h| h.grid_col,
+        .grid => |g| g.grid_col,
+        .box => |b| b.grid_col,
+        .scroll => |s| s.grid_col,
+        .overlay => |o| o.grid_col,
+        .text => |t| t.grid_col,
+        .styled_text => |t| t.grid_col,
+        .input => |i| i.grid_col,
+        .textarea => |t| t.grid_col,
+        .list => |l| l.grid_col,
+    };
+}
+
+fn nodeRowSpan(node: protocol.Node) usize {
+    const raw = switch (node) {
+        .vbox => |v| v.row_span,
+        .hbox => |h| h.row_span,
+        .grid => |g| g.row_span,
+        .box => |b| b.row_span,
+        .scroll => |s| s.row_span,
+        .overlay => |o| o.row_span,
+        .text => |t| t.row_span,
+        .styled_text => |t| t.row_span,
+        .input => |i| i.row_span,
+        .textarea => |t| t.row_span,
+        .list => |l| l.row_span,
+    };
+    return if (raw == 0) 1 else raw;
+}
+
+fn nodeColSpan(node: protocol.Node) usize {
+    const raw = switch (node) {
+        .vbox => |v| v.col_span,
+        .hbox => |h| h.col_span,
+        .grid => |g| g.col_span,
+        .box => |b| b.col_span,
+        .scroll => |s| s.col_span,
+        .overlay => |o| o.col_span,
+        .text => |t| t.col_span,
+        .styled_text => |t| t.col_span,
+        .input => |i| i.col_span,
+        .textarea => |t| t.col_span,
+        .list => |l| l.col_span,
+    };
+    return if (raw == 0) 1 else raw;
+}
+
+fn nodeGridArea(node: protocol.Node) ?[]const u8 {
+    return switch (node) {
+        .vbox => |v| v.grid_area,
+        .hbox => |h| h.grid_area,
+        .grid => |g| g.grid_area,
+        .box => |b| b.grid_area,
+        .scroll => |s| s.grid_area,
+        .overlay => |o| o.grid_area,
+        .text => |t| t.grid_area,
+        .styled_text => |t| t.grid_area,
+        .input => |i| i.grid_area,
+        .textarea => |t| t.grid_area,
+        .list => |l| l.grid_area,
+    };
+}
+
+fn nextAreaToken(row: []const u8, cursor: *usize) ?[]const u8 {
+    var i = cursor.*;
+    while (i < row.len and std.ascii.isWhitespace(row[i])) : (i += 1) {}
+    if (i >= row.len) {
+        cursor.* = i;
+        return null;
+    }
+    const start = i;
+    while (i < row.len and !std.ascii.isWhitespace(row[i])) : (i += 1) {}
+    cursor.* = i;
+    return row[start..i];
+}
+
+fn resolveGridAreaBounds(g: protocol.GridNode, area_name: []const u8, rows_n: usize, cols_n: usize) ?GridPlacement {
+    const areas = g.areas orelse return null;
+    if (area_name.len == 0) return null;
+    if (std.mem.eql(u8, area_name, ".")) return null;
+
+    var found = false;
+    var min_r: usize = 0;
+    var max_r: usize = 0;
+    var min_c: usize = 0;
+    var max_c: usize = 0;
+
+    const lim_rows = @min(rows_n, areas.len);
+    var r: usize = 0;
+    while (r < lim_rows) : (r += 1) {
+        var cursor: usize = 0;
+        var c: usize = 0;
+        while (c < cols_n) : (c += 1) {
+            const tok = nextAreaToken(areas[r], &cursor) orelse break;
+            if (!std.mem.eql(u8, tok, area_name)) continue;
+            if (!found) {
+                found = true;
+                min_r = r;
+                max_r = r;
+                min_c = c;
+                max_c = c;
+            } else {
+                if (r < min_r) min_r = r;
+                if (r > max_r) max_r = r;
+                if (c < min_c) min_c = c;
+                if (c > max_c) max_c = c;
+            }
+        }
+    }
+
+    if (!found) return null;
+    return .{
+        .row = min_r,
+        .col = min_c,
+        .row_span = max_r - min_r + 1,
+        .col_span = max_c - min_c + 1,
+    };
+}
+
+fn resolveGridPlacement(g: protocol.GridNode, child: protocol.Node, idx: usize, rows_n: usize, cols_n: usize) GridPlacement {
+    if (rows_n == 0 or cols_n == 0) return .{ .row = 0, .col = 0, .row_span = 1, .col_span = 1 };
+
+    const explicit_row = nodeGridRow(child);
+    const explicit_col = nodeGridCol(child);
+
+    if (explicit_row == null and explicit_col == null) {
+        if (nodeGridArea(child)) |area| {
+            if (resolveGridAreaBounds(g, area, rows_n, cols_n)) |p| return p;
+        }
+    }
+
+    const row_fallback = @min(idx / cols_n, rows_n - 1);
+    const col_fallback = @min(idx % cols_n, cols_n - 1);
+    const row = @min(explicit_row orelse row_fallback, rows_n - 1);
+    const col = @min(explicit_col orelse col_fallback, cols_n - 1);
+
+    const row_span = @max(@min(nodeRowSpan(child), rows_n - row), 1);
+    const col_span = @max(@min(nodeColSpan(child), cols_n - col), 1);
+    return .{ .row = row, .col = col, .row_span = row_span, .col_span = col_span };
+}
+
+fn trackOffset(track_sizes: []const usize, gap: usize, idx: usize) usize {
+    if (idx == 0) return 0;
+    var out: usize = 0;
+    var i: usize = 0;
+    while (i < idx and i < track_sizes.len) : (i += 1) {
+        out += track_sizes[i];
+        if (i + 1 <= idx) out += gap;
+    }
+    return out;
+}
+
+fn spanSize(track_sizes: []const usize, gap: usize, start: usize, span: usize) usize {
+    var out: usize = 0;
+    var i: usize = 0;
+    const lim = @min(start + span, track_sizes.len);
+    var t = start;
+    while (t < lim) : (t += 1) {
+        out += track_sizes[t];
+        i += 1;
+    }
+    if (i > 1) out += gap * (i - 1);
+    return out;
+}
+
+fn computeTrackSizes(
+    tracks: []const protocol.GridTrack,
+    autos: []const usize,
+    total_space: usize,
+    gap: usize,
+    out: []usize,
+) void {
+    if (tracks.len == 0) return;
+    const count = @min(@min(tracks.len, autos.len), out.len);
+    @memset(out[0..count], 0);
+
+    const gaps_total: usize = if (count > 1) gap * (count - 1) else 0;
+    const avail: usize = if (total_space > gaps_total) total_space - gaps_total else 0;
+
+    var base_sum: usize = 0;
+    var total_fr: usize = 0;
+    for (tracks[0..count], 0..) |t, idx| {
+        switch (t) {
+            .fixed => |v| {
+                out[idx] = v;
+                base_sum += v;
+            },
+            .auto => {
+                out[idx] = autos[idx];
+                base_sum += autos[idx];
+            },
+            .fr => |f| total_fr += if (f == 0) 1 else f,
+        }
+    }
+
+    const remaining: usize = if (avail > base_sum) avail - base_sum else 0;
+    if (total_fr == 0 or remaining == 0) return;
+
+    var carry: u128 = 0;
+    for (tracks[0..count], 0..) |t, idx| {
+        switch (t) {
+            .fr => |f| {
+                const fv: usize = if (f == 0) 1 else f;
+                const numer: u128 = @as(u128, remaining) * @as(u128, fv) + carry;
+                out[idx] = @as(usize, @intCast(numer / @as(u128, total_fr)));
+                carry = numer % @as(u128, total_fr);
+            },
+            else => {},
+        }
+    }
+}
+
 pub fn renderToFrame(root: protocol.Node, state: RenderState, frame: *Frame) void {
     const root_rect: RectI = .{
         .x = 0,
@@ -271,6 +516,7 @@ fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .grid => |g| g.id,
         .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,
@@ -286,6 +532,7 @@ fn nodeHintW(node: protocol.Node) ?usize {
     return switch (node) {
         .vbox => |v| v.w,
         .hbox => |h| h.w,
+        .grid => |g| g.w,
         .box => |b| b.w,
         .scroll => |s| s.w,
         .overlay => |o| o.w,
@@ -301,6 +548,7 @@ fn nodeHintH(node: protocol.Node) ?usize {
     return switch (node) {
         .vbox => |v| v.h,
         .hbox => |h| h.h,
+        .grid => |g| g.h,
         .box => |b| b.h,
         .scroll => |s| s.h,
         .overlay => |o| o.h,
@@ -316,6 +564,7 @@ fn nodeFlex(node: protocol.Node) usize {
     return switch (node) {
         .vbox => |v| v.flex,
         .hbox => |h| h.flex,
+        .grid => |g| g.flex,
         .box => |b| b.flex,
         .scroll => |s| s.flex,
         .overlay => |o| o.flex,
@@ -331,6 +580,7 @@ fn nodePad(node: protocol.Node) usize {
     return switch (node) {
         .vbox => |v| v.pad,
         .hbox => |h| h.pad,
+        .grid => |g| g.pad,
         .box => |b| b.pad,
         .scroll => |s| s.pad,
         .overlay => |o| o.pad,
@@ -342,10 +592,77 @@ fn nodeClip(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.clip,
         .hbox => |h| h.clip,
+        .grid => |g| g.clip,
         .box => |b| b.clip,
         .scroll => |s| s.clip,
         .overlay => |o| o.clip,
         else => false,
+    };
+}
+
+fn measureMinWidth(node: protocol.Node) usize {
+    if (nodeHintW(node)) |w| return w;
+    return switch (node) {
+        .text => |t| blk: {
+            var max_w: usize = 0;
+            var start: usize = 0;
+            var i: usize = 0;
+            while (i <= t.text.len) : (i += 1) {
+                if (i == t.text.len or t.text[i] == '\n') {
+                    const w = unicode.displayWidth(t.text[start..i]);
+                    if (w > max_w) max_w = w;
+                    start = i + 1;
+                }
+            }
+            break :blk max_w;
+        },
+        .styled_text => |t| blk: {
+            var total: usize = 0;
+            for (t.spans) |sp| total += unicode.displayWidth(sp.text);
+            break :blk total;
+        },
+        .input => 3,
+        .textarea => 8,
+        .list => |l| blk: {
+            var max_w: usize = 0;
+            for (l.children) |child| {
+                const w = measureMinWidth(child);
+                if (w > max_w) max_w = w;
+            }
+            break :blk max_w;
+        },
+        .vbox => |v| blk: {
+            var max_w: usize = 0;
+            for (v.children) |child| {
+                const w = measureMinWidth(child);
+                if (w > max_w) max_w = w;
+            }
+            break :blk max_w + v.pad * 2;
+        },
+        .hbox => |h| blk: {
+            var sum: usize = h.pad * 2;
+            if (h.children.len > 1) sum += h.gap * (h.children.len - 1);
+            for (h.children) |child| sum += measureMinWidth(child);
+            break :blk sum;
+        },
+        .grid => |g| blk: {
+            var sum: usize = g.pad * 2;
+            if (g.cols.len > 1) sum += g.gap_x * (g.cols.len - 1);
+            for (g.cols) |c| {
+                sum += switch (c) {
+                    .fixed => |v| v,
+                    .auto => 1,
+                    .fr => 1,
+                };
+            }
+            break :blk sum;
+        },
+        .box => |b| blk: {
+            const chrome: usize = @as(usize, @intFromBool(b.border)) + b.pad;
+            break :blk measureMinWidth(b.child.*) + chrome * 2;
+        },
+        .scroll => |s| measureMinWidth(s.child.*) + s.pad * 2,
+        .overlay => |o| measureMinWidth(o.base.*) + o.pad * 2,
     };
 }
 
@@ -411,6 +728,19 @@ fn measureHeight(node: protocol.Node, avail_w: usize) usize {
                 if (ch > max_h) max_h = ch;
             }
             return max_h + h.pad * 2;
+        },
+        .grid => |g| {
+            // Use configured row tracks for intrinsic height; auto/fr are treated as 1 row each here.
+            var rows_h: usize = 0;
+            for (g.rows) |r| {
+                rows_h += switch (r) {
+                    .fixed => |v| v,
+                    .auto => 1,
+                    .fr => 1,
+                };
+            }
+            if (g.rows.len > 1) rows_h += g.gap_y * (g.rows.len - 1);
+            return rows_h + g.pad * 2;
         },
     }
 }
@@ -505,6 +835,47 @@ fn findContentYRangeForIdInto(
                     .end => .bottom,
                 });
                 if (findContentYRangeForIdInto(child, child_w, id, y_child, out)) return true;
+            }
+            return false;
+        },
+        .grid => |g| {
+            const rows_n = @min(g.rows.len, max_grid_tracks);
+            const cols_n = @min(g.cols.len, max_grid_tracks);
+            if (rows_n == 0 or cols_n == 0) return false;
+
+            var col_auto: [max_grid_tracks]usize = undefined;
+            var row_auto: [max_grid_tracks]usize = undefined;
+            var col_sizes: [max_grid_tracks]usize = undefined;
+            var row_sizes: [max_grid_tracks]usize = undefined;
+            @memset(col_auto[0..cols_n], 1);
+            @memset(row_auto[0..rows_n], 1);
+            @memset(col_sizes[0..cols_n], 0);
+            @memset(row_sizes[0..rows_n], 0);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                if (p.col_span == 1 and p.col < cols_n) {
+                    const w = nodeHintW(child) orelse measureMinWidth(child);
+                    if (w > col_auto[p.col]) col_auto[p.col] = w;
+                }
+            }
+            computeTrackSizes(g.cols[0..cols_n], col_auto[0..cols_n], if (avail_w > g.pad * 2) avail_w - g.pad * 2 else 0, g.gap_x, col_sizes[0..cols_n]);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                if (p.row_span == 1 and p.row < rows_n) {
+                    const cw = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span);
+                    const h = nodeHintH(child) orelse measureHeight(child, cw);
+                    if (h > row_auto[p.row]) row_auto[p.row] = h;
+                }
+            }
+            computeTrackSizes(g.rows[0..rows_n], row_auto[0..rows_n], measureHeight(.{ .grid = g }, avail_w), g.gap_y, row_sizes[0..rows_n]);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                const y_child = y_offset + g.pad + trackOffset(row_sizes[0..rows_n], g.gap_y, p.row);
+                const cw = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span);
+                if (findContentYRangeForIdInto(child, cw, id, y_child, out)) return true;
             }
             return false;
         },
@@ -635,6 +1006,50 @@ fn drawInlineTextAt(
     }
 }
 
+fn drawInlineTextWithSelectionAt(
+    frame: *Frame,
+    row: isize,
+    col_abs: isize,
+    clip: RectI,
+    text: []const u8,
+    base_offset: usize,
+    selection_start: ?usize,
+    selection_end: ?usize,
+    max_w: usize,
+    base_style: style.PackedStyle,
+    selected_style: style.PackedStyle,
+) void {
+    var used: usize = 0;
+    var i: usize = 0;
+    while (i < text.len and used < max_w) {
+        const g = unicode.nextGrapheme(text, i);
+        if (g.end <= i) break;
+
+        if (g.width > 0 and max_w != 0 and g.width > max_w) {
+            i = g.end;
+            continue;
+        }
+        if (g.width > 0 and used + g.width > max_w) break;
+
+        if (g.width > 0) {
+            const x: isize = col_abs + @as(isize, @intCast(used));
+            const abs_start = base_offset + g.start;
+            const selected = selection_start != null and selection_end != null and abs_start >= selection_start.? and abs_start < selection_end.?;
+            render_text.putGraphemeClipped(
+                frame,
+                row,
+                x,
+                text[g.start..g.end],
+                @as(u2, @intCast(g.width)),
+                clip,
+                if (selected) selected_style else base_style,
+            );
+            used += g.width;
+        }
+        i = g.end;
+    }
+}
+
 fn packedEq(a: style.PackedStyle, b: style.PackedStyle) bool {
     return @as(u64, @bitCast(a)) == @as(u64, @bitCast(b));
 }
@@ -650,6 +1065,7 @@ fn nodeDisabled(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.disabled,
         .hbox => |h| h.disabled,
+        .grid => |g| g.disabled,
         .box => |b| b.disabled,
         .scroll => |s| s.disabled,
         .overlay => |o| o.disabled,
@@ -665,6 +1081,7 @@ fn nodeReadonly(node: protocol.Node) bool {
     return switch (node) {
         .vbox => |v| v.readonly,
         .hbox => |h| h.readonly,
+        .grid => |g| g.readonly,
         .box => |b| b.readonly,
         .scroll => |s| s.readonly,
         .overlay => |o| o.readonly,
@@ -680,6 +1097,7 @@ fn nodeValidation(node: protocol.Node) protocol.ValidationState {
     return switch (node) {
         .vbox => |v| v.validation,
         .hbox => |h| h.validation,
+        .grid => |g| g.validation,
         .box => |b| b.validation,
         .scroll => |s| s.validation,
         .overlay => |o| o.validation,
@@ -731,6 +1149,7 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
     return switch (node) {
         .vbox => |v| v.style,
         .hbox => |h| h.style,
+        .grid => |g| g.style,
         .box => |b| b.style,
         .scroll => |s| s.style,
         .overlay => |o| o.style,
@@ -807,6 +1226,11 @@ fn paintInput(
     const base_packed = style.pack(base_style);
     const ph_style = style.merge(base_style, i.placeholder_style);
     const ph_packed = style.pack(ph_style);
+    const sel_style = if (i.selection_style) |ov|
+        style.merge(base_style, ov)
+    else
+        style.overlayAttrs(base_style, style.ATTR_INVERSE, style.ATTR_INVERSE);
+    const sel_packed = style.pack(sel_style);
 
     if (input_state == null) {
         if (focused and cursor_out.* == null) {
@@ -826,6 +1250,8 @@ fn paintInput(
 
     const st = input_state.?;
     const effective_cursor = unicode.clampGraphemeBoundary(st.value, @min(st.cursor, st.value.len));
+    const sel_start: ?usize = st.selection_start;
+    const sel_end: ?usize = st.selection_end;
 
     if (st.value.len > 0) {
         var start: usize = unicode.clampGraphemeBoundary(st.value, @min(st.scroll_x, st.value.len));
@@ -857,7 +1283,19 @@ fn paintInput(
         if (visible_cols != 0) {
             const col_abs: isize = rect.x + @as(isize, @intCast(prefix_cols + pad_left));
             const max_w: usize = if (visible_cols > pad_left) visible_cols - pad_left else 0;
-            drawInlineTextAt(frame, row, col_abs, clip, visible, max_w, base_packed);
+            drawInlineTextWithSelectionAt(
+                frame,
+                row,
+                col_abs,
+                clip,
+                visible,
+                start,
+                sel_start,
+                sel_end,
+                max_w,
+                base_packed,
+                sel_packed,
+            );
         }
         return;
     }
@@ -938,6 +1376,11 @@ fn paintTextarea(
     const base_packed = style.pack(base_style);
     const ph_style = style.merge(base_style, t.placeholder_style);
     const ph_packed = style.pack(ph_style);
+    const sel_style = if (t.selection_style) |ov|
+        style.merge(base_style, ov)
+    else
+        style.overlayAttrs(base_style, style.ATTR_INVERSE, style.ATTR_INVERSE);
+    const sel_packed = style.pack(sel_style);
 
     const value: []const u8 = if (textarea_state) |st| st.value else "";
     const effective_cursor: usize = unicode.clampGraphemeBoundary(
@@ -945,6 +1388,8 @@ fn paintTextarea(
         @min(if (textarea_state) |st| st.cursor else 0, value.len),
     );
     const scroll_y: usize = if (textarea_state) |st| st.scroll_y else 0;
+    const sel_start: ?usize = if (textarea_state) |st| st.selection_start else null;
+    const sel_end: ?usize = if (textarea_state) |st| st.selection_end else null;
 
     if (value.len == 0 and t.placeholder != null) {
         if (focused and cursor_out.* == null) {
@@ -1031,6 +1476,7 @@ fn paintTextarea(
         if (vis_y >= scroll_y and vis_y < scroll_y + rows) {
             const row: isize = rect.y + @as(isize, @intCast(vis_y - scroll_y));
             const col_abs: isize = rect.x + @as(isize, @intCast(vis_x));
+            const selected = sel_start != null and sel_end != null and g.start >= sel_start.? and g.start < sel_end.?;
             render_text.putGraphemeClipped(
                 frame,
                 row,
@@ -1038,7 +1484,7 @@ fn paintTextarea(
                 glyph,
                 @as(u2, @intCast(width)),
                 clip,
-                base_packed,
+                if (selected) sel_packed else base_packed,
             );
         }
 
@@ -1285,6 +1731,65 @@ fn paintHBox(
     }
 }
 
+fn paintGrid(
+    frame: *Frame,
+    rect: RectI,
+    clip: RectI,
+    state: RenderState,
+    cursor_out: *?CursorPos,
+    g: protocol.GridNode,
+    inherited: style.Style,
+    mode: VBoxMode,
+) void {
+    _ = mode;
+    const inner = rectDeflate(rect, g.pad);
+    if (inner.w == 0 or inner.h == 0) return;
+    const base_clip = rectIntersect(clip, rect);
+    const child_clip = if (g.clip) rectIntersect(base_clip, inner) else base_clip;
+
+    const rows_n = @min(g.rows.len, max_grid_tracks);
+    const cols_n = @min(g.cols.len, max_grid_tracks);
+    if (rows_n == 0 or cols_n == 0) return;
+
+    var col_auto: [max_grid_tracks]usize = undefined;
+    var row_auto: [max_grid_tracks]usize = undefined;
+    var col_sizes: [max_grid_tracks]usize = undefined;
+    var row_sizes: [max_grid_tracks]usize = undefined;
+    @memset(col_auto[0..cols_n], 1);
+    @memset(row_auto[0..rows_n], 1);
+    @memset(col_sizes[0..cols_n], 0);
+    @memset(row_sizes[0..rows_n], 0);
+
+    for (g.children, 0..) |child, idx| {
+        const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+        if (p.col_span == 1 and p.col < cols_n) {
+            const w = nodeHintW(child) orelse measureMinWidth(child);
+            if (w > col_auto[p.col]) col_auto[p.col] = w;
+        }
+    }
+    computeTrackSizes(g.cols[0..cols_n], col_auto[0..cols_n], inner.w, g.gap_x, col_sizes[0..cols_n]);
+
+    for (g.children, 0..) |child, idx| {
+        const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+        if (p.row_span == 1 and p.row < rows_n) {
+            const cw = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span);
+            const h = nodeHintH(child) orelse measureHeight(child, cw);
+            if (h > row_auto[p.row]) row_auto[p.row] = h;
+        }
+    }
+    computeTrackSizes(g.rows[0..rows_n], row_auto[0..rows_n], inner.h, g.gap_y, row_sizes[0..rows_n]);
+
+    for (g.children, 0..) |child, idx| {
+        const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+        const x = inner.x + @as(isize, @intCast(trackOffset(col_sizes[0..cols_n], g.gap_x, p.col)));
+        const y = inner.y + @as(isize, @intCast(trackOffset(row_sizes[0..rows_n], g.gap_y, p.row)));
+        const w = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span);
+        const h = spanSize(row_sizes[0..rows_n], g.gap_y, p.row, p.row_span);
+        if (w == 0 or h == 0) continue;
+        paintNode(frame, child, .{ .x = x, .y = y, .w = w, .h = h }, child_clip, state, cursor_out, inherited, .bounded);
+    }
+}
+
 fn paintNode(
     frame: *Frame,
     node: protocol.Node,
@@ -1315,6 +1820,7 @@ fn paintNode(
         .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved, mode),
         .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h, resolved, mode),
+        .grid => |g| paintGrid(frame, rect, node_clip, state, cursor_out, g, resolved, mode),
         .box => |b| paintBox(frame, rect, clip, state, cursor_out, b, resolved, mode),
         .scroll => |s| paintScroll(frame, rect, node_clip, state, cursor_out, s, resolved),
         .overlay => |o| paintOverlay(frame, rect, node_clip, state, cursor_out, o, resolved, mode),
@@ -1776,6 +2282,52 @@ fn findRectInNodeI(
             }
             return null;
         },
+        .grid => |g| {
+            const inner = rectDeflate(rect, g.pad);
+            const rows_n = @min(g.rows.len, max_grid_tracks);
+            const cols_n = @min(g.cols.len, max_grid_tracks);
+            if (rows_n == 0 or cols_n == 0) return null;
+
+            var col_auto: [max_grid_tracks]usize = undefined;
+            var row_auto: [max_grid_tracks]usize = undefined;
+            var col_sizes: [max_grid_tracks]usize = undefined;
+            var row_sizes: [max_grid_tracks]usize = undefined;
+            @memset(col_auto[0..cols_n], 1);
+            @memset(row_auto[0..rows_n], 1);
+            @memset(col_sizes[0..cols_n], 0);
+            @memset(row_sizes[0..rows_n], 0);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                if (p.col_span == 1 and p.col < cols_n) {
+                    const w = nodeHintW(child) orelse measureMinWidth(child);
+                    if (w > col_auto[p.col]) col_auto[p.col] = w;
+                }
+            }
+            computeTrackSizes(g.cols[0..cols_n], col_auto[0..cols_n], inner.w, g.gap_x, col_sizes[0..cols_n]);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                if (p.row_span == 1 and p.row < rows_n) {
+                    const cw = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span);
+                    const h = nodeHintH(child) orelse measureHeight(child, cw);
+                    if (h > row_auto[p.row]) row_auto[p.row] = h;
+                }
+            }
+            computeTrackSizes(g.rows[0..rows_n], row_auto[0..rows_n], inner.h, g.gap_y, row_sizes[0..rows_n]);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                const child_rect: RectI = .{
+                    .x = inner.x + @as(isize, @intCast(trackOffset(col_sizes[0..cols_n], g.gap_x, p.col))),
+                    .y = inner.y + @as(isize, @intCast(trackOffset(row_sizes[0..rows_n], g.gap_y, p.row))),
+                    .w = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span),
+                    .h = spanSize(row_sizes[0..rows_n], g.gap_y, p.row, p.row_span),
+                };
+                if (findRectInNodeI(child, child_rect, id, scrolls, .bounded, screen)) |r| return r;
+            }
+            return null;
+        },
         .box => |b| {
             const border_thickness: usize = if (b.border and rect.w >= 2 and rect.h >= 2) 1 else 0;
             const chrome: usize = border_thickness + b.pad;
@@ -1968,6 +2520,52 @@ fn findRectInNodeIBaseOnly(
                     const gap = h.gap + justifyGapExtra(h.justify_content, count, extra_space, idx);
                     x += @as(isize, @intCast(gap));
                 }
+            }
+            return null;
+        },
+        .grid => |g| {
+            const inner = rectDeflate(rect, g.pad);
+            const rows_n = @min(g.rows.len, max_grid_tracks);
+            const cols_n = @min(g.cols.len, max_grid_tracks);
+            if (rows_n == 0 or cols_n == 0) return null;
+
+            var col_auto: [max_grid_tracks]usize = undefined;
+            var row_auto: [max_grid_tracks]usize = undefined;
+            var col_sizes: [max_grid_tracks]usize = undefined;
+            var row_sizes: [max_grid_tracks]usize = undefined;
+            @memset(col_auto[0..cols_n], 1);
+            @memset(row_auto[0..rows_n], 1);
+            @memset(col_sizes[0..cols_n], 0);
+            @memset(row_sizes[0..rows_n], 0);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                if (p.col_span == 1 and p.col < cols_n) {
+                    const w = nodeHintW(child) orelse measureMinWidth(child);
+                    if (w > col_auto[p.col]) col_auto[p.col] = w;
+                }
+            }
+            computeTrackSizes(g.cols[0..cols_n], col_auto[0..cols_n], inner.w, g.gap_x, col_sizes[0..cols_n]);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                if (p.row_span == 1 and p.row < rows_n) {
+                    const cw = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span);
+                    const h = nodeHintH(child) orelse measureHeight(child, cw);
+                    if (h > row_auto[p.row]) row_auto[p.row] = h;
+                }
+            }
+            computeTrackSizes(g.rows[0..rows_n], row_auto[0..rows_n], inner.h, g.gap_y, row_sizes[0..rows_n]);
+
+            for (g.children, 0..) |child, idx| {
+                const p = resolveGridPlacement(g, child, idx, rows_n, cols_n);
+                const child_rect: RectI = .{
+                    .x = inner.x + @as(isize, @intCast(trackOffset(col_sizes[0..cols_n], g.gap_x, p.col))),
+                    .y = inner.y + @as(isize, @intCast(trackOffset(row_sizes[0..rows_n], g.gap_y, p.row))),
+                    .w = spanSize(col_sizes[0..cols_n], g.gap_x, p.col, p.col_span),
+                    .h = spanSize(row_sizes[0..rows_n], g.gap_y, p.row, p.row_span),
+                };
+                if (findRectInNodeIBaseOnly(child, child_rect, id, scrolls, .bounded)) |r| return r;
             }
             return null;
         },

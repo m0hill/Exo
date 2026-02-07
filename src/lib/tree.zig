@@ -5,6 +5,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
     return switch (node) {
         .vbox => |v| v.id,
         .hbox => |h| h.id,
+        .grid => |g| g.id,
         .box => |b| b.id,
         .scroll => |s| s.id,
         .overlay => |o| o.id,
@@ -27,6 +28,12 @@ pub fn treeContainsId(node: protocol.Node, id: []const u8) bool {
         },
         .hbox => |h| {
             for (h.children) |child| {
+                if (treeContainsId(child, id)) return true;
+            }
+            return false;
+        },
+        .grid => |g| {
+            for (g.children) |child| {
                 if (treeContainsId(child, id)) return true;
             }
             return false;
@@ -65,6 +72,12 @@ pub fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: pro
         },
         .hbox => |*h| {
             for (h.children) |*child| {
+                if (applyPatchById(child, target, replacement)) return true;
+            }
+            return false;
+        },
+        .grid => |*g| {
+            for (g.children) |*child| {
                 if (applyPatchById(child, target, replacement)) return true;
             }
             return false;
@@ -121,6 +134,12 @@ pub fn morphPatchByIdLeaky(
             }
             return false;
         },
+        .grid => |*g| {
+            for (g.children) |*child| {
+                if (try morphPatchByIdLeaky(allocator, child, target, incoming, stats)) return true;
+            }
+            return false;
+        },
         .box => |*b| return try morphPatchByIdLeaky(allocator, b.child, target, incoming, stats),
         .scroll => |*s| return try morphPatchByIdLeaky(allocator, s.child, target, incoming, stats),
         .overlay => |*o| {
@@ -169,6 +188,11 @@ fn morphNodeLeaky(
             t.focus_scope = inc.focus_scope;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
+            t.grid_row = inc.grid_row;
+            t.grid_col = inc.grid_col;
+            t.row_span = inc.row_span;
+            t.col_span = inc.col_span;
+            t.grid_area = inc.grid_area;
             t.style = inc.style;
             t.text = inc.text;
         },
@@ -187,6 +211,11 @@ fn morphNodeLeaky(
             t.focus_scope = inc.focus_scope;
             t.ext_align = inc.ext_align;
             t.v_align = inc.v_align;
+            t.grid_row = inc.grid_row;
+            t.grid_col = inc.grid_col;
+            t.row_span = inc.row_span;
+            t.col_span = inc.col_span;
+            t.grid_area = inc.grid_area;
             t.style = inc.style;
             t.spans = inc.spans;
         },
@@ -204,6 +233,11 @@ fn morphNodeLeaky(
             i.focusable = inc.focusable;
             i.focus_scope = inc.focus_scope;
             i.content_align = inc.content_align;
+            i.grid_row = inc.grid_row;
+            i.grid_col = inc.grid_col;
+            i.row_span = inc.row_span;
+            i.col_span = inc.col_span;
+            i.grid_area = inc.grid_area;
             i.style = inc.style;
             i.placeholder_style = inc.placeholder_style;
             i.placeholder = inc.placeholder;
@@ -221,7 +255,13 @@ fn morphNodeLeaky(
             t.validation = inc.validation;
             t.focusable = inc.focusable;
             t.focus_scope = inc.focus_scope;
+            t.grid_row = inc.grid_row;
+            t.grid_col = inc.grid_col;
+            t.row_span = inc.row_span;
+            t.col_span = inc.col_span;
+            t.grid_area = inc.grid_area;
             t.style = inc.style;
+            t.selection_style = inc.selection_style;
             t.placeholder_style = inc.placeholder_style;
             t.placeholder = inc.placeholder;
         },
@@ -245,6 +285,11 @@ fn morphNodeLeaky(
             v.align_items = inc.align_items;
             v.gap = inc.gap;
             v.align_self = inc.align_self;
+            v.grid_row = inc.grid_row;
+            v.grid_col = inc.grid_col;
+            v.row_span = inc.row_span;
+            v.col_span = inc.col_span;
+            v.grid_area = inc.grid_area;
             v.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
@@ -309,6 +354,11 @@ fn morphNodeLeaky(
             h.align_items = inc.align_items;
             h.gap = inc.gap;
             h.align_self = inc.align_self;
+            h.grid_row = inc.grid_row;
+            h.grid_col = inc.grid_col;
+            h.row_span = inc.row_span;
+            h.col_span = inc.col_span;
+            h.grid_area = inc.grid_area;
             h.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);
@@ -353,6 +403,77 @@ fn morphNodeLeaky(
             stats.removed += existing_children.len - matched;
             h.children = next_children;
         },
+        .grid => |*g| {
+            const inc = incoming.grid;
+            const existing_children = g.children;
+
+            g.w = inc.w;
+            g.h = inc.h;
+            g.flex = inc.flex;
+            g.pad = inc.pad;
+            g.clip = inc.clip;
+            g.hoverable = inc.hoverable;
+            g.mouseable = inc.mouseable;
+            g.disabled = inc.disabled;
+            g.readonly = inc.readonly;
+            g.validation = inc.validation;
+            g.focusable = inc.focusable;
+            g.focus_scope = inc.focus_scope;
+            g.align_self = inc.align_self;
+            g.grid_row = inc.grid_row;
+            g.grid_col = inc.grid_col;
+            g.row_span = inc.row_span;
+            g.col_span = inc.col_span;
+            g.grid_area = inc.grid_area;
+            g.gap_x = inc.gap_x;
+            g.gap_y = inc.gap_y;
+            g.rows = inc.rows;
+            g.cols = inc.cols;
+            g.areas = inc.areas;
+            g.style = inc.style;
+
+            var used = try allocator.alloc(bool, existing_children.len);
+            @memset(used, false);
+
+            var next_children = try allocator.alloc(protocol.Node, inc.children.len);
+            var matched: usize = 0;
+
+            for (inc.children, 0..) |inc_child, out_idx| {
+                const inc_id = nodeId(inc_child);
+                var found_idx: ?usize = null;
+
+                for (existing_children, 0..) |ex_child, ex_idx| {
+                    if (used[ex_idx]) continue;
+                    if (std.mem.eql(u8, nodeId(ex_child), inc_id)) {
+                        found_idx = ex_idx;
+                        break;
+                    }
+                }
+
+                if (found_idx) |ex_idx| {
+                    used[ex_idx] = true;
+                    matched += 1;
+
+                    const ex_child = existing_children[ex_idx];
+                    if (std.meta.activeTag(ex_child) == std.meta.activeTag(inc_child)) {
+                        stats.reused += 1;
+                        var next_child = ex_child;
+                        try morphNodeLeaky(allocator, &next_child, inc_child, stats);
+                        next_children[out_idx] = next_child;
+                    } else {
+                        stats.type_mismatch += 1;
+                        stats.replaced += 1;
+                        next_children[out_idx] = inc_child;
+                    }
+                } else {
+                    stats.inserted += 1;
+                    next_children[out_idx] = inc_child;
+                }
+            }
+
+            stats.removed += existing_children.len - matched;
+            g.children = next_children;
+        },
         .box => |*b| {
             const inc = incoming.box;
             b.w = inc.w;
@@ -371,6 +492,11 @@ fn morphNodeLeaky(
             b.focusable = inc.focusable;
             b.focus_scope = inc.focus_scope;
             b.align_self = inc.align_self;
+            b.grid_row = inc.grid_row;
+            b.grid_col = inc.grid_col;
+            b.row_span = inc.row_span;
+            b.col_span = inc.col_span;
+            b.grid_area = inc.grid_area;
             b.style = inc.style;
 
             if (std.meta.activeTag(b.child.*) == std.meta.activeTag(inc.child.*)) {
@@ -396,6 +522,11 @@ fn morphNodeLeaky(
             s.focusable = inc.focusable;
             s.focus_scope = inc.focus_scope;
             s.align_self = inc.align_self;
+            s.grid_row = inc.grid_row;
+            s.grid_col = inc.grid_col;
+            s.row_span = inc.row_span;
+            s.col_span = inc.col_span;
+            s.grid_area = inc.grid_area;
             s.style = inc.style;
 
             if (std.meta.activeTag(s.child.*) == std.meta.activeTag(inc.child.*)) {
@@ -423,6 +554,11 @@ fn morphNodeLeaky(
             o.focusable = inc.focusable;
             o.focus_scope = inc.focus_scope;
             o.align_self = inc.align_self;
+            o.grid_row = inc.grid_row;
+            o.grid_col = inc.grid_col;
+            o.row_span = inc.row_span;
+            o.col_span = inc.col_span;
+            o.grid_area = inc.grid_area;
             o.style = inc.style;
 
             if (std.meta.activeTag(o.base.*) == std.meta.activeTag(inc.base.*)) {
@@ -502,6 +638,11 @@ fn morphNodeLeaky(
             l.focusable = inc.focusable;
             l.focus_scope = inc.focus_scope;
             l.marker = inc.marker;
+            l.grid_row = inc.grid_row;
+            l.grid_col = inc.grid_col;
+            l.row_span = inc.row_span;
+            l.col_span = inc.col_span;
+            l.grid_area = inc.grid_area;
             l.style = inc.style;
 
             var used = try allocator.alloc(bool, existing_children.len);

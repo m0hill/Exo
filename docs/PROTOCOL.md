@@ -82,8 +82,8 @@ Action names:
 - focus/actions: `noop`, `focus_next`, `focus_prev`, `focus_scope_next`, `focus_scope_prev`, `focus_clear`, `action_activate`
 - list: `list_prev`, `list_next`, `list_activate`
 - scroll: `scroll_line_up`, `scroll_line_down`, `scroll_page_up`, `scroll_page_down`, `scroll_home`, `scroll_end`
-- input: `input_left`, `input_right`, `input_word_left`, `input_word_right`, `input_home`, `input_end`, `input_delete`, `input_backspace`
-- textarea: `textarea_left`, `textarea_right`, `textarea_up`, `textarea_down`, `textarea_word_left`, `textarea_word_right`, `textarea_home`, `textarea_end`, `textarea_page_up`, `textarea_page_down`, `textarea_delete`, `textarea_backspace`, `textarea_newline`
+- input: `input_left`, `input_right`, `input_word_left`, `input_word_right`, `input_home`, `input_end`, `input_delete`, `input_backspace`, `input_select_left`, `input_select_right`, `input_select_word_left`, `input_select_word_right`, `input_select_home`, `input_select_end`, `input_select_all`, `input_copy`, `input_paste`, `input_undo`, `input_redo`
+- textarea: `textarea_left`, `textarea_right`, `textarea_up`, `textarea_down`, `textarea_word_left`, `textarea_word_right`, `textarea_home`, `textarea_end`, `textarea_page_up`, `textarea_page_down`, `textarea_delete`, `textarea_backspace`, `textarea_newline`, `textarea_select_left`, `textarea_select_right`, `textarea_select_up`, `textarea_select_down`, `textarea_select_word_left`, `textarea_select_word_right`, `textarea_select_home`, `textarea_select_end`, `textarea_select_all`, `textarea_copy`, `textarea_paste`, `textarea_undo`, `textarea_redo`
 
 ### Event (runtime → backend)
 
@@ -144,7 +144,7 @@ Nodes form a tree. Every node has a required `id` and a `type`.
 
 Node types (current):
 
-- containers: `vbox`, `hbox`, `box`, `scroll`, `overlay`
+- containers: `vbox`, `hbox`, `grid`, `box`, `scroll`, `overlay`
 - text: `text`, `styled_text`
 - inputs: `input`, `textarea`
 - collection: `list`
@@ -172,7 +172,28 @@ Node types (current):
 {"type":"text","id":"status","text":"Connected","style":{"fg":"#00FF00","bold":true}}
 ```
 
-`input`/`textarea` also accept `placeholder_style`.
+`input`/`textarea` also accept `placeholder_style` and `selection_style`.
+
+### Grid (`type:"grid"`)
+
+`grid` provides table-like layout without manual hbox/vbox nesting:
+
+- track sizing:
+  - fixed: number (example `10`)
+  - auto: string `"auto"`
+  - fractional: string `"<n>fr"` (example `"2fr"`)
+- `rows` and `cols` are required track arrays.
+- spacing: `gap_x`, `gap_y`.
+- optional named areas: `areas` is an array of row strings (space-delimited names), for example:
+  - `"header header"`
+  - `"sidebar content"`
+
+Child placement fields (available on all node types):
+
+- `grid_row`, `grid_col` (0-based explicit cell)
+- `row_span`, `col_span` (default `1`)
+- `grid_area` (name from `areas`)
+- precedence: explicit `grid_row`/`grid_col` placement is used when present; `grid_area` is used otherwise.
 
 ### Terminal caps / env overrides
 

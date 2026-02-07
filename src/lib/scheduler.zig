@@ -265,6 +265,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .focus_scope = if (t.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
             .ext_align = t.ext_align,
             .v_align = t.v_align,
+            .grid_row = t.grid_row,
+            .grid_col = t.grid_col,
+            .row_span = t.row_span,
+            .col_span = t.col_span,
+            .grid_area = if (t.grid_area) |a| try allocator.dupe(u8, a) else null,
             .style = t.style,
             .text = try allocator.dupe(u8, t.text),
         } },
@@ -291,6 +296,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .focus_scope = if (t.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
                 .ext_align = t.ext_align,
                 .v_align = t.v_align,
+                .grid_row = t.grid_row,
+                .grid_col = t.grid_col,
+                .row_span = t.row_span,
+                .col_span = t.col_span,
+                .grid_area = if (t.grid_area) |a| try allocator.dupe(u8, a) else null,
                 .style = t.style,
                 .spans = spans,
             } };
@@ -309,6 +319,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .focusable = i.focusable,
             .focus_scope = if (i.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
             .content_align = i.content_align,
+            .grid_row = i.grid_row,
+            .grid_col = i.grid_col,
+            .row_span = i.row_span,
+            .col_span = i.col_span,
+            .grid_area = if (i.grid_area) |a| try allocator.dupe(u8, a) else null,
             .style = i.style,
             .placeholder_style = i.placeholder_style,
             .placeholder = if (i.placeholder) |p| try allocator.dupe(u8, p) else null,
@@ -326,7 +341,13 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .validation = t.validation,
             .focusable = t.focusable,
             .focus_scope = if (t.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
+            .grid_row = t.grid_row,
+            .grid_col = t.grid_col,
+            .row_span = t.row_span,
+            .col_span = t.col_span,
+            .grid_area = if (t.grid_area) |a| try allocator.dupe(u8, a) else null,
             .style = t.style,
+            .selection_style = t.selection_style,
             .placeholder_style = t.placeholder_style,
             .placeholder = if (t.placeholder) |p| try allocator.dupe(u8, p) else null,
         } },
@@ -353,6 +374,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .align_items = v.align_items,
                 .gap = v.gap,
                 .align_self = v.align_self,
+                .grid_row = v.grid_row,
+                .grid_col = v.grid_col,
+                .row_span = v.row_span,
+                .col_span = v.col_span,
+                .grid_area = if (v.grid_area) |a| try allocator.dupe(u8, a) else null,
                 .style = v.style,
                 .children = children,
             } };
@@ -380,7 +406,55 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .align_items = h.align_items,
                 .gap = h.gap,
                 .align_self = h.align_self,
+                .grid_row = h.grid_row,
+                .grid_col = h.grid_col,
+                .row_span = h.row_span,
+                .col_span = h.col_span,
+                .grid_area = if (h.grid_area) |a| try allocator.dupe(u8, a) else null,
                 .style = h.style,
+                .children = children,
+            } };
+        },
+        .grid => |g| blk: {
+            var children = try allocator.alloc(protocol.Node, g.children.len);
+            for (g.children, 0..) |child, idx| {
+                children[idx] = try cloneNodeLeaky(allocator, child);
+            }
+            const rows = try allocator.alloc(protocol.GridTrack, g.rows.len);
+            @memcpy(rows, g.rows);
+            const cols = try allocator.alloc(protocol.GridTrack, g.cols.len);
+            @memcpy(cols, g.cols);
+            const areas = if (g.areas) |a| blk_areas: {
+                var out = try allocator.alloc([]const u8, a.len);
+                for (a, 0..) |line, idx| out[idx] = try allocator.dupe(u8, line);
+                break :blk_areas out;
+            } else null;
+            break :blk .{ .grid = .{
+                .id = try allocator.dupe(u8, g.id),
+                .w = g.w,
+                .h = g.h,
+                .flex = g.flex,
+                .pad = g.pad,
+                .clip = g.clip,
+                .hoverable = g.hoverable,
+                .mouseable = g.mouseable,
+                .disabled = g.disabled,
+                .readonly = g.readonly,
+                .validation = g.validation,
+                .focusable = g.focusable,
+                .focus_scope = if (g.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
+                .align_self = g.align_self,
+                .grid_row = g.grid_row,
+                .grid_col = g.grid_col,
+                .row_span = g.row_span,
+                .col_span = g.col_span,
+                .grid_area = if (g.grid_area) |a| try allocator.dupe(u8, a) else null,
+                .gap_x = g.gap_x,
+                .gap_y = g.gap_y,
+                .rows = rows,
+                .cols = cols,
+                .areas = areas,
+                .style = g.style,
                 .children = children,
             } };
         },
@@ -402,6 +476,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .focusable = b.focusable,
             .focus_scope = if (b.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
             .align_self = b.align_self,
+            .grid_row = b.grid_row,
+            .grid_col = b.grid_col,
+            .row_span = b.row_span,
+            .col_span = b.col_span,
+            .grid_area = if (b.grid_area) |a| try allocator.dupe(u8, a) else null,
             .style = b.style,
             .child = blk: {
                 const child_node = try cloneNodeLeaky(allocator, b.child.*);
@@ -425,6 +504,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
             .focusable = s.focusable,
             .focus_scope = if (s.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
             .align_self = s.align_self,
+            .grid_row = s.grid_row,
+            .grid_col = s.grid_col,
+            .row_span = s.row_span,
+            .col_span = s.col_span,
+            .grid_area = if (s.grid_area) |a| try allocator.dupe(u8, a) else null,
             .style = s.style,
             .child = blk: {
                 const child_node = try cloneNodeLeaky(allocator, s.child.*);
@@ -472,6 +556,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .focusable = o.focusable,
                 .focus_scope = if (o.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
                 .align_self = o.align_self,
+                .grid_row = o.grid_row,
+                .grid_col = o.grid_col,
+                .row_span = o.row_span,
+                .col_span = o.col_span,
+                .grid_area = if (o.grid_area) |a| try allocator.dupe(u8, a) else null,
                 .style = o.style,
                 .base = base,
                 .layers = layers,
@@ -497,6 +586,11 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .focusable = l.focusable,
                 .focus_scope = if (l.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
                 .marker = l.marker,
+                .grid_row = l.grid_row,
+                .grid_col = l.grid_col,
+                .row_span = l.row_span,
+                .col_span = l.col_span,
+                .grid_area = if (l.grid_area) |a| try allocator.dupe(u8, a) else null,
                 .style = l.style,
                 .children = children,
             } };
