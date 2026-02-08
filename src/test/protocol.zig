@@ -911,6 +911,51 @@ test "protocol: write+parse rendered and dropped events" {
     }
 }
 
+test "protocol: write+parse hello event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeHelloEventJsonl(buf.writer(std.testing.allocator), protocol.PROTOCOL_VERSION, .{
+        .ansi = true,
+        .alt_screen = true,
+        .bracketed_paste = true,
+        .mouse_sgr = false,
+        .osc52 = true,
+        .color = "ansi256",
+    }, .{
+        .max_fps = 60,
+        .frame_interval_ns = 16_666_666,
+        .max_pending_targets = 512,
+        .max_backend_lines_per_iter = 256,
+        .queue_overflow = "drop_oldest",
+    });
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (msg) {
+        .event => |ev| switch (ev) {
+            .hello => |h| {
+                try std.testing.expectEqual(protocol.PROTOCOL_VERSION, h.protocol_version);
+                try std.testing.expect(h.caps.ansi);
+                try std.testing.expect(h.caps.alt_screen);
+                try std.testing.expect(h.caps.bracketed_paste);
+                try std.testing.expect(!h.caps.mouse_sgr);
+                try std.testing.expect(h.caps.osc52);
+                try std.testing.expectEqualStrings("ansi256", h.caps.color);
+                try std.testing.expectEqual(@as(u32, 60), h.limits.max_fps);
+                try std.testing.expectEqual(@as(u64, 16_666_666), h.limits.frame_interval_ns);
+                try std.testing.expectEqual(@as(usize, 512), h.limits.max_pending_targets);
+                try std.testing.expectEqual(@as(usize, 256), h.limits.max_backend_lines_per_iter);
+                try std.testing.expectEqualStrings("drop_oldest", h.limits.queue_overflow);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "protocol: write helpers omit and include version field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

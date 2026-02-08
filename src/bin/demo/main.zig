@@ -636,6 +636,19 @@ pub fn main() !void {
 
                 switch (msg) {
                     .event => |ev| switch (ev) {
+                        .hello => |h| {
+                            std.debug.print(
+                                "EVENT_RX name=hello protocol_version={d} color={s} max_fps={d} max_pending_targets={d} max_backend_lines={d} overflow={s}\n",
+                                .{
+                                    h.protocol_version,
+                                    h.caps.color,
+                                    h.limits.max_fps,
+                                    h.limits.max_pending_targets,
+                                    h.limits.max_backend_lines_per_iter,
+                                    h.limits.queue_overflow,
+                                },
+                            );
+                        },
                         .key => |k| {
                             if (k.seq) |s| {
                                 std.debug.print("EVENT_RX name=key key={s} mods={d} seq_len={d}\n", .{ k.key, k.mods, s.len });

@@ -57,6 +57,57 @@ fn sendKeyEventToBackend(log_sink: *log.LogSink, backend_in: anytype, ev: keys.K
     try protocol.writeKeyEventJsonlFull(backend_in, parts.key, parts.mods, parts.seq);
 }
 
+fn colorModeString(mode: tui.color.ColorMode) []const u8 {
+    return switch (mode) {
+        .mono => "mono",
+        .ansi16 => "ansi16",
+        .ansi256 => "ansi256",
+        .truecolor => "truecolor",
+    };
+}
+
+fn queueOverflowString(policy: timing.QueueOverflowPolicy) []const u8 {
+    return switch (policy) {
+        .drop_newest => "drop_newest",
+        .drop_oldest => "drop_oldest",
+    };
+}
+
+fn sendHelloEventToBackend(
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    caps: tui.termcaps.Caps,
+    runtime_cfg: timing.RuntimeConfig,
+) !void {
+    log.logPrint(
+        log_sink,
+        "EVENT_TX name=hello protocol_version={d} color={s} max_fps={d} max_pending_targets={d} max_backend_lines={d} overflow={s}\n",
+        .{
+            protocol.PROTOCOL_VERSION,
+            colorModeString(caps.color),
+            runtime_cfg.max_fps,
+            runtime_cfg.max_pending_targets,
+            runtime_cfg.max_backend_lines_per_iter,
+            queueOverflowString(runtime_cfg.queue_overflow),
+        },
+    );
+    try protocol.writeHelloEventJsonl(backend_in, protocol.PROTOCOL_VERSION, .{
+        .ansi = caps.ansi,
+        .alt_screen = caps.alt_screen,
+        .bracketed_paste = caps.bracketed_paste,
+        .mouse_sgr = caps.mouse_sgr,
+        .osc52 = caps.osc52,
+        .color = colorModeString(caps.color),
+    }, .{
+        .max_fps = runtime_cfg.max_fps,
+        .frame_interval_ns = runtime_cfg.frame_interval_ns,
+        .max_pending_targets = runtime_cfg.max_pending_targets,
+        .max_backend_lines_per_iter = runtime_cfg.max_backend_lines_per_iter,
+        .queue_overflow = queueOverflowString(runtime_cfg.queue_overflow),
+    });
+    try backend_in.flush();
+}
+
 fn maybeSendPendingResizeEvent(
     log_sink: *log.LogSink,
     backend_in: anytype,
@@ -174,6 +225,7 @@ pub fn run() !void {
     var child_in_buf: [4096]u8 = undefined;
     var child_in_w = child_in_file.writerStreaming(&child_in_buf);
     const child_in = &child_in_w.interface;
+    try sendHelloEventToBackend(&log_sink, child_in, term.caps(), runtime_cfg);
 
     var current_arena = std.heap.ArenaAllocator.init(allocator);
     defer current_arena.deinit();

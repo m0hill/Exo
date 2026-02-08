@@ -25,6 +25,8 @@ const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
 const ThemeName = protocol.ThemeName;
+const HelloCaps = protocol.HelloCaps;
+const HelloLimits = protocol.HelloLimits;
 const StateMode = protocol.StateMode;
 const ParseMsgError = protocol.ParseMsgError;
 
@@ -61,6 +63,48 @@ pub fn writeEventJsonl(writer: anytype, key: []const u8) !void {
 
 pub fn writeEventJsonlVersion(writer: anytype, key: []const u8, v: ?u32) !void {
     return writeKeyEventJsonlVersion(writer, key, v);
+}
+
+pub fn writeHelloEventJsonl(
+    writer: anytype,
+    protocol_version: u32,
+    caps: HelloCaps,
+    limits: HelloLimits,
+) !void {
+    return writeHelloEventJsonlVersion(writer, protocol_version, caps, limits, null);
+}
+
+pub fn writeHelloEventJsonlVersion(
+    writer: anytype,
+    protocol_version: u32,
+    caps: HelloCaps,
+    limits: HelloLimits,
+    v: ?u32,
+) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.print(",\"name\":\"hello\",\"protocol_version\":{d}", .{protocol_version});
+    try writer.writeAll(",\"caps\":{");
+    try writer.writeAll("\"ansi\":");
+    try writer.writeAll(if (caps.ansi) "true" else "false");
+    try writer.writeAll(",\"alt_screen\":");
+    try writer.writeAll(if (caps.alt_screen) "true" else "false");
+    try writer.writeAll(",\"bracketed_paste\":");
+    try writer.writeAll(if (caps.bracketed_paste) "true" else "false");
+    try writer.writeAll(",\"mouse_sgr\":");
+    try writer.writeAll(if (caps.mouse_sgr) "true" else "false");
+    try writer.writeAll(",\"osc52\":");
+    try writer.writeAll(if (caps.osc52) "true" else "false");
+    try writer.writeAll(",\"color\":");
+    try writeJsonString(writer, caps.color);
+    try writer.writeAll("},\"limits\":{");
+    try writer.print("\"max_fps\":{d}", .{limits.max_fps});
+    try writer.print(",\"frame_interval_ns\":{d}", .{limits.frame_interval_ns});
+    try writer.print(",\"max_pending_targets\":{d}", .{limits.max_pending_targets});
+    try writer.print(",\"max_backend_lines_per_iter\":{d}", .{limits.max_backend_lines_per_iter});
+    try writer.writeAll(",\"queue_overflow\":");
+    try writeJsonString(writer, limits.queue_overflow);
+    try writer.writeAll("}}\n");
 }
 
 pub fn writeKeyEventJsonl(writer: anytype, key: []const u8) !void {

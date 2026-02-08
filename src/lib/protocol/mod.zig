@@ -6,6 +6,9 @@ pub const Msg = types.Msg;
 pub const PatchMsg = types.PatchMsg;
 pub const PatchMode = types.PatchMode;
 pub const EventMsg = types.EventMsg;
+pub const HelloCaps = types.HelloCaps;
+pub const HelloLimits = types.HelloLimits;
+pub const HelloEvent = types.HelloEvent;
 pub const ClipboardMsg = types.ClipboardMsg;
 pub const ClipboardOp = types.ClipboardOp;
 pub const ClipboardTarget = types.ClipboardTarget;
@@ -52,12 +55,15 @@ pub const ListMarker = types.ListMarker;
 pub const ListNode = types.ListNode;
 
 pub const ParseMsgError = types.ParseMsgError;
+pub const PROTOCOL_VERSION: u32 = 1;
 
 pub const parseMsgLeaky = parse.parseMsgLeaky;
 
 pub const writeJsonString = write.writeJsonString;
 pub const writeEventJsonl = write.writeEventJsonl;
 pub const writeEventJsonlVersion = write.writeEventJsonlVersion;
+pub const writeHelloEventJsonl = write.writeHelloEventJsonl;
+pub const writeHelloEventJsonlVersion = write.writeHelloEventJsonlVersion;
 pub const writeKeyEventJsonl = write.writeKeyEventJsonl;
 pub const writeKeyEventJsonlVersion = write.writeKeyEventJsonlVersion;
 pub const writeKeyEventJsonlFull = write.writeKeyEventJsonlFull;

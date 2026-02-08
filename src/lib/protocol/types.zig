@@ -20,6 +20,7 @@ pub const PatchMode = enum {
 };
 
 pub const EventMsg = union(enum) {
+    hello: HelloEvent,
     key: struct { key: []const u8, mods: u8 = 0, seq: ?[]const u8 = null, v: ?u32 = null },
     focus: struct { id: []const u8, v: ?u32 = null },
     input: struct { id: []const u8, value: []const u8, cursor: usize, v: ?u32 = null },
@@ -33,6 +34,30 @@ pub const EventMsg = union(enum) {
     paste: PasteEvent,
     rendered: struct { seq: u64, dropped: u64 = 0, bytes: usize = 0, changed_cells: usize = 0, v: ?u32 = null },
     dropped: struct { seq: u64, reason: []const u8, v: ?u32 = null },
+};
+
+pub const HelloCaps = struct {
+    ansi: bool = true,
+    alt_screen: bool = true,
+    bracketed_paste: bool = true,
+    mouse_sgr: bool = true,
+    osc52: bool = true,
+    color: []const u8,
+};
+
+pub const HelloLimits = struct {
+    max_fps: u32,
+    frame_interval_ns: u64,
+    max_pending_targets: usize,
+    max_backend_lines_per_iter: usize,
+    queue_overflow: []const u8,
+};
+
+pub const HelloEvent = struct {
+    protocol_version: u32,
+    caps: HelloCaps,
+    limits: HelloLimits,
+    v: ?u32 = null,
 };
 
 pub const ClipboardOp = enum {

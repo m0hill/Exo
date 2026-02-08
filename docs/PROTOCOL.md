@@ -132,6 +132,18 @@ Action names:
 
 ### Event (runtime → backend)
 
+Startup handshake (sent once after runtime spawns backend):
+
+```json
+{"type":"event","name":"hello","protocol_version":1,"caps":{"ansi":true,"alt_screen":true,"bracketed_paste":true,"mouse_sgr":true,"osc52":true,"color":"ansi256"},"limits":{"max_fps":30,"frame_interval_ns":33333333,"max_pending_targets":256,"max_backend_lines_per_iter":128,"queue_overflow":"drop_newest"}}
+```
+
+Notes:
+
+- `protocol_version` is the runtime's protocol schema version
+- `caps` advertises detected runtime/terminal capabilities
+- `limits` advertises runtime scheduling/backpressure limits in effect
+
 Key event:
 
 ```json

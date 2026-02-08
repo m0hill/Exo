@@ -1063,4 +1063,32 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 37,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Runtime startup handshake: emit `hello` event with protocol version, detected caps, and runtime limits",
+    "deliverables": [
+      "src/lib/protocol/types.zig: added `EventMsg.hello` plus typed `HelloEvent`, `HelloCaps`, and `HelloLimits` payload structs",
+      "src/lib/protocol/parse.zig: added parse support for `{\"type\":\"event\",\"name\":\"hello\",...}` with required `protocol_version`, `caps`, and `limits` fields",
+      "src/lib/protocol/write.zig + src/lib/protocol/mod.zig: added `writeHelloEventJsonl(...)` helpers and exported `PROTOCOL_VERSION` constant",
+      "src/bin/runtime/app.zig: emits `hello` immediately after backend spawn/pipe setup (before first render), including terminal caps and active runtime limits",
+      "docs/PROTOCOL.md: documented `hello` startup handshake payload and semantics",
+      "src/test/protocol.zig: added write+parse test coverage for `hello` event payload"
+    ],
+    "boundaries_hit": [
+      "Handshake is sent once at runtime startup to avoid backend env guessing",
+      "Caps payload reflects detected terminal/runtime capabilities (`ansi`, `alt_screen`, `bracketed_paste`, `mouse_sgr`, `osc52`, `color`)",
+      "Limits payload reflects active scheduler/backpressure knobs (`max_fps`, `frame_interval_ns`, `max_pending_targets`, `max_backend_lines_per_iter`, `queue_overflow`)"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build test",
+      "zig build demo",
+      "Observe first runtime->backend event is `name=hello` with protocol version + caps + limits",
+      "Confirm backend can branch on `hello.caps` and `hello.limits` without reading env vars",
+      "Exit with 'x'"
+    ]
+  }
 ]

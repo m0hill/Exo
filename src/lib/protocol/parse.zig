@@ -26,6 +26,9 @@ const ClipboardTarget = protocol.ClipboardTarget;
 const ClipboardEvent = protocol.ClipboardEvent;
 const PasteSource = protocol.PasteSource;
 const PasteEvent = protocol.PasteEvent;
+const HelloCaps = protocol.HelloCaps;
+const HelloLimits = protocol.HelloLimits;
+const HelloEvent = protocol.HelloEvent;
 const ConfigMsg = protocol.ConfigMsg;
 const ThemeName = protocol.ThemeName;
 const ThemeMsg = protocol.ThemeMsg;
@@ -116,7 +119,19 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         } } };
     } else if (std.mem.eql(u8, type_str, "event")) {
         const name = try getRequiredString(obj, "name");
-        if (std.mem.eql(u8, name, "key")) {
+        if (std.mem.eql(u8, name, "hello")) {
+            const protocol_version_u = try getRequiredUsize(obj, "protocol_version");
+            if (protocol_version_u > std.math.maxInt(u32)) return error.WrongType;
+            const caps_obj = try asObject(try getRequired(obj, "caps"));
+            const limits_obj = try asObject(try getRequired(obj, "limits"));
+            const hello: HelloEvent = .{
+                .protocol_version = @as(u32, @intCast(protocol_version_u)),
+                .caps = try parseHelloCaps(caps_obj),
+                .limits = try parseHelloLimits(limits_obj),
+                .v = version,
+            };
+            return .{ .event = .{ .hello = hello } };
+        } else if (std.mem.eql(u8, name, "key")) {
             const key = try getRequiredString(obj, "key");
             const mods_usize = try getOptionalUsize(obj, "mods") orelse 0;
             if (mods_usize > std.math.maxInt(u8)) return error.WrongType;
@@ -302,6 +317,29 @@ fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap, v: ?u32
     const theme: ?ThemeName = if (try getOptionalString(obj, "theme")) |name| try parseThemeName(name) else null;
     if (keybindings == null and theme == null) return error.MissingField;
     return .{ .keybindings = keybindings, .theme = theme, .v = v };
+}
+
+fn parseHelloCaps(obj: std.json.ObjectMap) ParseMsgError!HelloCaps {
+    return .{
+        .ansi = try getRequiredBool(obj, "ansi"),
+        .alt_screen = try getRequiredBool(obj, "alt_screen"),
+        .bracketed_paste = try getRequiredBool(obj, "bracketed_paste"),
+        .mouse_sgr = try getRequiredBool(obj, "mouse_sgr"),
+        .osc52 = try getRequiredBool(obj, "osc52"),
+        .color = try getRequiredString(obj, "color"),
+    };
+}
+
+fn parseHelloLimits(obj: std.json.ObjectMap) ParseMsgError!HelloLimits {
+    const max_fps_usize = try getRequiredUsize(obj, "max_fps");
+    if (max_fps_usize > std.math.maxInt(u32)) return error.WrongType;
+    return .{
+        .max_fps = @as(u32, @intCast(max_fps_usize)),
+        .frame_interval_ns = @as(u64, @intCast(try getRequiredUsize(obj, "frame_interval_ns"))),
+        .max_pending_targets = try getRequiredUsize(obj, "max_pending_targets"),
+        .max_backend_lines_per_iter = try getRequiredUsize(obj, "max_backend_lines_per_iter"),
+        .queue_overflow = try getRequiredString(obj, "queue_overflow"),
+    };
 }
 
 fn parseThemeName(s: []const u8) ParseMsgError!ThemeName {
