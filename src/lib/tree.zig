@@ -17,6 +17,287 @@ pub fn nodeId(node: protocol.Node) []const u8 {
     };
 }
 
+const PathStepKind = enum(u8) {
+    vbox_child,
+    hbox_child,
+    grid_child,
+    list_child,
+    box_child,
+    scroll_child,
+    overlay_base,
+    overlay_layer,
+};
+
+const PathStep = struct {
+    kind: PathStepKind,
+    index: usize = 0,
+};
+
+const IndexedPath = struct {
+    steps: []PathStep,
+};
+
+pub const IdIndex = struct {
+    allocator: std.mem.Allocator,
+    entries: std.StringHashMap(IndexedPath),
+
+    pub fn init(allocator: std.mem.Allocator) IdIndex {
+        return .{
+            .allocator = allocator,
+            .entries = std.StringHashMap(IndexedPath).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *IdIndex) void {
+        self.clear();
+        self.entries.deinit();
+    }
+
+    pub fn clear(self: *IdIndex) void {
+        var it = self.entries.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.steps);
+        }
+        self.entries.clearRetainingCapacity();
+    }
+
+    pub fn rebuild(self: *IdIndex, root: *protocol.Node) !void {
+        self.clear();
+        var stack: std.ArrayList(PathStep) = .empty;
+        defer stack.deinit(self.allocator);
+        try self.collect(root, &stack);
+    }
+
+    pub fn contains(self: *const IdIndex, id: []const u8) bool {
+        return self.entries.contains(id);
+    }
+
+    pub fn findNodePtr(self: *const IdIndex, root: *protocol.Node, id: []const u8) ?*protocol.Node {
+        const path = self.entries.get(id) orelse return findNodePtrById(root, id);
+        if (resolvePath(root, path.steps)) |ptr| {
+            if (std.mem.eql(u8, nodeId(ptr.*), id)) return ptr;
+        }
+        return findNodePtrById(root, id);
+    }
+
+    fn collect(self: *IdIndex, node: *protocol.Node, stack: *std.ArrayList(PathStep)) !void {
+        const path_copy = try self.allocator.dupe(PathStep, stack.items);
+        try self.entries.put(nodeId(node.*), .{ .steps = path_copy });
+
+        switch (node.*) {
+            .vbox => |*v| {
+                for (v.children, 0..) |*child, idx| {
+                    try stack.append(self.allocator, .{
+                        .kind = .vbox_child,
+                        .index = idx,
+                    });
+                    try self.collect(child, stack);
+                    _ = stack.pop();
+                }
+            },
+            .hbox => |*h| {
+                for (h.children, 0..) |*child, idx| {
+                    try stack.append(self.allocator, .{
+                        .kind = .hbox_child,
+                        .index = idx,
+                    });
+                    try self.collect(child, stack);
+                    _ = stack.pop();
+                }
+            },
+            .grid => |*g| {
+                for (g.children, 0..) |*child, idx| {
+                    try stack.append(self.allocator, .{
+                        .kind = .grid_child,
+                        .index = idx,
+                    });
+                    try self.collect(child, stack);
+                    _ = stack.pop();
+                }
+            },
+            .list => |*l| {
+                for (l.children, 0..) |*child, idx| {
+                    try stack.append(self.allocator, .{
+                        .kind = .list_child,
+                        .index = idx,
+                    });
+                    try self.collect(child, stack);
+                    _ = stack.pop();
+                }
+            },
+            .box => |*b| {
+                try stack.append(self.allocator, .{ .kind = .box_child });
+                try self.collect(b.child, stack);
+                _ = stack.pop();
+            },
+            .scroll => |*s| {
+                try stack.append(self.allocator, .{ .kind = .scroll_child });
+                try self.collect(s.child, stack);
+                _ = stack.pop();
+            },
+            .overlay => |*o| {
+                try stack.append(self.allocator, .{ .kind = .overlay_base });
+                try self.collect(o.base, stack);
+                _ = stack.pop();
+                for (o.layers, 0..) |*layer, idx| {
+                    try stack.append(self.allocator, .{
+                        .kind = .overlay_layer,
+                        .index = idx,
+                    });
+                    try self.collect(layer.node, stack);
+                    _ = stack.pop();
+                }
+            },
+            else => {},
+        }
+    }
+};
+
+pub fn applyPatchByIdIndexed(
+    root: *protocol.Node,
+    index: *const IdIndex,
+    target: []const u8,
+    replacement: protocol.Node,
+) bool {
+    if (index.findNodePtr(root, target)) |ptr| {
+        ptr.* = replacement;
+        return true;
+    }
+    return applyPatchById(root, target, replacement);
+}
+
+pub fn morphPatchByIdLeakyIndexed(
+    allocator: std.mem.Allocator,
+    root: *protocol.Node,
+    index: *const IdIndex,
+    target: []const u8,
+    incoming: protocol.Node,
+    stats: *MorphStats,
+) std.mem.Allocator.Error!bool {
+    if (index.findNodePtr(root, target)) |ptr| {
+        try morphNodeLeaky(allocator, ptr, incoming, stats);
+        return true;
+    }
+    return morphPatchByIdLeaky(allocator, root, target, incoming, stats);
+}
+
+fn resolvePath(root: *protocol.Node, steps: []const PathStep) ?*protocol.Node {
+    var cur = root;
+    for (steps) |step| {
+        switch (step.kind) {
+            .vbox_child => {
+                switch (cur.*) {
+                    .vbox => |*v| {
+                        const idx = step.index;
+                        if (idx >= v.children.len) return null;
+                        cur = &v.children[idx];
+                    },
+                    else => return null,
+                }
+            },
+            .hbox_child => {
+                switch (cur.*) {
+                    .hbox => |*h| {
+                        const idx = step.index;
+                        if (idx >= h.children.len) return null;
+                        cur = &h.children[idx];
+                    },
+                    else => return null,
+                }
+            },
+            .grid_child => {
+                switch (cur.*) {
+                    .grid => |*g| {
+                        const idx = step.index;
+                        if (idx >= g.children.len) return null;
+                        cur = &g.children[idx];
+                    },
+                    else => return null,
+                }
+            },
+            .list_child => {
+                switch (cur.*) {
+                    .list => |*l| {
+                        const idx = step.index;
+                        if (idx >= l.children.len) return null;
+                        cur = &l.children[idx];
+                    },
+                    else => return null,
+                }
+            },
+            .box_child => {
+                switch (cur.*) {
+                    .box => |*b| cur = b.child,
+                    else => return null,
+                }
+            },
+            .scroll_child => {
+                switch (cur.*) {
+                    .scroll => |*s| cur = s.child,
+                    else => return null,
+                }
+            },
+            .overlay_base => {
+                switch (cur.*) {
+                    .overlay => |*o| cur = o.base,
+                    else => return null,
+                }
+            },
+            .overlay_layer => {
+                switch (cur.*) {
+                    .overlay => |*o| {
+                        const idx = step.index;
+                        if (idx >= o.layers.len) return null;
+                        cur = o.layers[idx].node;
+                    },
+                    else => return null,
+                }
+            },
+        }
+    }
+    return cur;
+}
+
+fn findNodePtrById(root: *protocol.Node, id: []const u8) ?*protocol.Node {
+    if (std.mem.eql(u8, nodeId(root.*), id)) return root;
+    return switch (root.*) {
+        .vbox => |*v| blk: {
+            for (v.children) |*child| {
+                if (findNodePtrById(child, id)) |ptr| break :blk ptr;
+            }
+            break :blk null;
+        },
+        .hbox => |*h| blk: {
+            for (h.children) |*child| {
+                if (findNodePtrById(child, id)) |ptr| break :blk ptr;
+            }
+            break :blk null;
+        },
+        .grid => |*g| blk: {
+            for (g.children) |*child| {
+                if (findNodePtrById(child, id)) |ptr| break :blk ptr;
+            }
+            break :blk null;
+        },
+        .box => |*b| findNodePtrById(b.child, id),
+        .scroll => |*s| findNodePtrById(s.child, id),
+        .overlay => |*o| blk: {
+            if (findNodePtrById(o.base, id)) |ptr| break :blk ptr;
+            for (o.layers) |*layer| {
+                if (findNodePtrById(layer.node, id)) |ptr| break :blk ptr;
+            }
+            break :blk null;
+        },
+        .list => |*l| blk: {
+            for (l.children) |*child| {
+                if (findNodePtrById(child, id)) |ptr| break :blk ptr;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
 pub fn treeContainsId(node: protocol.Node, id: []const u8) bool {
     if (std.mem.eql(u8, nodeId(node), id)) return true;
     return switch (node) {

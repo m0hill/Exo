@@ -20,10 +20,11 @@ newline-delimited JSON (**JSONL**) patches and receives input/focus/pointer even
 ```bash
 zig build demo
 zig build test
+zig build bench
 ```
 
 **Docs**
 
 - `docs/PROTOCOL.md` — JSONL protocol, node schema, styling, terminal caps/env overrides
 - `docs/DEVELOPMENT.md` — build/run tips, logging, troubleshooting
-
+- `docs/PERFORMANCE.md` — benchmark workloads, perf targets, runtime tuning knobs

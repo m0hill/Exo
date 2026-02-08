@@ -17,6 +17,8 @@ pub const DrawMetrics = struct {
     bytes: usize = 0,
     changed_cells: usize = 0,
     cursor_moves: usize = 0,
+    render_to_frame_ns: u64 = 0,
+    diff_flush_ns: u64 = 0,
 };
 
 pub const Renderer = struct {
@@ -56,17 +58,22 @@ pub const Renderer = struct {
             self.has_prev = false;
         }
 
+        const render_start_ns = monotonicNowNs();
         self.next.clear(' ');
         render.renderToFrame(root, state, &self.next);
         self.next.recomputeRowMax();
+        const render_end_ns = monotonicNowNs();
 
         var metrics: DrawMetrics = .{};
+        metrics.render_to_frame_ns = elapsedNs(render_start_ns, render_end_ns);
         var cur_style: style.PackedStyle = .{};
 
+        const flush_start_ns = monotonicNowNs();
         if (!caps.ansi or !caps.cursor_address) {
             metrics.full = true;
             try dumbPaint(term, &metrics, &self.next);
             self.has_prev = false;
+            metrics.diff_flush_ns = elapsedNs(flush_start_ns, monotonicNowNs());
             self.last_metrics = metrics;
             return;
         }
@@ -84,6 +91,7 @@ pub const Renderer = struct {
         }
 
         try applyCursor(term, &metrics, caps, self.next.cursor);
+        metrics.diff_flush_ns = elapsedNs(flush_start_ns, monotonicNowNs());
         self.last_metrics = metrics;
 
         std.mem.swap(Frame, &self.prev, &self.next);
@@ -96,6 +104,15 @@ fn effectiveSize(size: Size) Size {
     if (rows == 0) rows = 24;
     if (cols == 0) cols = 80;
     return .{ .rows = rows, .cols = cols };
+}
+
+fn monotonicNowNs() u64 {
+    const t = std.time.nanoTimestamp();
+    return if (t <= 0) 0 else @as(u64, @intCast(t));
+}
+
+fn elapsedNs(start: u64, end: u64) u64 {
+    return if (end >= start) end - start else 0;
 }
 
 fn termWriteAll(term: anytype, metrics: *DrawMetrics, bytes: []const u8) !void {

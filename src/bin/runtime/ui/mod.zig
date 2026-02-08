@@ -166,6 +166,8 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
     const eff = effectiveTermSize(size);
     const rows: usize = @as(usize, eff.rows);
     const cols: usize = @as(usize, eff.cols);
+    var layout_cache = render.LayoutCache.init(std.heap.page_allocator);
+    defer layout_cache.deinit();
 
     for (widgets.items) |*e| {
         switch (e.state) {
@@ -179,7 +181,7 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 if (s.selection_anchor != null and s.selection_anchor.? == s.cursor) s.selection_anchor = null;
 
                 var visible_cols: usize = inputVisibleCols(cols);
-                if (render.findRectForId(root, rows, cols, e.id.items)) |r| {
+                if (findRectNoScrollCached(&layout_cache, &root, rows, cols, e.id.items)) |r| {
                     visible_cols = inputVisibleCols(r.w);
                 }
                 _ = input.ensure_cursor_visible(&s.scroll_x, s.cursor, s.value.items, visible_cols);
@@ -189,7 +191,7 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
 
                 var visible_rows: usize = rows;
                 var visible_cols: usize = cols;
-                if (render.findRectForId(root, rows, cols, e.id.items)) |r| {
+                if (findRectNoScrollCached(&layout_cache, &root, rows, cols, e.id.items)) |r| {
                     visible_rows = r.h;
                     visible_cols = r.w;
                 }
@@ -211,7 +213,7 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 const l = node_util.findListNodeById(root, list_id) orelse continue;
                 var visible_height: usize = 0;
 
-                if (render.findRectForId(root, rows, cols, list_id)) |r| {
+                if (findRectNoScrollCached(&layout_cache, &root, rows, cols, list_id)) |r| {
                     visible_height = r.h;
                     const desired: usize = l.height orelse visible_height;
                     visible_height = @min(desired, visible_height);
@@ -915,6 +917,9 @@ pub fn syncUiAfterPatch(
     cols: usize,
 ) !void {
     const before_focus = focused_id.*; // pointer-backed slice; compare via optEql below
+    var no_scroll_layout_cache = render.LayoutCache.init(allocator);
+    defer no_scroll_layout_cache.deinit();
+    no_scroll_layout_cache.reset(&root, rows, cols, &.{});
 
     var focusables = try collectFocusables(allocator, root);
     defer focusables.deinit(allocator);
@@ -925,7 +930,7 @@ pub fn syncUiAfterPatch(
 
     pruneWidgetsNotInStateWidgets(allocator, widgets, widget_specs.items);
     try ensureWidgetsForStateWidgets(allocator, widgets, widget_specs.items);
-    try applyStateFromTree(allocator, widgets, root, rows, cols, state_widgets.items);
+    try applyStateFromTree(allocator, widgets, &no_scroll_layout_cache, &root, rows, cols, state_widgets.items);
 
     if (findTopmostModalLayer(root)) |modal_ptr| {
         var modal_focusables = try collectFocusables(allocator, modal_ptr.*);
@@ -993,6 +998,33 @@ fn rectContains(r: render.Rect, x: usize, y: usize) bool {
     if (x >= r.x + r.w) return false;
     if (y >= r.y + r.h) return false;
     return true;
+}
+
+fn findRectNoScrollCached(
+    cache: *render.LayoutCache,
+    root: *const protocol.Node,
+    rows: usize,
+    cols: usize,
+    id: []const u8,
+) ?render.Rect {
+    if (cache.root == null or cache.root.? != root or cache.rows != rows or cache.cols != cols or cache.scrolls.len != 0) {
+        cache.reset(root, rows, cols, &.{});
+    }
+    return cache.findRect(id);
+}
+
+fn findRectWithScrollCached(
+    cache: *render.LayoutCache,
+    root: *const protocol.Node,
+    rows: usize,
+    cols: usize,
+    scrolls: []const render.ScrollState,
+    id: []const u8,
+) ?render.Rect {
+    if (cache.root == null or cache.root.? != root or cache.rows != rows or cache.cols != cols or cache.scrolls.ptr != scrolls.ptr or cache.scrolls.len != scrolls.len) {
+        cache.reset(root, rows, cols, scrolls);
+    }
+    return cache.findRect(id);
 }
 
 fn collectRenderScrollStates(allocator: std.mem.Allocator, widgets: []const WidgetEntry) !std.ArrayList(render.ScrollState) {
@@ -1137,6 +1169,9 @@ fn handleMouseDownLeft(
 ) !bool {
     var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
     defer scroll_states.deinit(allocator);
+    var layout_cache = render.LayoutCache.init(allocator);
+    defer layout_cache.deinit();
+    layout_cache.reset(&root, rows, cols, scroll_states.items);
 
     const hit_root: protocol.Node = if (findTopmostModalLayer(root)) |modal_ptr| modal_ptr.* else root;
     var ids = try collectHitTestables(allocator, hit_root);
@@ -1146,7 +1181,7 @@ fn handleMouseDownLeft(
     var hit_rect: render.Rect = undefined;
 
     for (ids.items) |id| {
-        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states.items) orelse continue;
+        const r = layout_cache.findRect(id) orelse continue;
         if (rectContains(r, x, y)) {
             hit_id = id;
             hit_rect = r;
@@ -1271,6 +1306,9 @@ fn handleMouseWheel(
 ) !bool {
     var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
     defer scroll_states.deinit(allocator);
+    var layout_cache = render.LayoutCache.init(allocator);
+    defer layout_cache.deinit();
+    layout_cache.reset(&root, rows, cols, scroll_states.items);
 
     const hit_root: protocol.Node = if (findTopmostModalLayer(root)) |modal_ptr| modal_ptr.* else root;
     var ids = try collectHitTestables(allocator, hit_root);
@@ -1285,7 +1323,7 @@ fn handleMouseWheel(
         const widx = findWidgetIndex(widgets.items, id) orelse continue;
         if (widgets.items[widx].state != .list) continue;
 
-        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states.items) orelse continue;
+        const r = layout_cache.findRect(id) orelse continue;
         if (!rectContains(r, x, y)) continue;
         list_hit = id;
         list_hit_rect = r;
@@ -1323,7 +1361,7 @@ fn handleMouseWheel(
         const widx = findWidgetIndex(widgets.items, id) orelse continue;
         if (widgets.items[widx].state != .scroll) continue;
 
-        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states.items) orelse continue;
+        const r = layout_cache.findRect(id) orelse continue;
         if (!rectContains(r, x, y)) continue;
         scroll_hit = id;
     }
@@ -1401,7 +1439,8 @@ fn mergeWidgetSpecs(
 fn applyStateFromTree(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
-    root: protocol.Node,
+    layout_cache: *render.LayoutCache,
+    root: *const protocol.Node,
     rows: usize,
     cols: usize,
     state_widgets: []const StateWidgetSpec,
@@ -1409,10 +1448,10 @@ fn applyStateFromTree(
     for (state_widgets) |spec| {
         const idx = findWidgetIndex(widgets.items, spec.id) orelse continue;
         switch (spec.kind) {
-            .input => try applyInputStateFromNode(allocator, widgets, idx, root, rows, cols),
-            .textarea => try applyTextareaStateFromNode(allocator, widgets, idx, root, rows, cols),
-            .list => try applyListStateFromNode(allocator, widgets, idx, root, rows, cols),
-            .scroll => try applyScrollStateFromNode(widgets, idx, root),
+            .input => try applyInputStateFromNode(allocator, widgets, layout_cache, idx, root, rows, cols),
+            .textarea => try applyTextareaStateFromNode(allocator, widgets, layout_cache, idx, root, rows, cols),
+            .list => try applyListStateFromNode(allocator, widgets, layout_cache, idx, root, rows, cols),
+            .scroll => try applyScrollStateFromNode(widgets, idx, root.*),
             .action => {},
         }
     }
@@ -1429,12 +1468,13 @@ fn shouldApplyState(mode: protocol.StateMode, state_initialized: bool) bool {
 fn applyInputStateFromNode(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
+    layout_cache: *render.LayoutCache,
     idx: usize,
-    root: protocol.Node,
+    root: *const protocol.Node,
     rows: usize,
     cols: usize,
 ) !void {
-    const input_node = node_util.findInputNodeById(root, widgets.items[idx].id.items) orelse return;
+    const input_node = node_util.findInputNodeById(root.*, widgets.items[idx].id.items) orelse return;
     var entry = &widgets.items[idx];
     var st = &entry.state.input;
     const apply_mode = shouldApplyState(input_node.state_mode, entry.state_initialized);
@@ -1469,7 +1509,7 @@ fn applyInputStateFromNode(
 
     if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
     var visible_cols = inputVisibleCols(cols);
-    if (render.findRectForId(root, rows, cols, entry.id.items)) |r| visible_cols = inputVisibleCols(r.w);
+    if (findRectNoScrollCached(layout_cache, root, rows, cols, entry.id.items)) |r| visible_cols = inputVisibleCols(r.w);
     const max_scroll = if (st.value.items.len > visible_cols) st.value.items.len - visible_cols else 0;
     if (st.scroll_x > max_scroll) st.scroll_x = max_scroll;
 }
@@ -1477,12 +1517,13 @@ fn applyInputStateFromNode(
 fn applyTextareaStateFromNode(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
+    layout_cache: *render.LayoutCache,
     idx: usize,
-    root: protocol.Node,
+    root: *const protocol.Node,
     rows: usize,
     cols: usize,
 ) !void {
-    const textarea_node = node_util.findTextareaNodeById(root, widgets.items[idx].id.items) orelse return;
+    const textarea_node = node_util.findTextareaNodeById(root.*, widgets.items[idx].id.items) orelse return;
     var entry = &widgets.items[idx];
     var st = &entry.state.textarea;
     const apply_mode = shouldApplyState(textarea_node.state_mode, entry.state_initialized);
@@ -1517,7 +1558,7 @@ fn applyTextareaStateFromNode(
 
     var visible_rows: usize = rows;
     var visible_cols: usize = cols;
-    if (render.findRectForId(root, rows, cols, entry.id.items)) |r| {
+    if (findRectNoScrollCached(layout_cache, root, rows, cols, entry.id.items)) |r| {
         visible_rows = r.h;
         visible_cols = r.w;
     }
@@ -1536,12 +1577,13 @@ fn listModeSuppressesAutoSelect(mode: protocol.StateMode) bool {
 fn applyListStateFromNode(
     allocator: std.mem.Allocator,
     widgets: *std.ArrayList(WidgetEntry),
+    layout_cache: *render.LayoutCache,
     idx: usize,
-    root: protocol.Node,
+    root: *const protocol.Node,
     rows: usize,
     cols: usize,
 ) !void {
-    const list_node = node_util.findListNodeById(root, widgets.items[idx].id.items) orelse return;
+    const list_node = node_util.findListNodeById(root.*, widgets.items[idx].id.items) orelse return;
     var entry = &widgets.items[idx];
     var st = &entry.state.list;
     const apply_mode = shouldApplyState(list_node.state_mode, entry.state_initialized);
@@ -1555,7 +1597,7 @@ fn applyListStateFromNode(
         if (list_node.state_mode == .init) entry.state_initialized = true;
     }
 
-    const rect = render.findRectForId(root, rows, cols, entry.id.items);
+    const rect = findRectNoScrollCached(layout_cache, root, rows, cols, entry.id.items);
     const visible_height = if (rect) |r| listVisibleHeight(r, list_node) else (list_node.height orelse rows);
     const effective_height = if (visible_height == 0) list_node.children.len else visible_height;
     const max_scroll = if (list_node.children.len > effective_height) list_node.children.len - effective_height else 0;

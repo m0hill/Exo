@@ -215,13 +215,17 @@ pub fn hoverHitTestLeaky(
     const hit_root: protocol.Node = if (findTopmostModalLayer(root)) |modal_ptr| modal_ptr.* else root;
     if (!treeHasHoverables(hit_root)) return .{ .id = null, .item = null };
 
+    var layout_cache = render.LayoutCache.init(allocator);
+    defer layout_cache.deinit();
+    layout_cache.reset(&root, rows, cols, scrolls);
+
     var ids = try collectHoverables(allocator, hit_root);
     defer ids.deinit(allocator);
 
     var hit_id: ?[]const u8 = null;
     var hit_rect: render.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     for (ids.items) |id| {
-        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scrolls) orelse continue;
+        const r = layout_cache.findRect(id) orelse continue;
         if (rectContains(r, x, y)) {
             hit_id = id;
             hit_rect = r;

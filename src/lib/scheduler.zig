@@ -20,6 +20,7 @@ pub const FlushResult = struct {
     morph_count: usize = 0,
     morph_stats: tree.MorphStats = .{},
     dropped_targets: u64 = 0,
+    max_seq_applied: ?u64 = null,
 };
 
 pub const PutResult = enum {
@@ -28,9 +29,20 @@ pub const PutResult = enum {
     dropped_overflow,
 };
 
+pub const OverflowPolicy = enum {
+    drop_newest,
+    drop_oldest,
+};
+
+pub const InitOptions = struct {
+    max_pending_targets: usize,
+    overflow_policy: OverflowPolicy = .drop_newest,
+};
+
 const PendingFull = struct {
     arena: std.heap.ArenaAllocator,
     root: protocol.Node,
+    seq: ?u64,
 };
 
 const PendingTarget = struct {
@@ -38,11 +50,15 @@ const PendingTarget = struct {
     target: []const u8,
     node: protocol.Node,
     mode: protocol.PatchMode,
+    order: u64,
+    seq: ?u64,
 };
 
 pub const Scheduler = struct {
     allocator: std.mem.Allocator,
     max_pending_targets: usize,
+    overflow_policy: OverflowPolicy,
+    next_order: u64 = 1,
     pending_full: ?*PendingFull = null,
     pending_targets: std.StringHashMap(*PendingTarget),
     coalesced_full: u64 = 0,
@@ -50,9 +66,16 @@ pub const Scheduler = struct {
     dropped_targets: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator, max_pending_targets: usize) Scheduler {
+        return initWithOptions(allocator, .{
+            .max_pending_targets = max_pending_targets,
+        });
+    }
+
+    pub fn initWithOptions(allocator: std.mem.Allocator, options: InitOptions) Scheduler {
         return .{
             .allocator = allocator,
-            .max_pending_targets = max_pending_targets,
+            .max_pending_targets = options.max_pending_targets,
+            .overflow_policy = options.overflow_policy,
             .pending_targets = std.StringHashMap(*PendingTarget).init(allocator),
         };
     }
@@ -86,6 +109,15 @@ pub const Scheduler = struct {
     }
 
     pub fn putFullLeaky(self: *Scheduler, arena: *std.heap.ArenaAllocator, root: protocol.Node) !void {
+        return self.putFullLeakyWithSeq(arena, root, null);
+    }
+
+    pub fn putFullLeakyWithSeq(
+        self: *Scheduler,
+        arena: *std.heap.ArenaAllocator,
+        root: protocol.Node,
+        seq: ?u64,
+    ) !void {
         if (self.pending_full) |p| {
             self.coalesced_full += 1;
             p.arena.deinit();
@@ -100,6 +132,7 @@ pub const Scheduler = struct {
         p.* = .{
             .arena = takeArena(self.allocator, arena),
             .root = root,
+            .seq = seq,
         };
         self.pending_full = p;
     }
@@ -111,6 +144,17 @@ pub const Scheduler = struct {
         node: protocol.Node,
         mode: protocol.PatchMode,
     ) !PutResult {
+        return self.putTargetLeakyWithSeq(arena, target, node, mode, null);
+    }
+
+    pub fn putTargetLeakyWithSeq(
+        self: *Scheduler,
+        arena: *std.heap.ArenaAllocator,
+        target: []const u8,
+        node: protocol.Node,
+        mode: protocol.PatchMode,
+        seq: ?u64,
+    ) !PutResult {
         if (self.pending_targets.contains(target)) {
             self.coalesced_targets += 1;
             const old = self.pending_targets.fetchRemove(target).?.value;
@@ -121,9 +165,20 @@ pub const Scheduler = struct {
                 .target = target,
                 .node = node,
                 .mode = mode,
+                .order = self.takeOrder(),
+                .seq = seq,
             };
             try self.pending_targets.put(target, p);
             return .stored_overwrite;
+        }
+
+        if (self.pending_targets.count() >= self.max_pending_targets) {
+            if (self.overflow_policy == .drop_oldest and self.pending_targets.count() > 0) {
+                self.dropOldestTarget();
+            } else {
+                self.dropped_targets += 1;
+                return .dropped_overflow;
+            }
         }
 
         if (self.pending_targets.count() >= self.max_pending_targets) {
@@ -137,6 +192,8 @@ pub const Scheduler = struct {
             .target = target,
             .node = node,
             .mode = mode,
+            .order = self.takeOrder(),
+            .seq = seq,
         };
         try self.pending_targets.put(target, p);
         return .stored_new;
@@ -148,12 +205,23 @@ pub const Scheduler = struct {
         current_arena: *std.heap.ArenaAllocator,
         current_root: *?protocol.Node,
     ) !FlushResult {
+        return self.flushApplyLeakyWithIndex(allocator, current_arena, current_root, null);
+    }
+
+    pub fn flushApplyLeakyWithIndex(
+        self: *Scheduler,
+        allocator: std.mem.Allocator,
+        current_arena: *std.heap.ArenaAllocator,
+        current_root: *?protocol.Node,
+        id_index: ?*tree.IdIndex,
+    ) !FlushResult {
         var res: FlushResult = .{
             .dropped_targets = self.dropped_targets,
             .targets_pending = self.pending_targets.count(),
         };
 
         if (self.pending_full) |p| {
+            const full_seq = p.seq;
             current_arena.deinit();
             current_arena.* = p.arena;
             p.arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -161,6 +229,11 @@ pub const Scheduler = struct {
             self.allocator.destroy(p);
             self.pending_full = null;
             res.full_applied = true;
+            if (full_seq) |seq| res.max_seq_applied = seq;
+        }
+
+        if (id_index != null and current_root.* != null and res.full_applied) {
+            try id_index.?.rebuild(&current_root.*.?);
         }
 
         if (self.pending_targets.count() == 0) return res;
@@ -171,56 +244,39 @@ pub const Scheduler = struct {
             return res;
         }
 
-        var keys: std.ArrayList([]const u8) = .empty;
-        defer keys.deinit(allocator);
-        try keys.ensureTotalCapacityPrecise(allocator, self.pending_targets.count());
-        var it = self.pending_targets.iterator();
-        while (it.next()) |entry| {
-            try keys.append(allocator, entry.key_ptr.*);
-        }
-
-        std.sort.pdq([]const u8, keys.items, {}, struct {
-            fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-                return std.mem.order(u8, a, b) == .lt;
-            }
-        }.lessThan);
-
-        for (keys.items) |key| {
-            const kv = self.pending_targets.fetchRemove(key) orelse continue;
+        if (self.pending_targets.count() == 1) {
+            var it = self.pending_targets.iterator();
+            const entry = it.next() orelse return res;
+            const key = entry.key_ptr.*;
+            const kv = self.pending_targets.fetchRemove(key) orelse return res;
             const p = kv.value;
             defer destroyTarget(self.allocator, p);
-
-            const cloned = try cloneNodeLeaky(current_arena.allocator(), p.node);
-            var found: bool = false;
-            switch (p.mode) {
-                .replace => {
-                    found = tree.applyPatchById(&current_root.*.?, p.target, cloned);
-                    res.replace_count += 1;
-                },
-                .morph => {
-                    var stats: tree.MorphStats = .{};
-                    found = try tree.morphPatchByIdLeaky(
-                        current_arena.allocator(),
-                        &current_root.*.?,
-                        p.target,
-                        cloned,
-                        &stats,
-                    );
-                    res.morph_count += 1;
-                    res.morph_stats.reused += stats.reused;
-                    res.morph_stats.inserted += stats.inserted;
-                    res.morph_stats.removed += stats.removed;
-                    res.morph_stats.replaced += stats.replaced;
-                    res.morph_stats.type_mismatch += stats.type_mismatch;
-                },
+            try applyPendingTarget(current_arena, current_root, id_index, p, &res);
+        } else {
+            var keys: std.ArrayList([]const u8) = .empty;
+            defer keys.deinit(allocator);
+            try keys.ensureTotalCapacityPrecise(allocator, self.pending_targets.count());
+            var it = self.pending_targets.iterator();
+            while (it.next()) |entry| {
+                try keys.append(allocator, entry.key_ptr.*);
             }
 
-            res.targets_applied += 1;
-            if (found) {
-                res.targets_found += 1;
-            } else {
-                res.targets_not_found += 1;
+            std.sort.pdq([]const u8, keys.items, {}, struct {
+                fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+                    return std.mem.order(u8, a, b) == .lt;
+                }
+            }.lessThan);
+
+            for (keys.items) |key| {
+                const kv = self.pending_targets.fetchRemove(key) orelse continue;
+                const p = kv.value;
+                defer destroyTarget(self.allocator, p);
+                try applyPendingTarget(current_arena, current_root, id_index, p, &res);
             }
+        }
+
+        if (id_index != null and current_root.* != null and (res.targets_applied > 0 or res.full_applied)) {
+            try id_index.?.rebuild(&current_root.*.?);
         }
 
         return res;
@@ -233,6 +289,91 @@ pub const Scheduler = struct {
             const key = entry.key_ptr.*;
             const removed = self.pending_targets.fetchRemove(key) orelse break;
             destroyTarget(self.allocator, removed.value);
+        }
+    }
+
+    fn takeOrder(self: *Scheduler) u64 {
+        const out = self.next_order;
+        self.next_order += 1;
+        return out;
+    }
+
+    fn dropOldestTarget(self: *Scheduler) void {
+        var oldest_key: ?[]const u8 = null;
+        var oldest_order: u64 = std.math.maxInt(u64);
+
+        var it = self.pending_targets.iterator();
+        while (it.next()) |entry| {
+            const p = entry.value_ptr.*; // *PendingTarget
+            if (p.order < oldest_order) {
+                oldest_order = p.order;
+                oldest_key = entry.key_ptr.*;
+            }
+        }
+
+        const key = oldest_key orelse return;
+        const removed = self.pending_targets.fetchRemove(key) orelse return;
+        destroyTarget(self.allocator, removed.value);
+        self.dropped_targets += 1;
+    }
+
+    fn applyPendingTarget(
+        current_arena: *std.heap.ArenaAllocator,
+        current_root: *?protocol.Node,
+        id_index: ?*tree.IdIndex,
+        p: *PendingTarget,
+        res: *FlushResult,
+    ) !void {
+        const cloned = try cloneNodeLeaky(current_arena.allocator(), p.node);
+        var found: bool = false;
+        switch (p.mode) {
+            .replace => {
+                if (id_index) |idx| {
+                    found = tree.applyPatchByIdIndexed(&current_root.*.?, idx, p.target, cloned);
+                } else {
+                    found = tree.applyPatchById(&current_root.*.?, p.target, cloned);
+                }
+                res.replace_count += 1;
+            },
+            .morph => {
+                var stats: tree.MorphStats = .{};
+                if (id_index) |idx| {
+                    found = try tree.morphPatchByIdLeakyIndexed(
+                        current_arena.allocator(),
+                        &current_root.*.?,
+                        idx,
+                        p.target,
+                        cloned,
+                        &stats,
+                    );
+                } else {
+                    found = try tree.morphPatchByIdLeaky(
+                        current_arena.allocator(),
+                        &current_root.*.?,
+                        p.target,
+                        cloned,
+                        &stats,
+                    );
+                }
+                res.morph_count += 1;
+                res.morph_stats.reused += stats.reused;
+                res.morph_stats.inserted += stats.inserted;
+                res.morph_stats.removed += stats.removed;
+                res.morph_stats.replaced += stats.replaced;
+                res.morph_stats.type_mismatch += stats.type_mismatch;
+            },
+        }
+
+        res.targets_applied += 1;
+        if (found) {
+            res.targets_found += 1;
+            if (p.seq) |seq| {
+                if (res.max_seq_applied == null or seq > res.max_seq_applied.?) {
+                    res.max_seq_applied = seq;
+                }
+            }
+        } else {
+            res.targets_not_found += 1;
         }
     }
 };

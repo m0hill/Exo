@@ -1503,6 +1503,18 @@ pub fn main() !void {
                                 },
                             );
                         },
+                        .rendered => |r_ev| {
+                            std.debug.print(
+                                "EVENT_RX name=rendered seq={d} dropped={d} bytes={d} changed_cells={d}\n",
+                                .{ r_ev.seq, r_ev.dropped, r_ev.bytes, r_ev.changed_cells },
+                            );
+                        },
+                        .dropped => |d_ev| {
+                            std.debug.print(
+                                "EVENT_RX name=dropped seq={d} reason={s}\n",
+                                .{ d_ev.seq, d_ev.reason },
+                            );
+                        },
                     },
                     else => {},
                 }

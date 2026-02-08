@@ -964,4 +964,35 @@
       "Exit demo with x"
     ]
   }
+  ,
+  {
+    "slice": 34,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Performance + scalability: benchmark harness, hot-path instrumentation, typed patch parse fast-path, retained id/layout caches, and runtime backpressure/seq controls",
+    "deliverables": [
+      "build.zig + src/test/bench.zig + docs/PERFORMANCE.md: added `zig build bench` with representative synthetic workloads (full-tree @ 30fps, target patch, huge list, heavy markdown, large patch parse) and documented target budgets",
+      "src/bin/runtime/timing.zig + src/bin/runtime/app.zig + src/lib/renderer.zig: added runtime perf instrumentation (parse/scheduler/render-to-frame/diff-flush timings, bytes, changed cells) behind `TUI_PERF=1`; renderer metrics now include phase timings",
+      "src/lib/protocol/parse.zig: added typed patch fast-path (`PatchWire`) to avoid full top-level dynamic map parsing on patch hot path while preserving strict validation behavior",
+      "src/lib/tree.zig + src/lib/scheduler.zig: added retained `IdIndex` (`id -> path`) and indexed patch/morph application; scheduler now supports indexed flushes and tracks `max_seq_applied`",
+      "src/lib/render/mod.zig + src/lib/hover.zig + src/bin/runtime/ui/pointer.zig + src/bin/runtime/ui/mod.zig + src/bin/runtime/app.zig: added retained `LayoutCache` (`id -> rect`) and wired it into hit-testing/hover/pointer/focused-rect lookups to reduce repeated traversal work",
+      "src/lib/scheduler.zig + src/bin/runtime/timing.zig + src/bin/runtime/app.zig: added backpressure/coalescing knobs (`TUI_MAX_FPS`, `TUI_MAX_PENDING_TARGETS`, `TUI_MAX_BACKEND_LINES_PER_ITER`, `TUI_QUEUE_OVERFLOW=drop_newest|drop_oldest`)",
+      "src/lib/protocol/types.zig + src/lib/protocol/parse.zig + src/lib/protocol/write.zig + src/lib/protocol/mod.zig + src/bin/runtime/app.zig + src/bin/demo/main.zig: added optional patch `seq`, stale-seq dropping, and optional runtime `rendered`/`dropped` telemetry events (`TUI_EMIT_RENDER_EVENTS=1`)",
+      "src/test/layout.zig + src/test/tree.zig + src/test/scheduler.zig + src/test/protocol.zig: added coverage for layout cache usage, id index patching, scheduler seq/overflow behavior, and rendered/dropped + patch seq protocol parsing"
+    ],
+    "boundaries_hit": [
+      "Kept failure behavior strict: invalid/stale lines are dropped while runtime keeps the last good tree",
+      "Used optional runtime flags for observability/telemetry so default behavior remains backwards-compatible",
+      "Introduced retained caches incrementally with safe fallbacks to existing traversal paths when cache paths go stale"
+    ],
+    "timestamp": "2026-02-07",
+    "manual_repro": [
+      "zig build test",
+      "zig build bench -- --iters 20",
+      "Confirm bench output prints all 5 workloads with avg_ms/target_ms/fps",
+      "Run runtime with perf logs: `TUI_PERF=1 zig build demo` and confirm `PERF parse_ns=... sched_flush_ns=... render_to_frame_ns=... diff_flush_ns=...` entries in runtime log",
+      "Run runtime with sequencing telemetry enabled: `TUI_EMIT_RENDER_EVENTS=1 zig build demo` and confirm backend log shows `EVENT_RX name=rendered ...`",
+      "Optionally set backpressure knobs and verify startup `RUNTIME_CFG` log reflects values (e.g. `TUI_MAX_FPS=60 TUI_MAX_PENDING_TARGETS=64 TUI_QUEUE_OVERFLOW=drop_oldest`)"
+    ]
+  }
 ]

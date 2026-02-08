@@ -64,6 +64,71 @@ pub const Rect = struct {
     h: usize,
 };
 
+const CachedRect = struct {
+    found: bool,
+    rect: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
+};
+
+pub const LayoutCache = struct {
+    allocator: std.mem.Allocator,
+    root: ?*const protocol.Node = null,
+    rows: usize = 0,
+    cols: usize = 0,
+    scrolls: []const ScrollState = &.{},
+    rects: std.StringHashMap(CachedRect),
+
+    pub fn init(allocator: std.mem.Allocator) LayoutCache {
+        return .{
+            .allocator = allocator,
+            .rects = std.StringHashMap(CachedRect).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *LayoutCache) void {
+        self.clear();
+        self.rects.deinit();
+    }
+
+    pub fn clear(self: *LayoutCache) void {
+        var it = self.rects.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.rects.clearRetainingCapacity();
+    }
+
+    pub fn reset(
+        self: *LayoutCache,
+        root: *const protocol.Node,
+        rows: usize,
+        cols: usize,
+        scrolls: []const ScrollState,
+    ) void {
+        self.clear();
+        self.root = root;
+        self.rows = rows;
+        self.cols = cols;
+        self.scrolls = scrolls;
+    }
+
+    pub fn findRect(self: *LayoutCache, id: []const u8) ?Rect {
+        const root = self.root orelse return null;
+        if (self.rects.get(id)) |cached| {
+            return if (cached.found) cached.rect else null;
+        }
+
+        const resolved = findRectForIdWithScrolls(root.*, self.rows, self.cols, id, self.scrolls);
+        const key = self.allocator.dupe(u8, id) catch return resolved;
+        self.rects.put(key, .{
+            .found = resolved != null,
+            .rect = resolved orelse .{ .x = 0, .y = 0, .w = 0, .h = 0 },
+        }) catch {
+            self.allocator.free(key);
+        };
+        return resolved;
+    }
+};
+
 const RectI = struct {
     x: isize,
     y: isize,

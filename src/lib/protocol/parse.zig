@@ -37,21 +37,64 @@ const StateMode = protocol.StateMode;
 const ListMarker = protocol.ListMarker;
 const ParseMsgError = protocol.ParseMsgError;
 
+const PatchWire = struct {
+    type: []const u8 = "",
+    root: ?std.json.Value = null,
+    target: ?[]const u8 = null,
+    node: ?std.json.Value = null,
+    mode: ?[]const u8 = null,
+    seq: ?u64 = null,
+};
+
 pub fn parseMsgLeaky(allocator: std.mem.Allocator, line: []const u8) ParseMsgError!Msg {
+    if (looksLikePatchLine(line)) {
+        if (std.json.parseFromSliceLeaky(PatchWire, allocator, line, .{ .ignore_unknown_fields = true })) |pw| {
+            if (std.mem.eql(u8, pw.type, "patch")) return parsePatchWireLeaky(allocator, pw);
+        } else |_| {}
+    }
+
     const json = std.json.parseFromSliceLeaky(std.json.Value, allocator, line, .{}) catch {
         return error.InvalidJson;
     };
     return parseMsgValueLeaky(allocator, json);
 }
 
+fn looksLikePatchLine(line: []const u8) bool {
+    return std.mem.indexOf(u8, line, "\"type\":\"patch\"") != null;
+}
+
+fn parsePatchWireLeaky(allocator: std.mem.Allocator, pw: PatchWire) ParseMsgError!Msg {
+    if (pw.root) |root_val| {
+        if (pw.target != null or pw.node != null) return error.InvalidPatchShape;
+        const root = try parseNodeLeaky(allocator, root_val);
+        return .{ .patch = .{ .full = .{ .root = root, .seq = pw.seq } } };
+    }
+
+    if (pw.target == null and pw.node == null) return error.MissingField;
+    if (pw.target == null or pw.node == null) return error.InvalidPatchShape;
+
+    const mode = try parsePatchModeString(pw.mode orelse "replace");
+    const node = try parseNodeLeaky(allocator, pw.node.?);
+    return .{ .patch = .{ .target = .{
+        .target = pw.target.?,
+        .node = node,
+        .mode = mode,
+        .seq = pw.seq,
+    } } };
+}
+
 fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Msg {
     const obj = try asObject(v);
     const type_str = try getRequiredString(obj, "type");
     if (std.mem.eql(u8, type_str, "patch")) {
+        const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
+            @as(u64, @intCast(seq_usize))
+        else
+            null;
         if (obj.get("root")) |root_val| {
             if (obj.get("target") != null or obj.get("node") != null) return error.InvalidPatchShape;
             const root = try parseNodeLeaky(allocator, root_val);
-            return .{ .patch = .{ .full = .{ .root = root } } };
+            return .{ .patch = .{ .full = .{ .root = root, .seq = seq } } };
         }
 
         if (obj.get("target") == null and obj.get("node") == null) return error.MissingField;
@@ -61,7 +104,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         const mode = try parsePatchMode(obj);
         const node_val = try getRequired(obj, "node");
         const node = try parseNodeLeaky(allocator, node_val);
-        return .{ .patch = .{ .target = .{ .target = target, .node = node, .mode = mode } } };
+        return .{ .patch = .{ .target = .{ .target = target, .node = node, .mode = mode, .seq = seq } } };
     } else if (std.mem.eql(u8, type_str, "event")) {
         const name = try getRequiredString(obj, "name");
         if (std.mem.eql(u8, name, "key")) {
@@ -160,6 +203,24 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             const bytes = try getRequiredUsize(obj, "bytes");
             const pev: PasteEvent = .{ .source = src, .bytes = bytes };
             return .{ .event = .{ .paste = pev } };
+        } else if (std.mem.eql(u8, name, "rendered")) {
+            const seq_usize = try getRequiredUsize(obj, "seq");
+            const dropped = try getOptionalUsize(obj, "dropped") orelse 0;
+            const bytes = try getOptionalUsize(obj, "bytes") orelse 0;
+            const changed_cells = try getOptionalUsize(obj, "changed_cells") orelse 0;
+            return .{ .event = .{ .rendered = .{
+                .seq = @as(u64, @intCast(seq_usize)),
+                .dropped = dropped,
+                .bytes = bytes,
+                .changed_cells = changed_cells,
+            } } };
+        } else if (std.mem.eql(u8, name, "dropped")) {
+            const seq_usize = try getRequiredUsize(obj, "seq");
+            const reason = try getRequiredString(obj, "reason");
+            return .{ .event = .{ .dropped = .{
+                .seq = @as(u64, @intCast(seq_usize)),
+                .reason = reason,
+            } } };
         } else {
             return error.UnknownEventName;
         }
@@ -368,6 +429,10 @@ fn parsePatchMode(obj: std.json.ObjectMap) ParseMsgError!PatchMode {
         .string => |s| s,
         else => return error.WrongType,
     };
+    return parsePatchModeString(mode_str);
+}
+
+fn parsePatchModeString(mode_str: []const u8) ParseMsgError!PatchMode {
     if (std.mem.eql(u8, mode_str, "replace")) return .replace;
     if (std.mem.eql(u8, mode_str, "morph")) return .morph;
     return error.UnknownPatchMode;

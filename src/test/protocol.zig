@@ -846,3 +846,67 @@ test "protocol: parse grid node with tracks and placement" {
         else => return error.TestUnexpectedResult,
     }
 }
+
+test "protocol: parse patch seq field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const full_line = "{\"type\":\"patch\",\"seq\":12,\"root\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"ok\"}}";
+    const full_msg = try protocol.parseMsgLeaky(arena.allocator(), full_line);
+    const full_patch = switch (full_msg) {
+        .patch => |p| p,
+        else => return error.TestUnexpectedResult,
+    };
+    switch (full_patch) {
+        .full => |f| try std.testing.expectEqual(@as(?u64, 12), f.seq),
+        else => return error.TestUnexpectedResult,
+    }
+
+    const target_line = "{\"type\":\"patch\",\"seq\":99,\"target\":\"t\",\"node\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"next\"}}";
+    const target_msg = try protocol.parseMsgLeaky(arena.allocator(), target_line);
+    const target_patch = switch (target_msg) {
+        .patch => |p| p,
+        else => return error.TestUnexpectedResult,
+    };
+    switch (target_patch) {
+        .target => |t| try std.testing.expectEqual(@as(?u64, 99), t.seq),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: write+parse rendered and dropped events" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var rendered_buf: std.ArrayList(u8) = .empty;
+    defer rendered_buf.deinit(std.testing.allocator);
+    try protocol.writeRenderedEventJsonl(rendered_buf.writer(std.testing.allocator), 41, 3, 1024, 88);
+    const rendered_msg = try protocol.parseMsgLeaky(arena.allocator(), rendered_buf.items);
+    switch (rendered_msg) {
+        .event => |ev| switch (ev) {
+            .rendered => |r| {
+                try std.testing.expectEqual(@as(u64, 41), r.seq);
+                try std.testing.expectEqual(@as(u64, 3), r.dropped);
+                try std.testing.expectEqual(@as(usize, 1024), r.bytes);
+                try std.testing.expectEqual(@as(usize, 88), r.changed_cells);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    var dropped_buf: std.ArrayList(u8) = .empty;
+    defer dropped_buf.deinit(std.testing.allocator);
+    try protocol.writeDroppedEventJsonl(dropped_buf.writer(std.testing.allocator), 42, "stale_seq");
+    const dropped_msg = try protocol.parseMsgLeaky(arena.allocator(), dropped_buf.items);
+    switch (dropped_msg) {
+        .event => |ev| switch (ev) {
+            .dropped => |d| {
+                try std.testing.expectEqual(@as(u64, 42), d.seq);
+                try std.testing.expectEqualStrings("stale_seq", d.reason);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}

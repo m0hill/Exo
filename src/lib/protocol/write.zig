@@ -211,6 +211,25 @@ pub fn writePasteEventJsonl(writer: anytype, source: PasteSource, bytes: usize) 
     try writer.print(",\"bytes\":{d}}}\n", .{bytes});
 }
 
+pub fn writeRenderedEventJsonl(
+    writer: anytype,
+    seq: u64,
+    dropped: u64,
+    bytes: usize,
+    changed_cells: usize,
+) !void {
+    try writer.print(
+        "{{\"type\":\"event\",\"name\":\"rendered\",\"seq\":{d},\"dropped\":{d},\"bytes\":{d},\"changed_cells\":{d}}}\n",
+        .{ seq, dropped, bytes, changed_cells },
+    );
+}
+
+pub fn writeDroppedEventJsonl(writer: anytype, seq: u64, reason: []const u8) !void {
+    try writer.print("{{\"type\":\"event\",\"name\":\"dropped\",\"seq\":{d},\"reason\":", .{seq});
+    try writeJsonString(writer, reason);
+    try writer.writeAll("}\n");
+}
+
 pub fn writeConfigJsonl(writer: anytype, cfg: protocol.ConfigMsg) !void {
     if (cfg.keybindings == null and cfg.theme == null) return ParseMsgError.MissingField;
     try writer.writeAll("{\"type\":\"config\"");

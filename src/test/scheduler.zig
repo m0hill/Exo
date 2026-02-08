@@ -138,3 +138,40 @@ test "scheduler: full patch supersedes earlier targets and flush applies full th
     const v = current_root.?.vbox;
     try std.testing.expectEqualStrings("Tick: after", v.children[0].text.text);
 }
+
+test "scheduler: tracks max applied seq and supports drop_oldest overflow" {
+    var sched = scheduler_mod.Scheduler.initWithOptions(std.testing.allocator, .{
+        .max_pending_targets = 2,
+        .overflow_policy = .drop_oldest,
+    });
+    defer sched.deinit();
+
+    var current_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer current_arena.deinit();
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .text = "A" } },
+        .{ .text = .{ .id = "b", .text = "B" } },
+        .{ .text = .{ .id = "c", .text = "C" } },
+    };
+    var current_root: ?protocol.Node = .{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        _ = try sched.putTargetLeakyWithSeq(&a, "a", .{ .text = .{ .id = "a", .text = "A1" } }, .replace, 1);
+    }
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        _ = try sched.putTargetLeakyWithSeq(&a, "b", .{ .text = .{ .id = "b", .text = "B2" } }, .replace, 2);
+    }
+    {
+        var a = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer a.deinit();
+        _ = try sched.putTargetLeakyWithSeq(&a, "c", .{ .text = .{ .id = "c", .text = "C3" } }, .replace, 3);
+    }
+
+    const res = try sched.flushApplyLeaky(std.testing.allocator, &current_arena, &current_root);
+    try std.testing.expectEqual(@as(?u64, 3), res.max_seq_applied);
+    try std.testing.expect(res.dropped_targets >= 1);
+}

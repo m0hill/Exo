@@ -65,6 +65,22 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{ .root_module = tests_mod });
     const run_tests = b.addRunArtifact(tests);
+    if (b.args) |args| run_tests.addArgs(args);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+
+    const bench_mod = b.createModule(.{
+        .root_source_file = b.path("src/test/bench.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    bench_mod.addImport("tui", tui_mod);
+    const bench_exe = b.addExecutable(.{
+        .name = "tui_bench",
+        .root_module = bench_mod,
+    });
+    const run_bench = b.addRunArtifact(bench_exe);
+    if (b.args) |args| run_bench.addArgs(args);
+    const bench_step = b.step("bench", "Run synthetic performance benchmarks");
+    bench_step.dependOn(&run_bench.step);
 }

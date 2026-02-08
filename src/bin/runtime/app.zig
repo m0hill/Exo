@@ -9,6 +9,7 @@ const terminal = tui.terminal;
 const clipboard = tui.clipboard;
 const keys = tui.keys;
 const key_decode = tui.key_decode;
+const tree = tui.tree;
 
 const cmd = @import("cmd.zig");
 const log = @import("log.zig");
@@ -85,6 +86,19 @@ fn contextForFocusedKind(kind: ui.FocusKind) keybindings.Context {
     };
 }
 
+fn findRectNoScrollCached(
+    cache: *render.LayoutCache,
+    root: *const protocol.Node,
+    rows: usize,
+    cols: usize,
+    id: []const u8,
+) ?render.Rect {
+    if (cache.root == null or cache.root.? != root or cache.rows != rows or cache.cols != cols or cache.scrolls.len != 0) {
+        cache.reset(root, rows, cols, &.{});
+    }
+    return cache.findRect(id);
+}
+
 pub fn run() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true }){};
     defer _ = gpa.deinit();
@@ -107,6 +121,24 @@ pub fn run() !void {
 
     var log_sink = try log.initLogSink(allocator);
     defer log_sink.deinit();
+
+    const runtime_cfg = try timing.loadRuntimeConfig(allocator);
+    log.logPrint(
+        &log_sink,
+        "RUNTIME_CFG max_fps={d} frame_interval_ns={d} max_pending_targets={d} max_backend_lines={d} overflow={s} perf={s} rendered_events={s}\n",
+        .{
+            runtime_cfg.max_fps,
+            runtime_cfg.frame_interval_ns,
+            runtime_cfg.max_pending_targets,
+            runtime_cfg.max_backend_lines_per_iter,
+            switch (runtime_cfg.queue_overflow) {
+                .drop_newest => "drop_newest",
+                .drop_oldest => "drop_oldest",
+            },
+            if (runtime_cfg.perf_log) "true" else "false",
+            if (runtime_cfg.emit_render_events) "true" else "false",
+        },
+    );
 
     var renderer = renderer_mod.Renderer.initWithMode(allocator, term.caps().color);
     defer renderer.deinit();
@@ -147,8 +179,18 @@ pub fn run() !void {
     defer current_arena.deinit();
     var current_root: ?protocol.Node = null;
 
-    var sched = scheduler_mod.Scheduler.init(allocator, timing.max_pending_targets);
+    var sched = scheduler_mod.Scheduler.initWithOptions(allocator, .{
+        .max_pending_targets = runtime_cfg.max_pending_targets,
+        .overflow_policy = switch (runtime_cfg.queue_overflow) {
+            .drop_newest => .drop_newest,
+            .drop_oldest => .drop_oldest,
+        },
+    });
     defer sched.deinit();
+    var id_index = tree.IdIndex.init(allocator);
+    defer id_index.deinit();
+    var last_patch_seq_seen: u64 = 0;
+    var has_patch_seq_seen: bool = false;
     var last_render_ns: u64 = 0;
     var last_sched_counts: scheduler_mod.Counts = sched.counts();
 
@@ -211,10 +253,15 @@ pub fn run() !void {
         var resize_changed_this_iter: bool = false;
         var handled_input_this_iter: bool = false;
         var exit_now: bool = false;
+        var iter_parse_ns: u64 = 0;
+        var iter_parse_lines: usize = 0;
+        var iter_parse_bytes: usize = 0;
+        var no_scroll_layout_cache = render.LayoutCache.init(allocator);
+        defer no_scroll_layout_cache.deinit();
 
         const now_ns = timing.monotonicNowNs();
         const resize_timeout_ms = timing.pollTimeoutMsForPendingResize(pending_resize, last_resize_tx_ns);
-        const frame_timeout_ms = timing.pollTimeoutMsForPendingFrame(now_ns, last_render_ns, sched.hasPending());
+        const frame_timeout_ms = timing.pollTimeoutMsForPendingFrame(now_ns, last_render_ns, sched.hasPending(), runtime_cfg.frame_interval_ns);
         const decoder_timeout_ms: i32 = blk: {
             const deadline_ns = decoder.nextDeadlineNs() orelse break :blk -1;
             if (now_ns >= deadline_ns) break :blk 0;
@@ -240,7 +287,7 @@ pub fn run() !void {
         var sched_changed_live: bool = false;
         var events_processed: usize = 0;
         var next_timeout_ms: i32 = poll_timeout_ms;
-        while (events_processed < timing.max_backend_lines_per_iter) : (events_processed += 1) {
+        while (events_processed < runtime_cfg.max_backend_lines_per_iter) : (events_processed += 1) {
             const ev = mux.recvTimeout(next_timeout_ms) orelse break;
             next_timeout_ms = 0;
             switch (ev) {
@@ -280,6 +327,9 @@ pub fn run() !void {
                 },
                 .backend_line => |line| {
                     defer allocator.free(line);
+                    const parse_start_ns = timing.monotonicNowNs();
+                    iter_parse_lines += 1;
+                    iter_parse_bytes += line.len;
 
                     var next_arena = std.heap.ArenaAllocator.init(allocator);
                     defer next_arena.deinit();
@@ -290,6 +340,7 @@ pub fn run() !void {
                     };
 
                     const msg = protocol.parseMsgLeaky(next_arena.allocator(), line_owned) catch |e| {
+                        iter_parse_ns += timing.monotonicNowNs() - parse_start_ns;
                         if (e == error.UnknownPatchMode) {
                             log.logPrint(&log_sink, "PATCH_ERR reason=unknown_mode\n", .{});
                         } else if (e == error.UnknownKeyAction or e == error.InvalidKeybindingRule or e == error.UnknownThemeName) {
@@ -299,32 +350,65 @@ pub fn run() !void {
                         }
                         break;
                     };
+                    iter_parse_ns += timing.monotonicNowNs() - parse_start_ns;
 
                     switch (msg) {
                         .patch => |p| switch (p) {
                             .full => |f| {
-                                sched.putFullLeaky(&next_arena, f.root) catch |e| {
+                                if (f.seq) |seq| {
+                                    if (has_patch_seq_seen and seq <= last_patch_seq_seen) {
+                                        log.logPrint(&log_sink, "SCHED_DROP reason=stale_seq seq={d}\n", .{seq});
+                                        if (runtime_cfg.emit_render_events) {
+                                            try protocol.writeDroppedEventJsonl(child_in, seq, "stale_seq");
+                                            try child_in.flush();
+                                        }
+                                        break;
+                                    }
+                                    has_patch_seq_seen = true;
+                                    last_patch_seq_seen = seq;
+                                }
+
+                                sched.putFullLeakyWithSeq(&next_arena, f.root, f.seq) catch |e| {
                                     log.logPrint(&log_sink, "SCHED_ERR reason={s}\n", .{@errorName(e)});
                                     break;
                                 };
                                 sched_changed_live = true;
                             },
                             .target => |t| {
+                                if (t.seq) |seq| {
+                                    if (has_patch_seq_seen and seq <= last_patch_seq_seen) {
+                                        log.logPrint(&log_sink, "SCHED_DROP reason=stale_seq seq={d} target={s}\n", .{ seq, t.target });
+                                        if (runtime_cfg.emit_render_events) {
+                                            try protocol.writeDroppedEventJsonl(child_in, seq, "stale_seq");
+                                            try child_in.flush();
+                                        }
+                                        break;
+                                    }
+                                    has_patch_seq_seen = true;
+                                    last_patch_seq_seen = seq;
+                                }
+
                                 if (current_root == null and !sched.hasPendingFull()) {
                                     log.logPrint(&log_sink, "SCHED_DROP reason=no_root target={s}\n", .{t.target});
                                     break;
                                 }
 
-                                const r = sched.putTargetLeaky(&next_arena, t.target, t.node, t.mode) catch |e| {
+                                const r = sched.putTargetLeakyWithSeq(&next_arena, t.target, t.node, t.mode, t.seq) catch |e| {
                                     log.logPrint(&log_sink, "SCHED_ERR reason={s}\n", .{@errorName(e)});
                                     break;
                                 };
                                 switch (r) {
-                                    .dropped_overflow => log.logPrint(
-                                        &log_sink,
-                                        "SCHED_DROP reason=too_many_targets target={s}\n",
-                                        .{t.target},
-                                    ),
+                                    .dropped_overflow => {
+                                        log.logPrint(
+                                            &log_sink,
+                                            "SCHED_DROP reason=too_many_targets target={s}\n",
+                                            .{t.target},
+                                        );
+                                        if (runtime_cfg.emit_render_events and t.seq != null) {
+                                            try protocol.writeDroppedEventJsonl(child_in, t.seq.?, "queue_overflow");
+                                            try child_in.flush();
+                                        }
+                                    },
                                     else => sched_changed_live = true,
                                 }
                             },
@@ -380,7 +464,7 @@ pub fn run() !void {
                                         const changed = switch (focused_kind.?) {
                                             .input => blk: {
                                                 var visible_cols: usize = ui.inputVisibleCols(cols);
-                                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |rect| {
+                                                if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |rect| {
                                                     visible_cols = ui.inputVisibleCols(rect.w);
                                                 }
                                                 const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
@@ -396,7 +480,7 @@ pub fn run() !void {
                                             .textarea => blk: {
                                                 var visible_rows: usize = rows;
                                                 var visible_cols: usize = cols;
-                                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |rect| {
+                                                if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |rect| {
                                                     visible_rows = rect.h;
                                                     visible_cols = rect.w;
                                                 }
@@ -523,7 +607,7 @@ pub fn run() !void {
                                     const changed = switch (focused_kind.?) {
                                         .input => blk: {
                                             var visible_cols: usize = ui.inputVisibleCols(cols);
-                                            if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                            if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |r| {
                                                 visible_cols = ui.inputVisibleCols(r.w);
                                             }
                                             const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
@@ -539,7 +623,7 @@ pub fn run() !void {
                                         .textarea => blk: {
                                             var visible_rows: usize = rows;
                                             var visible_cols: usize = cols;
-                                            if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                            if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |r| {
                                                 visible_rows = r.h;
                                                 visible_cols = r.w;
                                             }
@@ -643,7 +727,7 @@ pub fn run() !void {
                                                 switch (focused_kind.?) {
                                                     .input => {
                                                         var visible_cols: usize = ui.inputVisibleCols(cols);
-                                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                        if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |r| {
                                                             visible_cols = ui.inputVisibleCols(r.w);
                                                         }
                                                         const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
@@ -695,7 +779,7 @@ pub fn run() !void {
                                                     .textarea => {
                                                         var visible_rows: usize = rows;
                                                         var visible_cols: usize = cols;
-                                                        if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                        if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |r| {
                                                             visible_rows = r.h;
                                                             visible_cols = r.w;
                                                         }
@@ -804,7 +888,7 @@ pub fn run() !void {
                                                 const rows: usize = @as(usize, last_term_size.rows);
                                                 const cols: usize = @as(usize, last_term_size.cols);
                                                 var visible_cols: usize = ui.inputVisibleCols(cols);
-                                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |r| {
                                                     visible_cols = ui.inputVisibleCols(r.w);
                                                 }
                                                 const readonly = ui.nodeReadonlyInTree(current_root.?, focused_id.?);
@@ -826,7 +910,7 @@ pub fn run() !void {
                                                 const cols: usize = @as(usize, last_term_size.cols);
                                                 var visible_rows: usize = rows;
                                                 var visible_cols: usize = cols;
-                                                if (render.findRectForId(current_root.?, rows, cols, focused_id.?)) |r| {
+                                                if (findRectNoScrollCached(&no_scroll_layout_cache, &current_root.?, rows, cols, focused_id.?)) |r| {
                                                     visible_rows = r.h;
                                                     visible_cols = r.w;
                                                 }
@@ -898,15 +982,17 @@ pub fn run() !void {
         try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
 
         const now_after = timing.monotonicNowNs();
-        if (requested_reason == null and timing.pollTimeoutMsForPendingFrame(now_after, last_render_ns, sched.hasPending()) == 0) {
+        if (requested_reason == null and timing.pollTimeoutMsForPendingFrame(now_after, last_render_ns, sched.hasPending(), runtime_cfg.frame_interval_ns) == 0) {
             requested_reason = .frame;
         }
 
         if (requested_reason) |reason| {
+            const flush_start_ns = timing.monotonicNowNs();
             const flush_res = if (sched.hasPending())
-                try sched.flushApplyLeaky(allocator, &current_arena, &current_root)
+                try sched.flushApplyLeakyWithIndex(allocator, &current_arena, &current_root, &id_index)
             else
                 scheduler_mod.FlushResult{ .dropped_targets = sched.counts().dropped_targets };
+            const sched_flush_ns = timing.monotonicNowNs() - flush_start_ns;
 
             if (current_root != null) {
                 const rows: usize = @as(usize, last_term_size.rows);
@@ -973,7 +1059,7 @@ pub fn run() !void {
                 )) {
                     // fall through; flushed below
                 }
-                pointer_engine.pruneAfterPatch(current_root.?);
+                pointer_engine.pruneAfterPatchWithIndex(current_root.?, &id_index);
                 try child_in.flush();
 
                 if (resize_changed_this_iter) {
@@ -1012,6 +1098,32 @@ pub fn run() !void {
                         renderer.last_metrics.cursor_moves,
                     },
                 );
+                if (runtime_cfg.emit_render_events and flush_res.max_seq_applied != null) {
+                    try protocol.writeRenderedEventJsonl(
+                        child_in,
+                        flush_res.max_seq_applied.?,
+                        flush_res.dropped_targets,
+                        renderer.last_metrics.bytes,
+                        renderer.last_metrics.changed_cells,
+                    );
+                    try child_in.flush();
+                }
+                if (runtime_cfg.perf_log) {
+                    log.logPrint(
+                        &log_sink,
+                        "PERF parse_ns={d} parse_lines={d} parse_bytes={d} sched_flush_ns={d} render_to_frame_ns={d} diff_flush_ns={d} bytes={d} changed_cells={d}\n",
+                        .{
+                            iter_parse_ns,
+                            iter_parse_lines,
+                            iter_parse_bytes,
+                            sched_flush_ns,
+                            renderer.last_metrics.render_to_frame_ns,
+                            renderer.last_metrics.diff_flush_ns,
+                            renderer.last_metrics.bytes,
+                            renderer.last_metrics.changed_cells,
+                        },
+                    );
+                }
             }
         }
     }

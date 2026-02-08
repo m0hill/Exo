@@ -79,3 +79,34 @@ test "tree: morph-by-id reorders and inserts children" {
     try std.testing.expectEqualStrings("clock", v.children[4].text.id);
     try std.testing.expectEqualStrings("Tick: 1", v.children[4].text.text);
 }
+
+test "tree: id index resolves and patches by id" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .text = "A" } },
+        .{ .text = .{ .id = "b", .text = "B" } },
+        .{ .text = .{ .id = "c", .text = "C" } },
+    };
+    var root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    var idx = tree.IdIndex.init(std.testing.allocator);
+    defer idx.deinit();
+    try idx.rebuild(&root);
+    try std.testing.expect(idx.contains("b"));
+
+    const found = tree.applyPatchByIdIndexed(&root, &idx, "b", .{ .text = .{ .id = "b", .text = "B2" } });
+    try std.testing.expect(found);
+    try std.testing.expectEqualStrings("B2", root.vbox.children[1].text.text);
+
+    try idx.rebuild(&root);
+    var stats: tree.MorphStats = .{};
+    const morphed = try tree.morphPatchByIdLeakyIndexed(
+        std.testing.allocator,
+        &root,
+        &idx,
+        "c",
+        .{ .text = .{ .id = "c", .text = "C2" } },
+        &stats,
+    );
+    try std.testing.expect(morphed);
+    try std.testing.expectEqualStrings("C2", root.vbox.children[2].text.text);
+}

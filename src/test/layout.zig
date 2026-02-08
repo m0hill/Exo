@@ -214,3 +214,21 @@ test "layout: overlay layers do not affect base layout height" {
     const r = render.findRectForId(root, 10, 10, "below") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 1), r.y);
 }
+
+test "layout: cache resolves repeated lookups" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .text = "A" } },
+        .{ .text = .{ .id = "b", .text = "B" } },
+    };
+    var root = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    var cache = render.LayoutCache.init(std.testing.allocator);
+    defer cache.deinit();
+    cache.reset(&root, 4, 10, &.{});
+
+    const r1 = cache.findRect("b") orelse return error.TestUnexpectedResult;
+    const r2 = cache.findRect("b") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(r1.x, r2.x);
+    try std.testing.expectEqual(r1.y, r2.y);
+    try std.testing.expect(cache.findRect("missing") == null);
+}

@@ -10,8 +10,8 @@ pub const Msg = union(enum) {
 };
 
 pub const PatchMsg = union(enum) {
-    full: struct { root: Node },
-    target: struct { target: []const u8, node: Node, mode: PatchMode = .replace },
+    full: struct { root: Node, seq: ?u64 = null },
+    target: struct { target: []const u8, node: Node, mode: PatchMode = .replace, seq: ?u64 = null },
 };
 
 pub const PatchMode = enum {
@@ -31,6 +31,8 @@ pub const EventMsg = union(enum) {
     pointer: PointerEvent,
     clipboard: ClipboardEvent,
     paste: PasteEvent,
+    rendered: struct { seq: u64, dropped: u64 = 0, bytes: usize = 0, changed_cells: usize = 0 },
+    dropped: struct { seq: u64, reason: []const u8 },
 };
 
 pub const ClipboardOp = enum {

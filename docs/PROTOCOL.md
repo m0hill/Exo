@@ -40,6 +40,17 @@ Patch mode:
 {"type":"patch","target":"root","mode":"morph","node":{"type":"vbox","id":"root","children":[]}}
 ```
 
+Optional patch sequencing:
+
+```json
+{"type":"patch","seq":42,"target":"clock","node":{"type":"text","id":"clock","text":"Tick: 42"}}
+```
+
+Notes:
+
+- runtime treats `seq` as monotonic and drops stale patches (`seq <= last_seen_seq`)
+- runtime continues rendering the last good tree when a patch is dropped/invalid
+
 ### Clipboard (backend → runtime)
 
 Write:
@@ -157,6 +168,13 @@ Clipboard result + paste semantic:
 ```json
 {"type":"event","name":"clipboard","op":"read","ok":true,"request_id":1,"data":"pasted"}
 {"type":"event","name":"paste","source":"clipboard","bytes":6}
+```
+
+Optional runtime render/drop telemetry:
+
+```json
+{"type":"event","name":"rendered","seq":42,"dropped":0,"bytes":512,"changed_cells":27}
+{"type":"event","name":"dropped","seq":41,"reason":"stale_seq"}
 ```
 
 ## Nodes

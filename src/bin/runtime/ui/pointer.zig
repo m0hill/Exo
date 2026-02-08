@@ -4,6 +4,7 @@ const tui = @import("tui");
 const mouse = tui.mouse;
 const protocol = tui.protocol;
 const render = tui.render;
+const tree = tui.tree;
 
 const widgets_mod = @import("widgets.zig");
 pub const widgets = widgets_mod;
@@ -69,16 +70,20 @@ pub const PointerEngine = struct {
     }
 
     pub fn pruneAfterPatch(self: *PointerEngine, root: protocol.Node) void {
+        self.pruneAfterPatchWithIndex(root, null);
+    }
+
+    pub fn pruneAfterPatchWithIndex(self: *PointerEngine, root: protocol.Node, id_index: ?*const tree.IdIndex) void {
         for (&self.captures) |*c| {
             const id = c.id orelse continue;
-            if (treeContainsId(root, id)) continue;
+            if (treeContainsIdFast(root, id, id_index)) continue;
             clearOptId(&c.id_buf, &c.id);
             clearOptId(&c.item_buf, &c.item);
             c.dragging = false;
         }
 
         if (self.last_over_id) |id| {
-            if (!treeContainsId(root, id)) clearOptId(&self.last_over_id_buf, &self.last_over_id);
+            if (!treeContainsIdFast(root, id, id_index)) clearOptId(&self.last_over_id_buf, &self.last_over_id);
         }
     }
 
@@ -119,10 +124,13 @@ pub const PointerEngine = struct {
         const hit_root: protocol.Node = if (findTopmostModalLayer(root)) |modal_ptr| modal_ptr.* else root;
         var scroll_states = try collectRenderScrollStates(allocator, widget_entries);
         defer scroll_states.deinit(allocator);
+        var layout_cache = render.LayoutCache.init(allocator);
+        defer layout_cache.deinit();
+        layout_cache.reset(&root, rows, cols, scroll_states.items);
 
         const x = x_opt.?;
         const y = y_opt.?;
-        const hit = try hitTestMouseables(allocator, hit_root, root, rows, cols, x, y, scroll_states.items, widget_entries);
+        const hit = try hitTestMouseables(allocator, hit_root, root, rows, cols, x, y, scroll_states.items, widget_entries, &layout_cache);
         if (hit.id == null) {
             if (self.last_over_id == null) return false;
             clearOptId(&self.last_over_id_buf, &self.last_over_id);
@@ -208,6 +216,9 @@ pub const PointerEngine = struct {
 
         var scroll_states = try collectRenderScrollStates(allocator, widget_entries);
         defer scroll_states.deinit(allocator);
+        var layout_cache = render.LayoutCache.init(allocator);
+        defer layout_cache.deinit();
+        layout_cache.reset(&root, rows, cols, scroll_states.items);
 
         // Resolve primary capture (left > middle > right).
         const primary_pressed = primaryPressedButton(self.pressed_buttons);
@@ -231,6 +242,7 @@ pub const PointerEngine = struct {
                     ev.y,
                     scroll_states.items,
                     widget_entries,
+                    &layout_cache,
                 );
                 if (hit.id == null) return false;
 
@@ -280,6 +292,7 @@ pub const PointerEngine = struct {
                         ev.y,
                         scroll_states.items,
                         widget_entries,
+                        &layout_cache,
                     );
                     if (hit) |hh| {
                         try protocol.writePointerEventJsonl(backend_in, .{
@@ -317,14 +330,14 @@ pub const PointerEngine = struct {
                     if (!cap.dragging) return false;
 
                     const id = cap.id.?;
-                    const hit = try hitTestId(root, rows, cols, id, ev.x, ev.y, scroll_states.items, widget_entries) orelse return false;
+                    const hit2 = try hitTestId(root, rows, cols, id, ev.x, ev.y, scroll_states.items, widget_entries, &layout_cache) orelse return false;
                     const out: PointerEvent = .{
                         .kind = .drag,
                         .id = id,
                         .x = ev.x,
                         .y = ev.y,
-                        .local_x = hit.local_x,
-                        .local_y = hit.local_y,
+                        .local_x = hit2.local_x,
+                        .local_y = hit2.local_y,
                         .button = .none,
                         .buttons = buttons,
                         .mods = ev.mods,
@@ -347,6 +360,7 @@ pub const PointerEngine = struct {
                     ev.y,
                     scroll_states.items,
                     widget_entries,
+                    &layout_cache,
                 );
 
                 if (hit.id == null) {
@@ -405,6 +419,7 @@ pub const PointerEngine = struct {
                     ev.y,
                     scroll_states.items,
                     widget_entries,
+                    &layout_cache,
                 );
                 if (hit.id == null) return false;
                 const out: PointerEvent = .{
@@ -525,6 +540,7 @@ fn hitTestMouseables(
     y: usize,
     scroll_states: []const render.ScrollState,
     widget_entries: []const widgets_mod.WidgetEntry,
+    layout_cache: *render.LayoutCache,
 ) !Hit {
     var ids = try tui.mouseable.collectMouseables(allocator, hit_root);
     defer ids.deinit(allocator);
@@ -532,8 +548,11 @@ fn hitTestMouseables(
     var hit_id: ?[]const u8 = null;
     var hit_rect: render.Rect = undefined;
 
+    _ = rows;
+    _ = cols;
+    _ = scroll_states;
     for (ids.items) |id| {
-        const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states) orelse continue;
+        const r = layout_cache.findRect(id) orelse continue;
         if (rectContains(r, x, y)) {
             hit_id = id;
             hit_rect = r;
@@ -557,8 +576,12 @@ fn hitTestId(
     y: usize,
     scroll_states: []const render.ScrollState,
     widget_entries: []const widgets_mod.WidgetEntry,
+    layout_cache: *render.LayoutCache,
 ) !?Hit {
-    const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states) orelse return null;
+    _ = rows;
+    _ = cols;
+    _ = scroll_states;
+    const r = layout_cache.findRect(id) orelse return null;
     const lx = clampLocal(x, r.x, r.w);
     const ly = clampLocal(y, r.y, r.h);
     const item = listItemAtPoint(root, widget_entries, id, r, y);
@@ -663,44 +686,9 @@ fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) v
     }
 }
 
-fn treeContainsId(node: protocol.Node, id: []const u8) bool {
-    if (std.mem.eql(u8, node_util.nodeId(node), id)) return true;
-    return switch (node) {
-        .vbox => |v| blk: {
-            for (v.children) |child| {
-                if (treeContainsId(child, id)) break :blk true;
-            }
-            break :blk false;
-        },
-        .hbox => |h| blk: {
-            for (h.children) |child| {
-                if (treeContainsId(child, id)) break :blk true;
-            }
-            break :blk false;
-        },
-        .grid => |g| blk: {
-            for (g.children) |child| {
-                if (treeContainsId(child, id)) break :blk true;
-            }
-            break :blk false;
-        },
-        .box => |b| treeContainsId(b.child.*, id),
-        .scroll => |s| treeContainsId(s.child.*, id),
-        .overlay => |o| blk: {
-            if (treeContainsId(o.base.*, id)) break :blk true;
-            for (o.layers) |layer| {
-                if (treeContainsId(layer.node.*, id)) break :blk true;
-            }
-            break :blk false;
-        },
-        .list => |l| blk: {
-            for (l.children) |child| {
-                if (treeContainsId(child, id)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
+fn treeContainsIdFast(root: protocol.Node, id: []const u8, id_index: ?*const tree.IdIndex) bool {
+    if (id_index) |idx| return idx.contains(id);
+    return tree.treeContainsId(root, id);
 }
 
 fn optEql(a: ?[]const u8, b: []const u8) bool {
