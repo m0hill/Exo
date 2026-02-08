@@ -235,6 +235,7 @@ pub const IOMux = struct {
     fn resizeThreadMain(self: *IOMux) void {
         var last: ?terminal.Size = null;
         while (true) {
+            if (self.queue.isClosed()) return;
             std.Thread.sleep(100 * std.time.ns_per_ms);
             const sz = self.term.getSize() catch continue;
             if (last) |prev| {
