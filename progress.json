@@ -1152,4 +1152,40 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 40,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Sequencing acknowledgements: runtime emits `ack` events for backend messages with `seq`, enabling backpressure and delivery confirmation",
+    "deliverables": [
+      "src/lib/protocol/types.zig: added `AckEvent` struct with `seq`, `status`, `detail` fields; added `EventMsg.ack` variant",
+      "src/lib/protocol/types.zig: added `seq` field to `ClipboardMsg` (write/read) and `ConfigMsg`",
+      "src/lib/protocol/write.zig: added `writeAckEventJsonl` helper for emitting ack events",
+      "src/lib/protocol/parse.zig: added parse support for ack events and seq fields on clipboard/config messages",
+      "src/lib/scheduler.zig: `FlushResult` now includes `applied_seqs` and `not_found_seqs` arrays for tracking sequenced operations",
+      "src/lib/scheduler.zig: added seq tracking in `putTargetLeakyWithSeq`, `putFullLeakyWithSeq` and flush result collection",
+      "src/bin/runtime/app.zig: emits ack events for queued/coalesced/applied/dropped operations with appropriate status and detail",
+      "docs/PROTOCOL.md: documented ack event schema, status values (queued/coalesced/applied/dropped_*), and backpressure guidance",
+      "src/test/scheduler.zig: added tests for seq tracking in flush results and dropped_overflow ack payload",
+      "src/test/protocol.zig: added parse/write roundtrip tests for ack events"
+    ],
+    "boundaries_hit": [
+      "One ack per backend message that includes seq",
+      "Status values: queued, coalesced, applied, dropped_overflow, dropped_stale, dropped_no_root, dropped_not_found, ignored_invalid",
+      "Detail field provides runtime context (full/target/queue_overflow/stale_seq/target_not_found)",
+      "Ack ordering is monotonic per stdout stream; queued may arrive before terminal status",
+      "Backends should bound in-flight seq messages to max_pending_targets"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build test",
+      "zig build demo",
+      "Send patch with seq; confirm runtime emits ack with status=queued, then later status=applied",
+      "Send target patch with seq for non-existent id; confirm ack status=dropped_not_found with detail=target_not_found",
+      "Send patches rapidly to overflow queue; confirm ack status=dropped_overflow with detail=queue_overflow",
+      "Send config with seq; confirm ack status=applied after processing",
+      "Exit with 'x'"
+    ]
+  }
 ]

@@ -33,6 +33,7 @@ pub const EventMsg = union(enum) {
     clipboard: ClipboardEvent,
     paste: PasteEvent,
     @"error": RuntimeErrorEvent,
+    ack: AckEvent,
     config_ack: ConfigAckEvent,
     rendered: struct { seq: u64, dropped: u64 = 0, bytes: usize = 0, changed_cells: usize = 0, v: ?u32 = null },
     dropped: struct { seq: u64, reason: []const u8, v: ?u32 = null },
@@ -72,8 +73,8 @@ pub const ClipboardTarget = enum {
 };
 
 pub const ClipboardMsg = union(enum) {
-    write: struct { data: []const u8, target: ClipboardTarget = .clipboard, v: ?u32 = null },
-    read: struct { request_id: u32, target: ClipboardTarget = .clipboard, v: ?u32 = null },
+    write: struct { data: []const u8, target: ClipboardTarget = .clipboard, seq: ?u64 = null, v: ?u32 = null },
+    read: struct { request_id: u32, target: ClipboardTarget = .clipboard, seq: ?u64 = null, v: ?u32 = null },
 };
 
 pub const ClipboardEvent = struct {
@@ -104,6 +105,13 @@ pub const RuntimeErrorEvent = struct {
     v: ?u32 = null,
 };
 
+pub const AckEvent = struct {
+    seq: u64,
+    status: []const u8,
+    detail: ?[]const u8 = null,
+    v: ?u32 = null,
+};
+
 pub const ConfigAckRejected = struct {
     key: []const u8,
     reason: []const u8,
@@ -118,6 +126,7 @@ pub const ConfigAckEvent = struct {
 pub const ConfigMsg = struct {
     keybindings: ?KeybindingsConfig = null,
     theme: ?ThemeName = null,
+    seq: ?u64 = null,
     v: ?u32 = null,
 };
 

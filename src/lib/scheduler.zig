@@ -21,6 +21,8 @@ pub const FlushResult = struct {
     morph_stats: tree.MorphStats = .{},
     dropped_targets: u64 = 0,
     max_seq_applied: ?u64 = null,
+    applied_seqs: []const u64 = &.{},
+    not_found_seqs: []const u64 = &.{},
 };
 
 pub const PutResult = enum {
@@ -220,6 +222,11 @@ pub const Scheduler = struct {
             .targets_pending = self.pending_targets.count(),
         };
 
+        const seq_capacity = self.pending_targets.count() + 1;
+        var seq_len: usize = 0;
+        var not_found_seq_len: usize = 0;
+        var empty_seq_buf: [0]u64 = .{};
+
         if (self.pending_full) |p| {
             const full_seq = p.seq;
             current_arena.deinit();
@@ -230,6 +237,25 @@ pub const Scheduler = struct {
             self.pending_full = null;
             res.full_applied = true;
             if (full_seq) |seq| res.max_seq_applied = seq;
+        }
+
+        const applied_seq_buf = if (seq_capacity > 0)
+            try current_arena.allocator().alloc(u64, seq_capacity)
+        else
+            empty_seq_buf[0..];
+        const not_found_seq_buf = if (seq_capacity > 0)
+            try current_arena.allocator().alloc(u64, seq_capacity)
+        else
+            empty_seq_buf[0..];
+        res.applied_seqs = applied_seq_buf[0..0];
+        res.not_found_seqs = not_found_seq_buf[0..0];
+        if (res.full_applied) {
+            if (res.max_seq_applied) |seq| {
+                if (seq_capacity > 0) {
+                    applied_seq_buf[seq_len] = seq;
+                    seq_len += 1;
+                }
+            }
         }
 
         if (id_index != null and current_root.* != null and res.full_applied) {
@@ -251,7 +277,17 @@ pub const Scheduler = struct {
             const kv = self.pending_targets.fetchRemove(key) orelse return res;
             const p = kv.value;
             defer destroyTarget(self.allocator, p);
-            try applyPendingTarget(current_arena, current_root, id_index, p, &res);
+            try applyPendingTarget(
+                current_arena,
+                current_root,
+                id_index,
+                p,
+                &res,
+                applied_seq_buf,
+                &seq_len,
+                not_found_seq_buf,
+                &not_found_seq_len,
+            );
         } else {
             var keys: std.ArrayList([]const u8) = .empty;
             defer keys.deinit(allocator);
@@ -271,7 +307,17 @@ pub const Scheduler = struct {
                 const kv = self.pending_targets.fetchRemove(key) orelse continue;
                 const p = kv.value;
                 defer destroyTarget(self.allocator, p);
-                try applyPendingTarget(current_arena, current_root, id_index, p, &res);
+                try applyPendingTarget(
+                    current_arena,
+                    current_root,
+                    id_index,
+                    p,
+                    &res,
+                    applied_seq_buf,
+                    &seq_len,
+                    not_found_seq_buf,
+                    &not_found_seq_len,
+                );
             }
         }
 
@@ -279,6 +325,10 @@ pub const Scheduler = struct {
             try id_index.?.rebuild(&current_root.*.?);
         }
 
+        if (seq_capacity > 0) {
+            res.applied_seqs = applied_seq_buf[0..seq_len];
+            res.not_found_seqs = not_found_seq_buf[0..not_found_seq_len];
+        }
         return res;
     }
 
@@ -323,6 +373,10 @@ pub const Scheduler = struct {
         id_index: ?*tree.IdIndex,
         p: *PendingTarget,
         res: *FlushResult,
+        applied_seq_buf: []u64,
+        seq_len: *usize,
+        not_found_seq_buf: []u64,
+        not_found_seq_len: *usize,
     ) !void {
         const cloned = try cloneNodeLeaky(current_arena.allocator(), p.node);
         var found: bool = false;
@@ -371,9 +425,19 @@ pub const Scheduler = struct {
                 if (res.max_seq_applied == null or seq > res.max_seq_applied.?) {
                     res.max_seq_applied = seq;
                 }
+                if (seq_len.* < applied_seq_buf.len) {
+                    applied_seq_buf[seq_len.*] = seq;
+                    seq_len.* += 1;
+                }
             }
         } else {
             res.targets_not_found += 1;
+            if (p.seq) |seq| {
+                if (not_found_seq_len.* < not_found_seq_buf.len) {
+                    not_found_seq_buf[not_found_seq_len.*] = seq;
+                    not_found_seq_len.* += 1;
+                }
+            }
         }
     }
 };

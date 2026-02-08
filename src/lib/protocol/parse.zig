@@ -27,6 +27,7 @@ const ClipboardEvent = protocol.ClipboardEvent;
 const PasteSource = protocol.PasteSource;
 const PasteEvent = protocol.PasteEvent;
 const RuntimeErrorEvent = protocol.RuntimeErrorEvent;
+const AckEvent = protocol.AckEvent;
 const ConfigAckRejected = protocol.ConfigAckRejected;
 const ConfigAckEvent = protocol.ConfigAckEvent;
 const HelloCaps = protocol.HelloCaps;
@@ -264,6 +265,17 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .v = version,
             };
             return .{ .event = .{ .@"error" = err_ev } };
+        } else if (std.mem.eql(u8, name, "ack")) {
+            const seq_usize = try getRequiredUsize(obj, "seq");
+            const status = try getRequiredString(obj, "status");
+            const detail = try getOptionalString(obj, "detail");
+            const ack_ev: AckEvent = .{
+                .seq = @as(u64, @intCast(seq_usize)),
+                .status = status,
+                .detail = detail,
+                .v = version,
+            };
+            return .{ .event = .{ .ack = ack_ev } };
         } else if (std.mem.eql(u8, name, "config_ack")) {
             const ack = try parseConfigAckEvent(allocator, obj, version);
             return .{ .event = .{ .config_ack = ack } };
@@ -293,12 +305,17 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
     } else if (std.mem.eql(u8, type_str, "clipboard")) {
         const op = try parseClipboardOp(obj);
         const target = try parseClipboardTarget(obj);
+        const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
+            @as(u64, @intCast(seq_usize))
+        else
+            null;
         switch (op) {
             .write => {
                 const data = try getRequiredString(obj, "data");
                 return .{ .clipboard = .{ .write = .{
                     .data = data,
                     .target = target,
+                    .seq = seq,
                     .v = version,
                 } } };
             },
@@ -315,6 +332,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 return .{ .clipboard = .{ .read = .{
                     .request_id = request_id,
                     .target = target,
+                    .seq = seq,
                     .v = version,
                 } } };
             },
@@ -337,8 +355,12 @@ fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap, v: ?u32
         break :blk try parseKeybindingsConfig(allocator, keybindings_obj);
     } else null;
     const theme: ?ThemeName = if (try getOptionalString(obj, "theme")) |name| try parseThemeName(name) else null;
+    const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
+        @as(u64, @intCast(seq_usize))
+    else
+        null;
     if (keybindings == null and theme == null) return error.MissingField;
-    return .{ .keybindings = keybindings, .theme = theme, .v = v };
+    return .{ .keybindings = keybindings, .theme = theme, .seq = seq, .v = v };
 }
 
 fn parseConfigAckEvent(

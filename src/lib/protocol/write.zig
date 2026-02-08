@@ -22,6 +22,7 @@ const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
 const PasteSource = protocol.PasteSource;
 const RuntimeErrorEvent = protocol.RuntimeErrorEvent;
+const AckEvent = protocol.AckEvent;
 const ConfigAckEvent = protocol.ConfigAckEvent;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
@@ -269,10 +270,29 @@ pub fn writePointerEventJsonlVersion(writer: anytype, ev: PointerEvent, v: ?u32)
 }
 
 pub fn writeClipboardWriteJsonl(writer: anytype, data: []const u8, target: ClipboardTarget) !void {
-    return writeClipboardWriteJsonlVersion(writer, data, target, null);
+    return writeClipboardWriteJsonlWithSeqVersion(writer, data, target, null, null);
 }
 
 pub fn writeClipboardWriteJsonlVersion(writer: anytype, data: []const u8, target: ClipboardTarget, v: ?u32) !void {
+    return writeClipboardWriteJsonlWithSeqVersion(writer, data, target, null, v);
+}
+
+pub fn writeClipboardWriteJsonlWithSeq(
+    writer: anytype,
+    data: []const u8,
+    target: ClipboardTarget,
+    seq: ?u64,
+) !void {
+    return writeClipboardWriteJsonlWithSeqVersion(writer, data, target, seq, null);
+}
+
+pub fn writeClipboardWriteJsonlWithSeqVersion(
+    writer: anytype,
+    data: []const u8,
+    target: ClipboardTarget,
+    seq: ?u64,
+    v: ?u32,
+) !void {
     try writer.writeAll("{\"type\":\"clipboard\"");
     try writeVersionField(writer, v);
     try writer.writeAll(",\"op\":\"write\",\"data\":");
@@ -281,20 +301,45 @@ pub fn writeClipboardWriteJsonlVersion(writer: anytype, data: []const u8, target
         try writer.writeAll(",\"target\":");
         try writeJsonString(writer, "clipboard");
     }
+    if (seq) |s| {
+        try writer.print(",\"seq\":{d}", .{s});
+    }
     try writer.writeAll("}\n");
 }
 
 pub fn writeClipboardReadJsonl(writer: anytype, request_id: u32, target: ClipboardTarget) !void {
-    return writeClipboardReadJsonlVersion(writer, request_id, target, null);
+    return writeClipboardReadJsonlWithSeqVersion(writer, request_id, target, null, null);
 }
 
 pub fn writeClipboardReadJsonlVersion(writer: anytype, request_id: u32, target: ClipboardTarget, v: ?u32) !void {
+    return writeClipboardReadJsonlWithSeqVersion(writer, request_id, target, null, v);
+}
+
+pub fn writeClipboardReadJsonlWithSeq(
+    writer: anytype,
+    request_id: u32,
+    target: ClipboardTarget,
+    seq: ?u64,
+) !void {
+    return writeClipboardReadJsonlWithSeqVersion(writer, request_id, target, seq, null);
+}
+
+pub fn writeClipboardReadJsonlWithSeqVersion(
+    writer: anytype,
+    request_id: u32,
+    target: ClipboardTarget,
+    seq: ?u64,
+    v: ?u32,
+) !void {
     try writer.writeAll("{\"type\":\"clipboard\"");
     try writeVersionField(writer, v);
     try writer.print(",\"op\":\"read\",\"request_id\":{d}", .{request_id});
     if (target != .clipboard) {
         try writer.writeAll(",\"target\":");
         try writeJsonString(writer, "clipboard");
+    }
+    if (seq) |s| {
+        try writer.print(",\"seq\":{d}", .{s});
     }
     try writer.writeAll("}\n");
 }
@@ -422,6 +467,34 @@ pub fn writeConfigAckEventJsonlVersion(writer: anytype, ack: ConfigAckEvent, v: 
     try writer.writeAll("]}\n");
 }
 
+pub fn writeAckEventJsonl(writer: anytype, seq: u64, status: []const u8, detail: ?[]const u8) !void {
+    return writeAckEventJsonlVersion(writer, seq, status, detail, null);
+}
+
+pub fn writeAckEventJsonlVersion(
+    writer: anytype,
+    seq: u64,
+    status: []const u8,
+    detail: ?[]const u8,
+    v: ?u32,
+) !void {
+    const ack: AckEvent = .{
+        .seq = seq,
+        .status = status,
+        .detail = detail,
+        .v = v,
+    };
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, ack.v);
+    try writer.print(",\"name\":\"ack\",\"seq\":{d},\"status\":", .{ack.seq});
+    try writeJsonString(writer, ack.status);
+    if (ack.detail) |d| {
+        try writer.writeAll(",\"detail\":");
+        try writeJsonString(writer, d);
+    }
+    try writer.writeAll("}\n");
+}
+
 pub fn writeRenderedEventJsonl(
     writer: anytype,
     seq: u64,
@@ -486,6 +559,9 @@ pub fn writeConfigJsonlVersion(writer: anytype, cfg: protocol.ConfigMsg, v: ?u32
             .light => "light",
             .ocean => "ocean",
         });
+    }
+    if (cfg.seq) |seq| {
+        try writer.print(",\"seq\":{d}", .{seq});
     }
     try writer.writeAll("}\n");
 }

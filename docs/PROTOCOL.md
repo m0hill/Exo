@@ -78,6 +78,12 @@ Read:
 {"type":"clipboard","op":"read","request_id":1,"target":"clipboard"}
 ```
 
+Optional sequencing:
+
+```json
+{"type":"clipboard","op":"read","request_id":1,"target":"clipboard","seq":101}
+```
+
 ### Config (backend -> runtime)
 
 Runtime keybindings can be replaced at runtime with a strict, replace-style message:
@@ -96,6 +102,12 @@ Config can also switch the active runtime theme:
 
 ```json
 {"type":"config","theme":"light"}
+```
+
+Optional sequencing:
+
+```json
+{"type":"config","theme":"light","seq":42}
 ```
 
 Rules:
@@ -214,6 +226,33 @@ Config acknowledgement event (runtime config negotiation result):
 - `rejected` is an array of `{ "key": string, "reason": string }`
 - malformed config that cannot be mapped to a specific top-level key uses `key:"config"`
 - keybindings are evaluated first; if keybindings fail, runtime rejects `theme` in the same message with reason `keybindings_rejected`
+
+Sequencing acknowledgement event:
+
+```json
+{"type":"event","name":"ack","seq":42,"status":"queued","detail":"target"}
+```
+
+`ack` rules:
+
+- runtime emits `ack` only for backend messages that include `seq`
+- backend message types supporting `seq`: `patch`, `config`, `clipboard`
+- `status` values:
+  - `queued`: accepted into scheduler queue
+  - `coalesced`: accepted and replaced an older pending target for the same id
+  - `applied`: applied to runtime state (or processed immediately for clipboard/config)
+  - `dropped_overflow`: dropped due to pending target overflow policy
+  - `dropped_stale`: dropped because `seq` was older than the latest seen patch `seq`
+  - `dropped_no_root`: dropped because a target patch arrived before any root/full state exists
+  - `dropped_not_found`: dropped at apply-time because target id was not found in current tree
+  - `ignored_invalid`: rejected by protocol/config validation
+- `detail` is optional, runtime-provided context (examples: `full`, `target`, `queue_overflow`, `stale_seq`, `target_not_found`, parser error name)
+
+Ordering + backpressure guidance:
+
+- ack ordering is monotonic per runtime stdout stream; `queued` may arrive before a later terminal status for the same `seq` (`applied` or `dropped_*`)
+- backends should bound in-flight `seq` messages (simple default: keep `<= max_pending_targets` patch messages in flight)
+- when receiving `dropped_overflow`, reduce send rate or wait for more terminal acks before sending additional target patches
 
 Optional runtime render/drop telemetry:
 

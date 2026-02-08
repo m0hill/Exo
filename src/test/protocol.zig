@@ -570,19 +570,25 @@ test "protocol: write+parse clipboard messages and events" {
     const msg_write = try protocol.parseMsgLeaky(arena.allocator(), line_write);
     switch (msg_write) {
         .clipboard => |c| switch (c) {
-            .write => |w| try std.testing.expectEqualStrings("hello", w.data),
+            .write => |w| {
+                try std.testing.expectEqualStrings("hello", w.data);
+                try std.testing.expectEqual(@as(?u64, null), w.seq);
+            },
             else => return error.TestUnexpectedResult,
         },
         else => return error.TestUnexpectedResult,
     }
 
     buf.clearRetainingCapacity();
-    try protocol.writeClipboardReadJsonl(buf.writer(std.testing.allocator), 7, .clipboard);
+    try protocol.writeClipboardReadJsonlWithSeq(buf.writer(std.testing.allocator), 7, .clipboard, 99);
     const line_read = buf.items[0 .. buf.items.len - 1];
     const msg_read = try protocol.parseMsgLeaky(arena.allocator(), line_read);
     switch (msg_read) {
         .clipboard => |c| switch (c) {
-            .read => |r| try std.testing.expectEqual(@as(u32, 7), r.request_id),
+            .read => |r| {
+                try std.testing.expectEqual(@as(u32, 7), r.request_id);
+                try std.testing.expectEqual(@as(?u64, 99), r.seq);
+            },
             else => return error.TestUnexpectedResult,
         },
         else => return error.TestUnexpectedResult,
@@ -697,7 +703,37 @@ test "protocol: parse config theme-only message" {
         .config => |cfg| {
             try std.testing.expect(cfg.keybindings == null);
             try std.testing.expectEqual(protocol.ThemeName.ocean, cfg.theme orelse return error.TestUnexpectedResult);
+            try std.testing.expectEqual(@as(?u64, null), cfg.seq);
         },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: parse config seq field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme\":\"ocean\",\"seq\":41}");
+    switch (msg) {
+        .config => |cfg| try std.testing.expectEqual(@as(?u64, 41), cfg.seq),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: write+parse config seq field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeConfigJsonl(buf.writer(std.testing.allocator), .{
+        .theme = .light,
+        .seq = 77,
+    });
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (msg) {
+        .config => |cfg| try std.testing.expectEqual(@as(?u64, 77), cfg.seq),
         else => return error.TestUnexpectedResult,
     }
 }
@@ -988,6 +1024,47 @@ test "protocol: write+parse config_ack event" {
                 try std.testing.expectEqual(@as(usize, 1), ack.rejected.len);
                 try std.testing.expectEqualStrings("theme", ack.rejected[0].key);
                 try std.testing.expectEqualStrings("keybindings_rejected", ack.rejected[0].reason);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: parse ack event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line = "{\"type\":\"event\",\"name\":\"ack\",\"seq\":42,\"status\":\"applied\",\"detail\":\"target\"}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    switch (msg) {
+        .event => |ev| switch (ev) {
+            .ack => |ack| {
+                try std.testing.expectEqual(@as(u64, 42), ack.seq);
+                try std.testing.expectEqualStrings("applied", ack.status);
+                try std.testing.expectEqualStrings("target", ack.detail orelse return error.TestUnexpectedResult);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: write+parse ack event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeAckEventJsonl(buf.writer(std.testing.allocator), 88, "dropped_overflow", "queue_overflow");
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (msg) {
+        .event => |ev| switch (ev) {
+            .ack => |ack| {
+                try std.testing.expectEqual(@as(u64, 88), ack.seq);
+                try std.testing.expectEqualStrings("dropped_overflow", ack.status);
+                try std.testing.expectEqualStrings("queue_overflow", ack.detail orelse return error.TestUnexpectedResult);
             },
             else => return error.TestUnexpectedResult,
         },
