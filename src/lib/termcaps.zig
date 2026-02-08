@@ -11,6 +11,9 @@ pub const Caps = struct {
     erase_eol: bool = true,
     alt_screen: bool = true,
     cursor_visibility: bool = true,
+    /// XTerm synchronized output (DECSET 2026). When supported, this prevents
+    /// visible intermediate states during large repaints (e.g. resize).
+    sync_output: bool = true,
     bracketed_paste: bool = true,
     mouse_sgr: bool = true,
     osc52: bool = true,
@@ -68,6 +71,7 @@ fn defaultCapsForProfile(p: Profile) Caps {
             .erase_eol = false,
             .alt_screen = false,
             .cursor_visibility = false,
+            .sync_output = false,
             .bracketed_paste = false,
             .mouse_sgr = false,
             .osc52 = false,
@@ -80,6 +84,7 @@ fn defaultCapsForProfile(p: Profile) Caps {
             .erase_eol = true,
             .alt_screen = true,
             .cursor_visibility = true,
+            .sync_output = true,
             .bracketed_paste = true,
             .mouse_sgr = true,
             .osc52 = true,
@@ -91,6 +96,7 @@ fn defaultCapsForProfile(p: Profile) Caps {
             .erase_eol = true,
             .alt_screen = true,
             .cursor_visibility = true,
+            .sync_output = true,
             .bracketed_paste = true,
             .mouse_sgr = true,
             .osc52 = true,
@@ -102,6 +108,7 @@ fn defaultCapsForProfile(p: Profile) Caps {
             .erase_eol = true,
             .alt_screen = true,
             .cursor_visibility = true,
+            .sync_output = true,
             .bracketed_paste = true,
             .mouse_sgr = true,
             .osc52 = true,
@@ -164,6 +171,7 @@ fn disableField(caps: *Caps, name: []const u8) void {
     if (std.mem.eql(u8, name, "erase_eol")) caps.erase_eol = false;
     if (std.mem.eql(u8, name, "altscreen") or std.mem.eql(u8, name, "alt_screen")) caps.alt_screen = false;
     if (std.mem.eql(u8, name, "cursor") or std.mem.eql(u8, name, "cursor_visibility")) caps.cursor_visibility = false;
+    if (std.mem.eql(u8, name, "sync_output") or std.mem.eql(u8, name, "sync")) caps.sync_output = false;
     if (std.mem.eql(u8, name, "bracketed_paste") or std.mem.eql(u8, name, "paste")) caps.bracketed_paste = false;
     if (std.mem.eql(u8, name, "mouse") or std.mem.eql(u8, name, "mouse_sgr")) caps.mouse_sgr = false;
     if (std.mem.eql(u8, name, "osc52")) caps.osc52 = false;

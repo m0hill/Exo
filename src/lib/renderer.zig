@@ -28,6 +28,7 @@ pub const Renderer = struct {
     next: Frame = .{},
     has_prev: bool = false,
     last_metrics: DrawMetrics = .{},
+    out: std.ArrayList(u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Renderer {
         return initWithMode(allocator, color.detectColorMode());
@@ -40,6 +41,7 @@ pub const Renderer = struct {
     pub fn deinit(self: *Renderer) void {
         self.prev.deinit(self.allocator);
         self.next.deinit(self.allocator);
+        self.out.deinit(self.allocator);
         self.has_prev = false;
         self.last_metrics = .{};
     }
@@ -68,10 +70,24 @@ pub const Renderer = struct {
         metrics.render_to_frame_ns = elapsedNs(render_start_ns, render_end_ns);
         var cur_style: style.PackedStyle = .{};
 
+        self.out.clearRetainingCapacity();
         const flush_start_ns = monotonicNowNs();
+
+        if (caps.ansi and caps.sync_output) {
+            try outWriteAll(self.allocator, &self.out, &metrics, "\x1b[?2026h");
+        }
+        if (caps.ansi and caps.cursor_visibility) {
+            // Hide cursor during rendering to avoid visible cursor jumps.
+            try outWriteAll(self.allocator, &self.out, &metrics, "\x1b[?25l");
+        }
+
         if (!caps.ansi or !caps.cursor_address) {
             metrics.full = true;
-            try dumbPaint(term, &metrics, &self.next);
+            try dumbPaint(self.allocator, &self.out, &metrics, &self.next);
+            if (caps.ansi and caps.sync_output) {
+                try outWriteAll(self.allocator, &self.out, &metrics, "\x1b[?2026l");
+            }
+            try term.writeAll(self.out.items);
             self.has_prev = false;
             metrics.diff_flush_ns = elapsedNs(flush_start_ns, monotonicNowNs());
             self.last_metrics = metrics;
@@ -79,18 +95,22 @@ pub const Renderer = struct {
         }
 
         // Start from a known SGR state; cursor moves don't reset style.
-        try termWriteAll(term, &metrics, "\x1b[0m");
+        try outWriteAll(self.allocator, &self.out, &metrics, "\x1b[0m");
 
         if (!self.has_prev) {
             metrics.full = true;
-            try fullPaint(term, &metrics, &cur_style, self.color_mode, caps, &self.next);
+            try fullPaint(self.allocator, &self.out, &metrics, &cur_style, self.color_mode, caps, &self.next);
             self.has_prev = true;
         } else {
             metrics.full = false;
-            try diffAndFlush(term, &metrics, &cur_style, self.color_mode, caps, &self.prev, &self.next);
+            try diffAndFlush(self.allocator, &self.out, &metrics, &cur_style, self.color_mode, caps, &self.prev, &self.next);
         }
 
-        try applyCursor(term, &metrics, caps, self.next.cursor);
+        try applyCursor(self.allocator, &self.out, &metrics, caps, self.next.cursor);
+        if (caps.ansi and caps.sync_output) {
+            try outWriteAll(self.allocator, &self.out, &metrics, "\x1b[?2026l");
+        }
+        try term.writeAll(self.out.items);
         metrics.diff_flush_ns = elapsedNs(flush_start_ns, monotonicNowNs());
         self.last_metrics = metrics;
 
@@ -115,19 +135,19 @@ fn elapsedNs(start: u64, end: u64) u64 {
     return if (end >= start) end - start else 0;
 }
 
-fn termWriteAll(term: anytype, metrics: *DrawMetrics, bytes: []const u8) !void {
-    try term.writeAll(bytes);
+fn outWriteAll(allocator: std.mem.Allocator, out: *std.ArrayList(u8), metrics: *DrawMetrics, bytes: []const u8) !void {
+    try out.appendSlice(allocator, bytes);
     metrics.bytes += bytes.len;
 }
 
-fn emitCursorMove(term: anytype, metrics: *DrawMetrics, row: usize, col: usize) !void {
+fn emitCursorMove(allocator: std.mem.Allocator, out: *std.ArrayList(u8), metrics: *DrawMetrics, row: usize, col: usize) !void {
     var esc_buf: [64]u8 = undefined;
     const esc = try std.fmt.bufPrint(&esc_buf, "\x1b[{d};{d}H", .{ row, col });
-    try termWriteAll(term, metrics, esc);
+    try outWriteAll(allocator, out, metrics, esc);
     metrics.cursor_moves += 1;
 }
 
-fn applyStyle(term: anytype, metrics: *DrawMetrics, cur: *style.PackedStyle, mode: color.ColorMode, next: style.PackedStyle) !void {
+fn applyStyle(allocator: std.mem.Allocator, out: *std.ArrayList(u8), metrics: *DrawMetrics, cur: *style.PackedStyle, mode: color.ColorMode, next: style.PackedStyle) !void {
     if (@as(u64, @bitCast(cur.*)) == @as(u64, @bitCast(next))) return;
 
     var buf: [128]u8 = undefined;
@@ -176,11 +196,11 @@ fn applyStyle(term: anytype, metrics: *DrawMetrics, cur: *style.PackedStyle, mod
     }
 
     try w.writeByte('m');
-    try termWriteAll(term, metrics, fbs.getWritten());
+    try outWriteAll(allocator, out, metrics, fbs.getWritten());
     cur.* = next;
 }
 
-fn dumbPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
+fn dumbPaint(allocator: std.mem.Allocator, out: *std.ArrayList(u8), metrics: *DrawMetrics, next: *const Frame) !void {
     const rows: usize = @as(usize, next.rows);
     const cols: usize = @as(usize, next.cols);
 
@@ -192,27 +212,31 @@ fn dumbPaint(term: anytype, metrics: *DrawMetrics, next: *const Frame) !void {
             const cell = row[c];
             if (cell.continuation) continue;
             if (cell.len == 0) {
-                try termWriteAll(term, metrics, " ");
+                try outWriteAll(allocator, out, metrics, " ");
             } else {
-                try termWriteAll(term, metrics, cell.slice());
+                try outWriteAll(allocator, out, metrics, cell.slice());
             }
         }
-        if (r + 1 < rows) try termWriteAll(term, metrics, "\r\n");
+        if (r + 1 < rows) try outWriteAll(allocator, out, metrics, "\r\n");
     }
 }
 
 fn fullPaint(
-    term: anytype,
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
     metrics: *DrawMetrics,
     cur_style: *style.PackedStyle,
     mode: color.ColorMode,
     caps: termcaps.Caps,
     next: *const Frame,
 ) !void {
-    if (caps.clear_screen) {
-        try termWriteAll(term, metrics, "\x1b[2J\x1b[H");
+    // Prefer avoiding full-screen clears when we can reliably clear each line.
+    // This reduces visible flicker on repaints (e.g. during resize) on terminals
+    // without synchronized output support.
+    if (caps.clear_screen and !caps.erase_eol) {
+        try outWriteAll(allocator, out, metrics, "\x1b[2J\x1b[H");
     } else {
-        try termWriteAll(term, metrics, "\x1b[H");
+        try outWriteAll(allocator, out, metrics, "\x1b[H");
     }
 
     const rows: usize = @as(usize, next.rows);
@@ -227,24 +251,24 @@ fn fullPaint(
             while (c < max) : (c += 1) {
                 const cell = row[c];
                 if (cell.continuation) continue;
-                try applyStyle(term, metrics, cur_style, mode, cell.style);
+                try applyStyle(allocator, out, metrics, cur_style, mode, cell.style);
                 if (cell.len == 0) {
-                    try termWriteAll(term, metrics, " ");
+                    try outWriteAll(allocator, out, metrics, " ");
                 } else {
-                    try termWriteAll(term, metrics, cell.slice());
+                    try outWriteAll(allocator, out, metrics, cell.slice());
                 }
             }
         }
         if (caps.erase_eol and max < cols) {
-            try applyStyle(term, metrics, cur_style, mode, .{});
-            try termWriteAll(term, metrics, "\x1b[K");
+            try applyStyle(allocator, out, metrics, cur_style, mode, .{});
+            try outWriteAll(allocator, out, metrics, "\x1b[K");
         }
         if (r + 1 < rows) {
             if (max == cols) {
                 // Avoid relying on terminal wrap behavior at the last column.
-                try emitCursorMove(term, metrics, r + 2, 1);
+                try emitCursorMove(allocator, out, metrics, r + 2, 1);
             } else {
-                try termWriteAll(term, metrics, "\r\n");
+                try outWriteAll(allocator, out, metrics, "\r\n");
             }
         }
     }
@@ -259,7 +283,8 @@ fn cellsEqual(a: Cell, b: Cell) bool {
 }
 
 fn diffAndFlush(
-    term: anytype,
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
     metrics: *DrawMetrics,
     cur_style: *style.PackedStyle,
     mode: color.ColorMode,
@@ -294,16 +319,16 @@ fn diffAndFlush(
                 c += 1;
                 while (c < compare_end and !cellsEqual(prev_row[c], next_row[c])) : (c += 1) {}
 
-                try emitCursorMove(term, metrics, r + 1, start + 1);
+                try emitCursorMove(allocator, out, metrics, r + 1, start + 1);
                 var col: usize = start;
                 while (col < c) : (col += 1) {
                     const cell = next_row[col];
                     if (cell.continuation) continue;
-                    try applyStyle(term, metrics, cur_style, mode, cell.style);
+                    try applyStyle(allocator, out, metrics, cur_style, mode, cell.style);
                     if (cell.len == 0) {
-                        try termWriteAll(term, metrics, " ");
+                        try outWriteAll(allocator, out, metrics, " ");
                     } else {
-                        try termWriteAll(term, metrics, cell.slice());
+                        try outWriteAll(allocator, out, metrics, cell.slice());
                     }
                 }
                 metrics.changed_cells += c - start;
@@ -312,14 +337,14 @@ fn diffAndFlush(
 
         if (next_max < prev_max) {
             const erase_col = next_max + 1;
-            try emitCursorMove(term, metrics, r + 1, erase_col);
-            try applyStyle(term, metrics, cur_style, mode, .{});
+            try emitCursorMove(allocator, out, metrics, r + 1, erase_col);
+            try applyStyle(allocator, out, metrics, cur_style, mode, .{});
             if (caps.erase_eol) {
-                try termWriteAll(term, metrics, "\x1b[K");
+                try outWriteAll(allocator, out, metrics, "\x1b[K");
             } else {
                 var i: usize = 0;
                 while (i < (prev_max - next_max)) : (i += 1) {
-                    try termWriteAll(term, metrics, " ");
+                    try outWriteAll(allocator, out, metrics, " ");
                 }
             }
             metrics.changed_cells += prev_max - next_max;
@@ -327,12 +352,12 @@ fn diffAndFlush(
     }
 }
 
-fn applyCursor(term: anytype, metrics: *DrawMetrics, caps: termcaps.Caps, cursor: ?CursorPos) !void {
+fn applyCursor(allocator: std.mem.Allocator, out: *std.ArrayList(u8), metrics: *DrawMetrics, caps: termcaps.Caps, cursor: ?CursorPos) !void {
     if (!caps.cursor_visibility) return;
     if (cursor) |c| {
-        try termWriteAll(term, metrics, "\x1b[?25h");
-        try emitCursorMove(term, metrics, c.row, c.col);
+        try outWriteAll(allocator, out, metrics, "\x1b[?25h");
+        try emitCursorMove(allocator, out, metrics, c.row, c.col);
     } else {
-        try termWriteAll(term, metrics, "\x1b[?25l");
+        try outWriteAll(allocator, out, metrics, "\x1b[?25l");
     }
 }

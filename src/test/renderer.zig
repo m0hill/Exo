@@ -76,7 +76,7 @@ test "renderer: second draw is incremental" {
         .inputs = &.{.{ .id = "query", .value = "", .cursor = 0, .scroll_x = 0 }},
     });
     const out1_len: usize = term.out.items.len;
-    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2J") != null);
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[H") != null);
 
     term.reset();
 
@@ -86,8 +86,8 @@ test "renderer: second draw is incremental" {
     });
 
     const out2 = term.out.items;
-    try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[2J") == null);
-    try std.testing.expect(out2.len * 5 < out1_len);
+    try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[H") == null);
+    try std.testing.expect(out2.len * 2 < out1_len);
     try std.testing.expect(std.mem.indexOf(u8, out2, "\x1b[3;7H") != null);
     try std.testing.expect(std.mem.indexOf(u8, out2, "1") != null);
     try std.testing.expect(std.mem.indexOf(u8, out2, "Tracer Demo") == null);
@@ -121,7 +121,7 @@ test "renderer: resize forces full repaint" {
         .inputs = &.{.{ .id = "query", .value = "hello", .cursor = 5, .scroll_x = 0 }},
     });
     try std.testing.expect(renderer.last_metrics.full);
-    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[2J") != null);
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[H") != null);
 }
 
 test "renderer: styled_text emits SGR changes across spans" {

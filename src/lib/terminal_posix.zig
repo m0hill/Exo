@@ -66,6 +66,7 @@ pub fn restoreBestEffort() void {
 
     // Try to leave the terminal in a reasonable state even if we don't know
     // what was enabled.
+    writeAllBestEffort(st.stdout_fd, "\x1b[?2026l"); // disable synchronized output
     writeAllBestEffort(st.stdout_fd, "\x1b[?2004l"); // disable bracketed paste
     writeAllBestEffort(st.stdout_fd, "\x1b[?1003l"); // disable mouse motion
     writeAllBestEffort(st.stdout_fd, "\x1b[?1002l"); // disable mouse motion (button)
@@ -240,6 +241,7 @@ pub const Terminal = struct {
 
     pub fn deinit(self: *Terminal) void {
         if (self.caps_.ansi) {
+            _ = self.writeAll("\x1b[?2026l") catch {};
             if (self.paste_enabled) {
                 _ = self.writeAll("\x1b[?2004l") catch {};
                 self.paste_enabled = false;

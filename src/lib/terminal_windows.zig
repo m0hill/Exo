@@ -113,6 +113,7 @@ pub const Terminal = struct {
 
     pub fn deinit(self: *Terminal) void {
         if (self.caps_.ansi) {
+            _ = self.writeAll("\x1b[?2026l") catch {};
             if (self.paste_enabled) {
                 _ = self.writeAll("\x1b[?2004l") catch {};
                 self.paste_enabled = false;
@@ -311,6 +312,7 @@ pub fn restoreBestEffort() void {
 
     const st: CrashRestoreState = if (crash_state_active) crash_state else .{};
     if (st.stdout_handle != windows.INVALID_HANDLE_VALUE) {
+        writeAllBestEffort(st.stdout_handle, "\x1b[?2026l");
         writeAllBestEffort(st.stdout_handle, "\x1b[?2004l");
         writeAllBestEffort(st.stdout_handle, "\x1b[?1003l");
         writeAllBestEffort(st.stdout_handle, "\x1b[?1002l");
