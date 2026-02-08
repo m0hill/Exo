@@ -7,6 +7,7 @@ const markdown = tui.markdown;
 const widget_kit = tui.widget_kit;
 
 const state = @import("state.zig");
+const DEMO_PROTOCOL_VERSION: u32 = 1;
 
 pub fn emitInitialFull(
     allocator: std.mem.Allocator,
@@ -27,7 +28,7 @@ pub fn emitInitialFull(
     widgets: state.WidgetsState,
     tick: u64,
 ) !void {
-    try writer.writeAll("{\"type\":\"patch\",\"root\":");
+    try writer.print("{{\"type\":\"patch\",\"v\":{d},\"root\":", .{DEMO_PROTOCOL_VERSION});
     try writeRootNode(
         allocator,
         writer,
@@ -71,7 +72,7 @@ pub fn emitRootMorphPatch(
     widgets: state.WidgetsState,
     tick: u64,
 ) !void {
-    try writer.writeAll("{\"type\":\"patch\",\"target\":\"root\",\"mode\":\"morph\",\"node\":");
+    try writer.print("{{\"type\":\"patch\",\"v\":{d},\"target\":\"root\",\"mode\":\"morph\",\"node\":", .{DEMO_PROTOCOL_VERSION});
     try writeRootNode(
         allocator,
         writer,

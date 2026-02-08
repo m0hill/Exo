@@ -17,6 +17,19 @@ Every line is a single JSON object with a `type`:
 - `config` (backend → runtime)
 - `theme` (backend → runtime)
 
+Optional top-level version field:
+
+- `v` (integer, optional) can appear on any message type
+- current protocol version is `1`
+- receivers must accept messages with or without `v`
+- senders may omit `v` to keep payloads smaller
+
+Compatibility policy:
+
+- additive fields are non-breaking
+- unknown fields must be ignored
+- removing or changing meaning of existing fields is breaking and requires a new version rollout plan
+
 ### Patch (backend → runtime)
 
 Full tree (replace root):

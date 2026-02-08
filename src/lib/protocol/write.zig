@@ -49,16 +49,36 @@ pub fn writeJsonString(writer: anytype, s: []const u8) !void {
     try writer.writeByte('"');
 }
 
+fn writeVersionField(writer: anytype, v: ?u32) !void {
+    if (v) |version| {
+        try writer.print(",\"v\":{d}", .{version});
+    }
+}
+
 pub fn writeEventJsonl(writer: anytype, key: []const u8) !void {
-    return writeKeyEventJsonl(writer, key);
+    return writeEventJsonlVersion(writer, key, null);
+}
+
+pub fn writeEventJsonlVersion(writer: anytype, key: []const u8, v: ?u32) !void {
+    return writeKeyEventJsonlVersion(writer, key, v);
 }
 
 pub fn writeKeyEventJsonl(writer: anytype, key: []const u8) !void {
-    return writeKeyEventJsonlFull(writer, key, 0, null);
+    return writeKeyEventJsonlVersion(writer, key, null);
+}
+
+pub fn writeKeyEventJsonlVersion(writer: anytype, key: []const u8, v: ?u32) !void {
+    return writeKeyEventJsonlFullVersion(writer, key, 0, null, v);
 }
 
 pub fn writeKeyEventJsonlFull(writer: anytype, key: []const u8, mods: u8, seq: ?[]const u8) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"key\",\"key\":");
+    return writeKeyEventJsonlFullVersion(writer, key, mods, seq, null);
+}
+
+pub fn writeKeyEventJsonlFullVersion(writer: anytype, key: []const u8, mods: u8, seq: ?[]const u8, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"key\",\"key\":");
     try writeJsonString(writer, key);
     if (mods != 0) {
         try writer.print(",\"mods\":{d}", .{mods});
@@ -71,13 +91,25 @@ pub fn writeKeyEventJsonlFull(writer: anytype, key: []const u8, mods: u8, seq: ?
 }
 
 pub fn writeFocusEventJsonl(writer: anytype, id: []const u8) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"focus\",\"id\":");
+    return writeFocusEventJsonlVersion(writer, id, null);
+}
+
+pub fn writeFocusEventJsonlVersion(writer: anytype, id: []const u8, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"focus\",\"id\":");
     try writeJsonString(writer, id);
     try writer.writeAll("}\n");
 }
 
 pub fn writeInputEventJsonl(writer: anytype, id: []const u8, value: []const u8, cursor: usize) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"input\",\"id\":");
+    return writeInputEventJsonlVersion(writer, id, value, cursor, null);
+}
+
+pub fn writeInputEventJsonlVersion(writer: anytype, id: []const u8, value: []const u8, cursor: usize, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"input\",\"id\":");
     try writeJsonString(writer, id);
     try writer.writeAll(",\"value\":");
     try writeJsonString(writer, value);
@@ -85,7 +117,13 @@ pub fn writeInputEventJsonl(writer: anytype, id: []const u8, value: []const u8, 
 }
 
 pub fn writeSelectEventJsonl(writer: anytype, id: []const u8, item: []const u8) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"select\",\"id\":");
+    return writeSelectEventJsonlVersion(writer, id, item, null);
+}
+
+pub fn writeSelectEventJsonlVersion(writer: anytype, id: []const u8, item: []const u8, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"select\",\"id\":");
     try writeJsonString(writer, id);
     try writer.writeAll(",\"item\":");
     try writeJsonString(writer, item);
@@ -93,7 +131,13 @@ pub fn writeSelectEventJsonl(writer: anytype, id: []const u8, item: []const u8) 
 }
 
 pub fn writeActivateEventJsonl(writer: anytype, id: []const u8, item: []const u8) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"activate\",\"id\":");
+    return writeActivateEventJsonlVersion(writer, id, item, null);
+}
+
+pub fn writeActivateEventJsonlVersion(writer: anytype, id: []const u8, item: []const u8, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"activate\",\"id\":");
     try writeJsonString(writer, id);
     try writer.writeAll(",\"item\":");
     try writeJsonString(writer, item);
@@ -101,17 +145,35 @@ pub fn writeActivateEventJsonl(writer: anytype, id: []const u8, item: []const u8
 }
 
 pub fn writeScrollEventJsonl(writer: anytype, id: []const u8, scroll_y: usize) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"scroll\",\"id\":");
+    return writeScrollEventJsonlVersion(writer, id, scroll_y, null);
+}
+
+pub fn writeScrollEventJsonlVersion(writer: anytype, id: []const u8, scroll_y: usize, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"scroll\",\"id\":");
     try writeJsonString(writer, id);
     try writer.print(",\"scroll_y\":{d}}}\n", .{scroll_y});
 }
 
 pub fn writeResizeEventJsonl(writer: anytype, rows: usize, cols: usize) !void {
-    try writer.print("{{\"type\":\"event\",\"name\":\"resize\",\"rows\":{d},\"cols\":{d}}}\n", .{ rows, cols });
+    return writeResizeEventJsonlVersion(writer, rows, cols, null);
+}
+
+pub fn writeResizeEventJsonlVersion(writer: anytype, rows: usize, cols: usize, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.print(",\"name\":\"resize\",\"rows\":{d},\"cols\":{d}}}\n", .{ rows, cols });
 }
 
 pub fn writeHoverEventJsonl(writer: anytype, id: []const u8, x: usize, y: usize, item: ?[]const u8) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"hover\",\"id\":");
+    return writeHoverEventJsonlVersion(writer, id, x, y, item, null);
+}
+
+pub fn writeHoverEventJsonlVersion(writer: anytype, id: []const u8, x: usize, y: usize, item: ?[]const u8, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"hover\",\"id\":");
     try writeJsonString(writer, id);
     try writer.print(",\"x\":{d},\"y\":{d}", .{ x, y });
     if (item) |it| {
@@ -122,7 +184,13 @@ pub fn writeHoverEventJsonl(writer: anytype, id: []const u8, x: usize, y: usize,
 }
 
 pub fn writePointerEventJsonl(writer: anytype, ev: PointerEvent) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"pointer\",\"kind\":");
+    return writePointerEventJsonlVersion(writer, ev, null);
+}
+
+pub fn writePointerEventJsonlVersion(writer: anytype, ev: PointerEvent, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v orelse ev.v);
+    try writer.writeAll(",\"name\":\"pointer\",\"kind\":");
     try writeJsonString(writer, switch (ev.kind) {
         .down => "down",
         .up => "up",
@@ -155,7 +223,13 @@ pub fn writePointerEventJsonl(writer: anytype, ev: PointerEvent) !void {
 }
 
 pub fn writeClipboardWriteJsonl(writer: anytype, data: []const u8, target: ClipboardTarget) !void {
-    try writer.writeAll("{\"type\":\"clipboard\",\"op\":\"write\",\"data\":");
+    return writeClipboardWriteJsonlVersion(writer, data, target, null);
+}
+
+pub fn writeClipboardWriteJsonlVersion(writer: anytype, data: []const u8, target: ClipboardTarget, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"clipboard\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"op\":\"write\",\"data\":");
     try writeJsonString(writer, data);
     if (target != .clipboard) {
         try writer.writeAll(",\"target\":");
@@ -165,7 +239,13 @@ pub fn writeClipboardWriteJsonl(writer: anytype, data: []const u8, target: Clipb
 }
 
 pub fn writeClipboardReadJsonl(writer: anytype, request_id: u32, target: ClipboardTarget) !void {
-    try writer.print("{{\"type\":\"clipboard\",\"op\":\"read\",\"request_id\":{d}", .{request_id});
+    return writeClipboardReadJsonlVersion(writer, request_id, target, null);
+}
+
+pub fn writeClipboardReadJsonlVersion(writer: anytype, request_id: u32, target: ClipboardTarget, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"clipboard\"");
+    try writeVersionField(writer, v);
+    try writer.print(",\"op\":\"read\",\"request_id\":{d}", .{request_id});
     if (target != .clipboard) {
         try writer.writeAll(",\"target\":");
         try writeJsonString(writer, "clipboard");
@@ -181,7 +261,21 @@ pub fn writeClipboardEventJsonl(
     data: ?[]const u8,
     reason: ?[]const u8,
 ) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"clipboard\",\"op\":");
+    return writeClipboardEventJsonlVersion(writer, op, ok, request_id, data, reason, null);
+}
+
+pub fn writeClipboardEventJsonlVersion(
+    writer: anytype,
+    op: ClipboardOp,
+    ok: bool,
+    request_id: u32,
+    data: ?[]const u8,
+    reason: ?[]const u8,
+    v: ?u32,
+) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"clipboard\",\"op\":");
     try writeJsonString(writer, switch (op) {
         .write => "write",
         .read => "read",
@@ -203,7 +297,13 @@ pub fn writeClipboardEventJsonl(
 }
 
 pub fn writePasteEventJsonl(writer: anytype, source: PasteSource, bytes: usize) !void {
-    try writer.writeAll("{\"type\":\"event\",\"name\":\"paste\",\"source\":");
+    return writePasteEventJsonlVersion(writer, source, bytes, null);
+}
+
+pub fn writePasteEventJsonlVersion(writer: anytype, source: PasteSource, bytes: usize, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":\"paste\",\"source\":");
     try writeJsonString(writer, switch (source) {
         .bracketed => "bracketed",
         .clipboard => "clipboard",
@@ -218,21 +318,45 @@ pub fn writeRenderedEventJsonl(
     bytes: usize,
     changed_cells: usize,
 ) !void {
+    return writeRenderedEventJsonlVersion(writer, seq, dropped, bytes, changed_cells, null);
+}
+
+pub fn writeRenderedEventJsonlVersion(
+    writer: anytype,
+    seq: u64,
+    dropped: u64,
+    bytes: usize,
+    changed_cells: usize,
+    v: ?u32,
+) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
     try writer.print(
-        "{{\"type\":\"event\",\"name\":\"rendered\",\"seq\":{d},\"dropped\":{d},\"bytes\":{d},\"changed_cells\":{d}}}\n",
+        ",\"name\":\"rendered\",\"seq\":{d},\"dropped\":{d},\"bytes\":{d},\"changed_cells\":{d}}}\n",
         .{ seq, dropped, bytes, changed_cells },
     );
 }
 
 pub fn writeDroppedEventJsonl(writer: anytype, seq: u64, reason: []const u8) !void {
-    try writer.print("{{\"type\":\"event\",\"name\":\"dropped\",\"seq\":{d},\"reason\":", .{seq});
+    return writeDroppedEventJsonlVersion(writer, seq, reason, null);
+}
+
+pub fn writeDroppedEventJsonlVersion(writer: anytype, seq: u64, reason: []const u8, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v);
+    try writer.print(",\"name\":\"dropped\",\"seq\":{d},\"reason\":", .{seq});
     try writeJsonString(writer, reason);
     try writer.writeAll("}\n");
 }
 
 pub fn writeConfigJsonl(writer: anytype, cfg: protocol.ConfigMsg) !void {
+    return writeConfigJsonlVersion(writer, cfg, null);
+}
+
+pub fn writeConfigJsonlVersion(writer: anytype, cfg: protocol.ConfigMsg, v: ?u32) !void {
     if (cfg.keybindings == null and cfg.theme == null) return ParseMsgError.MissingField;
     try writer.writeAll("{\"type\":\"config\"");
+    try writeVersionField(writer, v orelse cfg.v);
     if (cfg.keybindings) |kb| {
         try writer.writeAll(",\"keybindings\":{");
         var wrote_context = false;
@@ -256,7 +380,13 @@ pub fn writeConfigJsonl(writer: anytype, cfg: protocol.ConfigMsg) !void {
 }
 
 pub fn writeThemeJsonl(writer: anytype, name: ThemeName) !void {
-    try writer.writeAll("{\"type\":\"theme\",\"name\":");
+    return writeThemeJsonlVersion(writer, name, null);
+}
+
+pub fn writeThemeJsonlVersion(writer: anytype, name: ThemeName, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"theme\"");
+    try writeVersionField(writer, v);
+    try writer.writeAll(",\"name\":");
     try writeJsonString(writer, switch (name) {
         .default => "default",
         .light => "light",

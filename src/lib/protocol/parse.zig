@@ -39,6 +39,7 @@ const ParseMsgError = protocol.ParseMsgError;
 
 const PatchWire = struct {
     type: []const u8 = "",
+    v: ?u32 = null,
     root: ?std.json.Value = null,
     target: ?[]const u8 = null,
     node: ?std.json.Value = null,
@@ -67,7 +68,7 @@ fn parsePatchWireLeaky(allocator: std.mem.Allocator, pw: PatchWire) ParseMsgErro
     if (pw.root) |root_val| {
         if (pw.target != null or pw.node != null) return error.InvalidPatchShape;
         const root = try parseNodeLeaky(allocator, root_val);
-        return .{ .patch = .{ .full = .{ .root = root, .seq = pw.seq } } };
+        return .{ .patch = .{ .full = .{ .root = root, .seq = pw.seq, .v = pw.v } } };
     }
 
     if (pw.target == null and pw.node == null) return error.MissingField;
@@ -80,12 +81,14 @@ fn parsePatchWireLeaky(allocator: std.mem.Allocator, pw: PatchWire) ParseMsgErro
         .node = node,
         .mode = mode,
         .seq = pw.seq,
+        .v = pw.v,
     } } };
 }
 
 fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Msg {
     const obj = try asObject(v);
     const type_str = try getRequiredString(obj, "type");
+    const version = try getOptionalVersion(obj);
     if (std.mem.eql(u8, type_str, "patch")) {
         const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
             @as(u64, @intCast(seq_usize))
@@ -94,7 +97,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         if (obj.get("root")) |root_val| {
             if (obj.get("target") != null or obj.get("node") != null) return error.InvalidPatchShape;
             const root = try parseNodeLeaky(allocator, root_val);
-            return .{ .patch = .{ .full = .{ .root = root, .seq = seq } } };
+            return .{ .patch = .{ .full = .{ .root = root, .seq = seq, .v = version } } };
         }
 
         if (obj.get("target") == null and obj.get("node") == null) return error.MissingField;
@@ -104,7 +107,13 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         const mode = try parsePatchMode(obj);
         const node_val = try getRequired(obj, "node");
         const node = try parseNodeLeaky(allocator, node_val);
-        return .{ .patch = .{ .target = .{ .target = target, .node = node, .mode = mode, .seq = seq } } };
+        return .{ .patch = .{ .target = .{
+            .target = target,
+            .node = node,
+            .mode = mode,
+            .seq = seq,
+            .v = version,
+        } } };
     } else if (std.mem.eql(u8, type_str, "event")) {
         const name = try getRequiredString(obj, "name");
         if (std.mem.eql(u8, name, "key")) {
@@ -112,10 +121,15 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             const mods_usize = try getOptionalUsize(obj, "mods") orelse 0;
             if (mods_usize > std.math.maxInt(u8)) return error.WrongType;
             const seq = try getOptionalString(obj, "seq");
-            return .{ .event = .{ .key = .{ .key = key, .mods = @as(u8, @intCast(mods_usize)), .seq = seq } } };
+            return .{ .event = .{ .key = .{
+                .key = key,
+                .mods = @as(u8, @intCast(mods_usize)),
+                .seq = seq,
+                .v = version,
+            } } };
         } else if (std.mem.eql(u8, name, "focus")) {
             const id = try getRequiredString(obj, "id");
-            return .{ .event = .{ .focus = .{ .id = id } } };
+            return .{ .event = .{ .focus = .{ .id = id, .v = version } } };
         } else if (std.mem.eql(u8, name, "input")) {
             const id = try getRequiredString(obj, "id");
             const value = try getRequiredString(obj, "value");
@@ -124,29 +138,40 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .integer => |n| if (n < 0) return error.WrongType else @as(usize, @intCast(n)),
                 else => return error.WrongType,
             };
-            return .{ .event = .{ .input = .{ .id = id, .value = value, .cursor = cursor } } };
+            return .{ .event = .{ .input = .{
+                .id = id,
+                .value = value,
+                .cursor = cursor,
+                .v = version,
+            } } };
         } else if (std.mem.eql(u8, name, "select")) {
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
-            return .{ .event = .{ .select = .{ .id = id, .item = item } } };
+            return .{ .event = .{ .select = .{ .id = id, .item = item, .v = version } } };
         } else if (std.mem.eql(u8, name, "activate")) {
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
-            return .{ .event = .{ .activate = .{ .id = id, .item = item } } };
+            return .{ .event = .{ .activate = .{ .id = id, .item = item, .v = version } } };
         } else if (std.mem.eql(u8, name, "scroll")) {
             const id = try getRequiredString(obj, "id");
             const scroll_y = try getRequiredUsize(obj, "scroll_y");
-            return .{ .event = .{ .scroll = .{ .id = id, .scroll_y = scroll_y } } };
+            return .{ .event = .{ .scroll = .{ .id = id, .scroll_y = scroll_y, .v = version } } };
         } else if (std.mem.eql(u8, name, "resize")) {
             const rows = try getRequiredUsize(obj, "rows");
             const cols = try getRequiredUsize(obj, "cols");
-            return .{ .event = .{ .resize = .{ .rows = rows, .cols = cols } } };
+            return .{ .event = .{ .resize = .{ .rows = rows, .cols = cols, .v = version } } };
         } else if (std.mem.eql(u8, name, "hover")) {
             const id = try getRequiredString(obj, "id");
             const x = try getRequiredUsize(obj, "x");
             const y = try getRequiredUsize(obj, "y");
             const item = try getOptionalString(obj, "item");
-            return .{ .event = .{ .hover = .{ .id = id, .x = x, .y = y, .item = item } } };
+            return .{ .event = .{ .hover = .{
+                .id = id,
+                .x = x,
+                .y = y,
+                .item = item,
+                .v = version,
+            } } };
         } else if (std.mem.eql(u8, name, "pointer")) {
             const kind = try parsePointerKind(obj);
             const id = try getRequiredString(obj, "id");
@@ -180,6 +205,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .scroll_dy = scroll_dy,
                 .item = item,
                 .captured = captured,
+                .v = version,
             };
             return .{ .event = .{ .pointer = ev } };
         } else if (std.mem.eql(u8, name, "clipboard")) {
@@ -196,12 +222,13 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .request_id = request_id,
                 .data = data,
                 .reason = reason,
+                .v = version,
             };
             return .{ .event = .{ .clipboard = cev } };
         } else if (std.mem.eql(u8, name, "paste")) {
             const src = try parsePasteSource(obj);
             const bytes = try getRequiredUsize(obj, "bytes");
-            const pev: PasteEvent = .{ .source = src, .bytes = bytes };
+            const pev: PasteEvent = .{ .source = src, .bytes = bytes, .v = version };
             return .{ .event = .{ .paste = pev } };
         } else if (std.mem.eql(u8, name, "rendered")) {
             const seq_usize = try getRequiredUsize(obj, "seq");
@@ -213,6 +240,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .dropped = dropped,
                 .bytes = bytes,
                 .changed_cells = changed_cells,
+                .v = version,
             } } };
         } else if (std.mem.eql(u8, name, "dropped")) {
             const seq_usize = try getRequiredUsize(obj, "seq");
@@ -220,6 +248,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             return .{ .event = .{ .dropped = .{
                 .seq = @as(u64, @intCast(seq_usize)),
                 .reason = reason,
+                .v = version,
             } } };
         } else {
             return error.UnknownEventName;
@@ -230,7 +259,11 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         switch (op) {
             .write => {
                 const data = try getRequiredString(obj, "data");
-                return .{ .clipboard = .{ .write = .{ .data = data, .target = target } } };
+                return .{ .clipboard = .{ .write = .{
+                    .data = data,
+                    .target = target,
+                    .v = version,
+                } } };
             },
             .read => {
                 const request_id_val = try getRequired(obj, "request_id");
@@ -242,29 +275,33 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                     },
                     else => return error.WrongType,
                 };
-                return .{ .clipboard = .{ .read = .{ .request_id = request_id, .target = target } } };
+                return .{ .clipboard = .{ .read = .{
+                    .request_id = request_id,
+                    .target = target,
+                    .v = version,
+                } } };
             },
         }
     } else if (std.mem.eql(u8, type_str, "config")) {
-        const cfg = try parseConfigMsg(allocator, obj);
+        const cfg = try parseConfigMsg(allocator, obj, version);
         return .{ .config = cfg };
     } else if (std.mem.eql(u8, type_str, "theme")) {
         const name = try parseThemeName(try getRequiredString(obj, "name"));
-        const tm: ThemeMsg = .{ .name = name };
+        const tm: ThemeMsg = .{ .name = name, .v = version };
         return .{ .theme = tm };
     } else {
         return error.UnknownMsgType;
     }
 }
 
-fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!ConfigMsg {
+fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap, v: ?u32) ParseMsgError!ConfigMsg {
     const keybindings: ?KeybindingsConfig = if (obj.get("keybindings")) |keybindings_val| blk: {
         const keybindings_obj = try asObject(keybindings_val);
         break :blk try parseKeybindingsConfig(allocator, keybindings_obj);
     } else null;
     const theme: ?ThemeName = if (try getOptionalString(obj, "theme")) |name| try parseThemeName(name) else null;
     if (keybindings == null and theme == null) return error.MissingField;
-    return .{ .keybindings = keybindings, .theme = theme };
+    return .{ .keybindings = keybindings, .theme = theme, .v = v };
 }
 
 fn parseThemeName(s: []const u8) ParseMsgError!ThemeName {
@@ -1420,6 +1457,12 @@ fn getOptionalUsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?u
         .integer => |n| if (n < 0) return error.WrongType else @as(usize, @intCast(n)),
         else => error.WrongType,
     };
+}
+
+fn getOptionalVersion(obj: std.json.ObjectMap) ParseMsgError!?u32 {
+    const n = try getOptionalUsize(obj, "v") orelse return null;
+    if (n > std.math.maxInt(u32)) return error.WrongType;
+    return @as(u32, @intCast(n));
 }
 
 fn getOptionalIsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?isize {

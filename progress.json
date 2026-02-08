@@ -1031,4 +1031,36 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 36,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Protocol versioning: optional version field on all message types with compatibility policy",
+    "deliverables": [
+      "src/lib/protocol/types.zig: added optional `v` (?u32) field to all message types (PatchMsg, EventMsg, ClipboardMsg, ConfigMsg, ThemeMsg, PointerEvent, etc.)",
+      "src/lib/protocol/parse.zig: parse optional `v` field from all message types; ignore unknown fields per compatibility policy",
+      "src/lib/protocol/write.zig: write optional `v` field for all message types; version-conditional field emission to minimize payload size",
+      "src/lib/protocol/mod.zig: added PROTOCOL_VERSION constant (1) and convenience helpers",
+      "docs/PROTOCOL.md: documented version field semantics, compatibility policy (additive non-breaking, unknown fields ignored), and current version",
+      "src/bin/demo/render.zig: demo emits `v:1` on all patch messages via DEMO_PROTOCOL_VERSION constant",
+      "src/bin/demo/main.zig: demo updated to use protocol version",
+      "src/test/protocol.zig: roundtrip tests for version field on all message types"
+    ],
+    "boundaries_hit": [
+      "Receivers accept messages with or without `v` (backward and forward compatible)",
+      "Senders may omit `v` to keep payloads smaller; emit only when non-null",
+      "Additive fields are non-breaking; unknown fields must be ignored",
+      "Removing or changing meaning of existing fields requires new version rollout plan"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build test",
+      "zig build demo",
+      "Observe backend log shows `v:1` on all outgoing patch messages",
+      "Confirm runtime accepts and processes messages both with and without `v` field",
+      "Verify docs/PROTOCOL.md describes version compatibility policy",
+      "Exit with 'x'"
+    ]
+  }
 ]

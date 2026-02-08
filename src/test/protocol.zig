@@ -910,3 +910,81 @@ test "protocol: write+parse rendered and dropped events" {
         else => return error.TestUnexpectedResult,
     }
 }
+
+test "protocol: write helpers omit and include version field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeFocusEventJsonl(buf.writer(std.testing.allocator), "query");
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"v\":") == null);
+    const no_v_msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (no_v_msg) {
+        .event => |ev| switch (ev) {
+            .focus => |f| try std.testing.expectEqual(@as(?u32, null), f.v),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    buf.clearRetainingCapacity();
+    try protocol.writeFocusEventJsonlVersion(buf.writer(std.testing.allocator), "query", 1);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"v\":1") != null);
+    const with_v_msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (with_v_msg) {
+        .event => |ev| switch (ev) {
+            .focus => |f| try std.testing.expectEqual(@as(?u32, 1), f.v),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: parse top-level version field across message types" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const patch_msg = try protocol.parseMsgLeaky(
+        arena.allocator(),
+        "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"ok\"}}",
+    );
+    switch (patch_msg) {
+        .patch => |p| switch (p) {
+            .full => |f| try std.testing.expectEqual(@as(?u32, 1), f.v),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const clipboard_msg = try protocol.parseMsgLeaky(
+        arena.allocator(),
+        "{\"type\":\"clipboard\",\"v\":1,\"op\":\"read\",\"request_id\":7}",
+    );
+    switch (clipboard_msg) {
+        .clipboard => |c| switch (c) {
+            .read => |r| try std.testing.expectEqual(@as(?u32, 1), r.v),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const config_msg = try protocol.parseMsgLeaky(
+        arena.allocator(),
+        "{\"type\":\"config\",\"v\":1,\"theme\":\"default\"}",
+    );
+    switch (config_msg) {
+        .config => |cfg| try std.testing.expectEqual(@as(?u32, 1), cfg.v),
+        else => return error.TestUnexpectedResult,
+    }
+
+    const theme_msg = try protocol.parseMsgLeaky(
+        arena.allocator(),
+        "{\"type\":\"theme\",\"v\":1,\"name\":\"ocean\"}",
+    );
+    switch (theme_msg) {
+        .theme => |tm| try std.testing.expectEqual(@as(?u32, 1), tm.v),
+        else => return error.TestUnexpectedResult,
+    }
+}

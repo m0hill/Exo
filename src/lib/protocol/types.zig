@@ -10,8 +10,8 @@ pub const Msg = union(enum) {
 };
 
 pub const PatchMsg = union(enum) {
-    full: struct { root: Node, seq: ?u64 = null },
-    target: struct { target: []const u8, node: Node, mode: PatchMode = .replace, seq: ?u64 = null },
+    full: struct { root: Node, seq: ?u64 = null, v: ?u32 = null },
+    target: struct { target: []const u8, node: Node, mode: PatchMode = .replace, seq: ?u64 = null, v: ?u32 = null },
 };
 
 pub const PatchMode = enum {
@@ -20,19 +20,19 @@ pub const PatchMode = enum {
 };
 
 pub const EventMsg = union(enum) {
-    key: struct { key: []const u8, mods: u8 = 0, seq: ?[]const u8 = null },
-    focus: struct { id: []const u8 },
-    input: struct { id: []const u8, value: []const u8, cursor: usize },
-    select: struct { id: []const u8, item: []const u8 },
-    activate: struct { id: []const u8, item: []const u8 },
-    scroll: struct { id: []const u8, scroll_y: usize },
-    resize: struct { rows: usize, cols: usize },
-    hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null },
+    key: struct { key: []const u8, mods: u8 = 0, seq: ?[]const u8 = null, v: ?u32 = null },
+    focus: struct { id: []const u8, v: ?u32 = null },
+    input: struct { id: []const u8, value: []const u8, cursor: usize, v: ?u32 = null },
+    select: struct { id: []const u8, item: []const u8, v: ?u32 = null },
+    activate: struct { id: []const u8, item: []const u8, v: ?u32 = null },
+    scroll: struct { id: []const u8, scroll_y: usize, v: ?u32 = null },
+    resize: struct { rows: usize, cols: usize, v: ?u32 = null },
+    hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null, v: ?u32 = null },
     pointer: PointerEvent,
     clipboard: ClipboardEvent,
     paste: PasteEvent,
-    rendered: struct { seq: u64, dropped: u64 = 0, bytes: usize = 0, changed_cells: usize = 0 },
-    dropped: struct { seq: u64, reason: []const u8 },
+    rendered: struct { seq: u64, dropped: u64 = 0, bytes: usize = 0, changed_cells: usize = 0, v: ?u32 = null },
+    dropped: struct { seq: u64, reason: []const u8, v: ?u32 = null },
 };
 
 pub const ClipboardOp = enum {
@@ -45,8 +45,8 @@ pub const ClipboardTarget = enum {
 };
 
 pub const ClipboardMsg = union(enum) {
-    write: struct { data: []const u8, target: ClipboardTarget = .clipboard },
-    read: struct { request_id: u32, target: ClipboardTarget = .clipboard },
+    write: struct { data: []const u8, target: ClipboardTarget = .clipboard, v: ?u32 = null },
+    read: struct { request_id: u32, target: ClipboardTarget = .clipboard, v: ?u32 = null },
 };
 
 pub const ClipboardEvent = struct {
@@ -55,6 +55,7 @@ pub const ClipboardEvent = struct {
     request_id: u32 = 0,
     data: ?[]const u8 = null,
     reason: ?[]const u8 = null,
+    v: ?u32 = null,
 };
 
 pub const PasteSource = enum {
@@ -65,11 +66,13 @@ pub const PasteSource = enum {
 pub const PasteEvent = struct {
     source: PasteSource,
     bytes: usize,
+    v: ?u32 = null,
 };
 
 pub const ConfigMsg = struct {
     keybindings: ?KeybindingsConfig = null,
     theme: ?ThemeName = null,
+    v: ?u32 = null,
 };
 
 pub const ThemeName = enum {
@@ -80,6 +83,7 @@ pub const ThemeName = enum {
 
 pub const ThemeMsg = struct {
     name: ThemeName,
+    v: ?u32 = null,
 };
 
 pub const KeybindingsConfig = struct {
@@ -600,6 +604,7 @@ pub const PointerEvent = struct {
     scroll_dy: isize = 0,
     item: ?[]const u8 = null,
     captured: bool = false,
+    v: ?u32 = null,
 };
 
 pub const ParseMsgError = error{

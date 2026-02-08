@@ -56,6 +56,7 @@ const W_TREE_ROOT: []const u8 = "w-tree-root";
 const W_TREE_SRC: []const u8 = "w-tree-src";
 const W_TREE_LIB: []const u8 = "w-tree-lib";
 const W_TREE_TESTS: []const u8 = "w-tree-tests";
+const DEMO_PROTOCOL_VERSION: u32 = 1;
 
 const MdMode = enum { tracer18, tracer19a, tracer19b };
 
@@ -306,11 +307,11 @@ pub fn main() !void {
             .{ .key = "[", .mods = 0, .action = .focus_scope_prev },
             .{ .key = "]", .mods = 0, .action = .focus_scope_next },
         };
-        try protocol.writeConfigJsonl(out, .{
+        try protocol.writeConfigJsonlVersion(out, .{
             .keybindings = .{
                 .global = global_rules[0..],
             },
-        });
+        }, DEMO_PROTOCOL_VERSION);
     }
     try out.flush();
 
@@ -676,7 +677,7 @@ pub fn main() !void {
                                 theme_idx = (theme_idx + 1) % theme_cycle.len;
                                 const next_theme = theme_cycle[theme_idx];
                                 std.debug.print("CONFIG_TX kind=theme name={s}\n", .{@tagName(next_theme)});
-                                try protocol.writeThemeJsonl(out, next_theme);
+                                try protocol.writeThemeJsonlVersion(out, next_theme, DEMO_PROTOCOL_VERSION);
                                 try out.flush();
                             } else if ((std.mem.eql(u8, k.key, "x") and k.mods == 0) or
                                 std.mem.eql(u8, k.key, "ctrl-c") or
