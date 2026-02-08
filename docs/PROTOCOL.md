@@ -201,6 +201,20 @@ Runtime error event (machine-readable runtime-side rejection):
 {"type":"event","name":"error","code":"invalid_patch_shape","message":"backend patch rejected: invalid shape","seq":42,"context":"InvalidPatchShape"}
 ```
 
+Config acknowledgement event (runtime config negotiation result):
+
+```json
+{"type":"event","name":"config_ack","applied":["keybindings"],"rejected":[{"key":"theme","reason":"UnknownThemeName"}]}
+```
+
+`config_ack` rules:
+
+- runtime emits one `config_ack` for every backend `config` message attempt
+- `applied` is an array of top-level keys that were accepted (`keybindings`, `theme`)
+- `rejected` is an array of `{ "key": string, "reason": string }`
+- malformed config that cannot be mapped to a specific top-level key uses `key:"config"`
+- keybindings are evaluated first; if keybindings fail, runtime rejects `theme` in the same message with reason `keybindings_rejected`
+
 Optional runtime render/drop telemetry:
 
 ```json

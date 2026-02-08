@@ -22,6 +22,7 @@ const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
 const PasteSource = protocol.PasteSource;
 const RuntimeErrorEvent = protocol.RuntimeErrorEvent;
+const ConfigAckEvent = protocol.ConfigAckEvent;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
@@ -395,6 +396,30 @@ pub fn writeErrorEventJsonlVersion(
         try writeJsonString(writer, ctx);
     }
     try writer.writeAll("}\n");
+}
+
+pub fn writeConfigAckEventJsonl(writer: anytype, ack: ConfigAckEvent) !void {
+    return writeConfigAckEventJsonlVersion(writer, ack, null);
+}
+
+pub fn writeConfigAckEventJsonlVersion(writer: anytype, ack: ConfigAckEvent, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v orelse ack.v);
+    try writer.writeAll(",\"name\":\"config_ack\",\"applied\":[");
+    for (ack.applied, 0..) |key, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        try writeJsonString(writer, key);
+    }
+    try writer.writeAll("],\"rejected\":[");
+    for (ack.rejected, 0..) |rej, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        try writer.writeAll("{\"key\":");
+        try writeJsonString(writer, rej.key);
+        try writer.writeAll(",\"reason\":");
+        try writeJsonString(writer, rej.reason);
+        try writer.writeByte('}');
+    }
+    try writer.writeAll("]}\n");
 }
 
 pub fn writeRenderedEventJsonl(

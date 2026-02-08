@@ -27,6 +27,8 @@ const ClipboardEvent = protocol.ClipboardEvent;
 const PasteSource = protocol.PasteSource;
 const PasteEvent = protocol.PasteEvent;
 const RuntimeErrorEvent = protocol.RuntimeErrorEvent;
+const ConfigAckRejected = protocol.ConfigAckRejected;
+const ConfigAckEvent = protocol.ConfigAckEvent;
 const HelloCaps = protocol.HelloCaps;
 const HelloLimits = protocol.HelloLimits;
 const HelloEvent = protocol.HelloEvent;
@@ -262,6 +264,9 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .v = version,
             };
             return .{ .event = .{ .@"error" = err_ev } };
+        } else if (std.mem.eql(u8, name, "config_ack")) {
+            const ack = try parseConfigAckEvent(allocator, obj, version);
+            return .{ .event = .{ .config_ack = ack } };
         } else if (std.mem.eql(u8, name, "rendered")) {
             const seq_usize = try getRequiredUsize(obj, "seq");
             const dropped = try getOptionalUsize(obj, "dropped") orelse 0;
@@ -334,6 +339,39 @@ fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap, v: ?u32
     const theme: ?ThemeName = if (try getOptionalString(obj, "theme")) |name| try parseThemeName(name) else null;
     if (keybindings == null and theme == null) return error.MissingField;
     return .{ .keybindings = keybindings, .theme = theme, .v = v };
+}
+
+fn parseConfigAckEvent(
+    allocator: std.mem.Allocator,
+    obj: std.json.ObjectMap,
+    v: ?u32,
+) ParseMsgError!ConfigAckEvent {
+    const applied_val = try getRequired(obj, "applied");
+    const applied_arr = try asArray(applied_val);
+    const applied = try allocator.alloc([]const u8, applied_arr.items.len);
+    for (applied_arr.items, 0..) |item, idx| {
+        applied[idx] = switch (item) {
+            .string => |s| s,
+            else => return error.WrongType,
+        };
+    }
+
+    const rejected_val = try getRequired(obj, "rejected");
+    const rejected_arr = try asArray(rejected_val);
+    const rejected = try allocator.alloc(ConfigAckRejected, rejected_arr.items.len);
+    for (rejected_arr.items, 0..) |item, idx| {
+        const rej_obj = try asObject(item);
+        rejected[idx] = .{
+            .key = try getRequiredString(rej_obj, "key"),
+            .reason = try getRequiredString(rej_obj, "reason"),
+        };
+    }
+
+    return .{
+        .applied = applied,
+        .rejected = rejected,
+        .v = v,
+    };
 }
 
 fn parseHelloCaps(obj: std.json.ObjectMap) ParseMsgError!HelloCaps {

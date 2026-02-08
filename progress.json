@@ -1118,4 +1118,38 @@
       "Send repeated invalid lines quickly; confirm error events are rate-limited (logs show `EVENT_DROP name=error ... reason=rate_limit`)"
     ]
   }
+  ,
+  {
+    "slice": 39,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Config acknowledgement events: runtime emits `config_ack` in response to backend config messages with applied/rejected breakdown",
+    "deliverables": [
+      "src/lib/protocol/types.zig: added `ConfigAckEvent` and `ConfigAckRejected` structs with `applied`, `rejected` fields",
+      "src/lib/protocol/types.zig: added `EventMsg.config_ack` variant",
+      "src/lib/protocol/write.zig: added `writeConfigAckEventJsonl` helper for emitting config_ack events",
+      "src/lib/protocol/parse.zig: added parse support for config_ack events",
+      "src/bin/runtime/app.zig: emits config_ack after processing config message; maps parse errors to rejected entries",
+      "src/bin/runtime/app.zig: helper functions for building config rejection entries and config hint parsing",
+      "docs/PROTOCOL.md: documented config_ack event schema, applied/rejected rules, and keybindings-first evaluation behavior",
+      "src/test/keybindings.zig: added tests for config_ack emission on reject, theme cascading reject when keybindings fail",
+      "src/test/protocol.zig: added parse/write roundtrip tests for config_ack events"
+    ],
+    "boundaries_hit": [
+      "One config_ack per config message attempt",
+      "applied array lists accepted top-level keys (keybindings, theme)",
+      "rejected array lists failed keys with reason strings",
+      "Keybindings evaluated first; if keybindings fail, theme is rejected with reason 'keybindings_rejected'",
+      "Malformed config uses key 'config' for rejection"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build test",
+      "zig build demo",
+      "Send valid config from backend; confirm runtime emits config_ack with applied=['keybindings','theme'], rejected=[]",
+      "Send invalid keybindings config; confirm config_ack shows rejected=[{key:'keybindings',reason:'...'}]",
+      "Send config with both keybindings and theme where keybindings are invalid; confirm both are rejected with theme reason='keybindings_rejected'",
+      "Exit with 'x'"
+    ]
+  }
 ]

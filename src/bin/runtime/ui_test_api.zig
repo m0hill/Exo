@@ -1,6 +1,7 @@
 const std = @import("std");
 const ui = @import("ui/mod.zig");
 const keybindings = @import("keybindings.zig");
+const app = @import("app.zig");
 
 pub const pointer = ui.pointer;
 pub const WidgetEntry = ui.WidgetEntry;
@@ -18,6 +19,7 @@ pub const setFocusId = ui.setFocusId;
 pub const KeymapState = keybindings.KeymapState;
 pub const KeyContext = keybindings.Context;
 pub const makeNoopLogSink = ui.makeNoopLogSink;
+pub const writeConfigRejectAckAndErrorEvents = app.writeConfigRejectAckAndErrorEvents;
 
 pub fn applyListAction(
     allocator: std.mem.Allocator,

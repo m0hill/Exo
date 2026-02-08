@@ -940,6 +940,61 @@ test "protocol: write+parse error event" {
     }
 }
 
+test "protocol: parse config_ack event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"event\",\"name\":\"config_ack\",\"applied\":[\"keybindings\"],\"rejected\":[{\"key\":\"theme\",\"reason\":\"UnknownThemeName\"}]}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    switch (msg) {
+        .event => |ev| switch (ev) {
+            .config_ack => |ack| {
+                try std.testing.expectEqual(@as(usize, 1), ack.applied.len);
+                try std.testing.expectEqualStrings("keybindings", ack.applied[0]);
+                try std.testing.expectEqual(@as(usize, 1), ack.rejected.len);
+                try std.testing.expectEqualStrings("theme", ack.rejected[0].key);
+                try std.testing.expectEqualStrings("UnknownThemeName", ack.rejected[0].reason);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: write+parse config_ack event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    const applied = [_][]const u8{ "keybindings", "theme" };
+    const rejected = [_]protocol.ConfigAckRejected{
+        .{ .key = "theme", .reason = "keybindings_rejected" },
+    };
+    try protocol.writeConfigAckEventJsonl(buf.writer(std.testing.allocator), .{
+        .applied = applied[0..],
+        .rejected = rejected[0..],
+    });
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (msg) {
+        .event => |ev| switch (ev) {
+            .config_ack => |ack| {
+                try std.testing.expectEqual(@as(usize, 2), ack.applied.len);
+                try std.testing.expectEqualStrings("keybindings", ack.applied[0]);
+                try std.testing.expectEqualStrings("theme", ack.applied[1]);
+                try std.testing.expectEqual(@as(usize, 1), ack.rejected.len);
+                try std.testing.expectEqualStrings("theme", ack.rejected[0].key);
+                try std.testing.expectEqualStrings("keybindings_rejected", ack.rejected[0].reason);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "protocol: write+parse hello event" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

@@ -660,6 +660,18 @@ pub fn main() !void {
                                 },
                             );
                         },
+                        .config_ack => |ack| {
+                            std.debug.print(
+                                "EVENT_RX name=config_ack applied={d} rejected={d}\n",
+                                .{ ack.applied.len, ack.rejected.len },
+                            );
+                            for (ack.rejected) |rej| {
+                                std.debug.print(
+                                    "EVENT_RX name=config_ack_rejected key={s} reason={s}\n",
+                                    .{ rej.key, rej.reason },
+                                );
+                            }
+                        },
                         .key => |k| {
                             if (k.seq) |s| {
                                 std.debug.print("EVENT_RX name=key key={s} mods={d} seq_len={d}\n", .{ k.key, k.mods, s.len });

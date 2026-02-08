@@ -161,6 +161,107 @@ fn emitRuntimeErrorEvent(
     try backend_in.flush();
 }
 
+fn configRejectedKeyForParseError(parse_err: anyerror) []const u8 {
+    return switch (parse_err) {
+        error.UnknownThemeName => "theme",
+        error.UnknownKeyAction, error.InvalidKeybindingRule => "keybindings",
+        else => "config",
+    };
+}
+
+fn parseErrIsKeybindingsReject(parse_err: anyerror) bool {
+    return parse_err == error.UnknownKeyAction or parse_err == error.InvalidKeybindingRule;
+}
+
+fn buildConfigRejectEntries(
+    parse_err: anyerror,
+    has_theme_key: bool,
+    storage: *[2]protocol.ConfigAckRejected,
+) []const protocol.ConfigAckRejected {
+    storage[0] = .{
+        .key = configRejectedKeyForParseError(parse_err),
+        .reason = @errorName(parse_err),
+    };
+    var len: usize = 1;
+    if (has_theme_key and parseErrIsKeybindingsReject(parse_err)) {
+        storage[len] = .{
+            .key = "theme",
+            .reason = "keybindings_rejected",
+        };
+        len += 1;
+    }
+    return storage[0..len];
+}
+
+const ConfigParseHint = struct {
+    is_config: bool = false,
+    has_theme_key: bool = false,
+};
+
+fn parseConfigHint(allocator: std.mem.Allocator, line: []const u8) ConfigParseHint {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, line, .{}) catch return .{};
+    defer parsed.deinit();
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return .{},
+    };
+    const type_val = obj.get("type") orelse return .{};
+    const type_str = switch (type_val) {
+        .string => |s| s,
+        else => return .{},
+    };
+    if (!std.mem.eql(u8, type_str, "config")) return .{};
+    return .{
+        .is_config = true,
+        .has_theme_key = obj.get("theme") != null,
+    };
+}
+
+pub fn writeConfigRejectAckAndErrorEvents(
+    writer: anytype,
+    parse_err: anyerror,
+    has_theme_key: bool,
+) !void {
+    var rejected_storage: [2]protocol.ConfigAckRejected = undefined;
+    const rejected = buildConfigRejectEntries(parse_err, has_theme_key, &rejected_storage);
+    try protocol.writeConfigAckEventJsonl(writer, .{
+        .applied = &.{},
+        .rejected = rejected,
+    });
+    try protocol.writeErrorEventJsonl(
+        writer,
+        "config_rejected",
+        "backend config rejected",
+        null,
+        @errorName(parse_err),
+    );
+}
+
+fn emitConfigAckEvent(
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    applied: []const []const u8,
+    rejected: []const protocol.ConfigAckRejected,
+) !void {
+    log.logPrint(log_sink, "EVENT_TX name=config_ack applied={d} rejected={d}\n", .{ applied.len, rejected.len });
+    try protocol.writeConfigAckEventJsonl(backend_in, .{
+        .applied = applied,
+        .rejected = rejected,
+    });
+    try backend_in.flush();
+}
+
+fn emitConfigRejectAckEvent(
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    parse_err: anyerror,
+    has_theme_key: bool,
+) !void {
+    var rejected_storage: [2]protocol.ConfigAckRejected = undefined;
+    const rejected = buildConfigRejectEntries(parse_err, has_theme_key, &rejected_storage);
+    try emitConfigAckEvent(log_sink, backend_in, &.{}, rejected);
+}
+
 fn contextForFocusedKind(kind: ui.FocusKind) keybindings.Context {
     return switch (kind) {
         .input => .input,
@@ -425,6 +526,7 @@ pub fn run() !void {
                         log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
                         break;
                     };
+                    const config_hint = parseConfigHint(next_arena.allocator(), line_owned);
 
                     const msg = protocol.parseMsgLeaky(next_arena.allocator(), line_owned) catch |e| {
                         iter_parse_ns += timing.monotonicNowNs() - parse_start_ns;
@@ -439,8 +541,15 @@ pub fn run() !void {
                                 null,
                                 @errorName(e),
                             ) catch {};
-                        } else if (e == error.UnknownKeyAction or e == error.InvalidKeybindingRule or e == error.UnknownThemeName) {
+                        } else if (config_hint.is_config and
+                            (e == error.UnknownKeyAction or
+                                e == error.InvalidKeybindingRule or
+                                e == error.UnknownThemeName or
+                                e == error.MissingField or
+                                e == error.WrongType))
+                        {
                             log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
+                            emitConfigRejectAckEvent(&log_sink, child_in, e, config_hint.has_theme_key) catch {};
                             emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
@@ -649,9 +758,32 @@ pub fn run() !void {
                             }
                         },
                         .config => |cfg| {
+                            var applied_keys: [2][]const u8 = undefined;
+                            var rejected_keys: [2]protocol.ConfigAckRejected = undefined;
+                            var applied_len: usize = 0;
+                            var rejected_len: usize = 0;
+
                             if (cfg.keybindings) |kb| {
                                 keymap.applyConfigReplace(kb) catch |e| {
                                     log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
+                                    rejected_keys[rejected_len] = .{
+                                        .key = "keybindings",
+                                        .reason = @errorName(e),
+                                    };
+                                    rejected_len += 1;
+                                    if (cfg.theme != null) {
+                                        rejected_keys[rejected_len] = .{
+                                            .key = "theme",
+                                            .reason = "keybindings_rejected",
+                                        };
+                                        rejected_len += 1;
+                                    }
+                                    emitConfigAckEvent(
+                                        &log_sink,
+                                        child_in,
+                                        applied_keys[0..applied_len],
+                                        rejected_keys[0..rejected_len],
+                                    ) catch {};
                                     emitRuntimeErrorEvent(
                                         &log_sink,
                                         child_in,
@@ -664,10 +796,22 @@ pub fn run() !void {
                                     break;
                                 };
                                 log.logPrint(&log_sink, "CONFIG_APPLY kind=keybindings\n", .{});
+                                applied_keys[applied_len] = "keybindings";
+                                applied_len += 1;
                             }
                             if (cfg.theme) |theme_name| {
                                 active_theme = render.themeFromName(theme_name);
                                 log.logPrint(&log_sink, "CONFIG_APPLY kind=theme name={s}\n", .{@tagName(theme_name)});
+                                applied_keys[applied_len] = "theme";
+                                applied_len += 1;
+                            }
+                            if (applied_len != 0 or rejected_len != 0) {
+                                try emitConfigAckEvent(
+                                    &log_sink,
+                                    child_in,
+                                    applied_keys[0..applied_len],
+                                    rejected_keys[0..rejected_len],
+                                );
                             }
                         },
                         .theme => |tm| {

@@ -73,6 +73,85 @@ test "keybindings: invalid config parse leaves previous bindings" {
     try std.testing.expectEqual(before, keymap.resolve(.global, "Tab", 0) orelse return error.TestUnexpectedResult);
 }
 
+test "runtime config reject emits ack and error events" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(std.testing.allocator);
+
+    try runtime_ui.writeConfigRejectAckAndErrorEvents(
+        out.writer(std.testing.allocator),
+        error.InvalidKeybindingRule,
+        false,
+    );
+
+    var lines = std.mem.tokenizeScalar(u8, out.items, '\n');
+    const ack_line = lines.next() orelse return error.TestUnexpectedResult;
+    const err_line = lines.next() orelse return error.TestUnexpectedResult;
+
+    const ack_msg = try protocol.parseMsgLeaky(arena.allocator(), ack_line);
+    switch (ack_msg) {
+        .event => |ev| switch (ev) {
+            .config_ack => |ack| {
+                try std.testing.expectEqual(@as(usize, 0), ack.applied.len);
+                try std.testing.expectEqual(@as(usize, 1), ack.rejected.len);
+                try std.testing.expectEqualStrings("keybindings", ack.rejected[0].key);
+                try std.testing.expectEqualStrings("InvalidKeybindingRule", ack.rejected[0].reason);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const err_msg = try protocol.parseMsgLeaky(arena.allocator(), err_line);
+    switch (err_msg) {
+        .event => |ev| switch (ev) {
+            .@"error" => |err_ev| {
+                try std.testing.expectEqualStrings("config_rejected", err_ev.code);
+                try std.testing.expectEqualStrings("backend config rejected", err_ev.message);
+                try std.testing.expectEqualStrings("InvalidKeybindingRule", err_ev.context orelse return error.TestUnexpectedResult);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "runtime config reject includes theme when keybindings fail" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(std.testing.allocator);
+
+    try runtime_ui.writeConfigRejectAckAndErrorEvents(
+        out.writer(std.testing.allocator),
+        error.InvalidKeybindingRule,
+        true,
+    );
+
+    var lines = std.mem.tokenizeScalar(u8, out.items, '\n');
+    const ack_line = lines.next() orelse return error.TestUnexpectedResult;
+    _ = lines.next() orelse return error.TestUnexpectedResult;
+
+    const ack_msg = try protocol.parseMsgLeaky(arena.allocator(), ack_line);
+    switch (ack_msg) {
+        .event => |ev| switch (ev) {
+            .config_ack => |ack| {
+                try std.testing.expectEqual(@as(usize, 0), ack.applied.len);
+                try std.testing.expectEqual(@as(usize, 2), ack.rejected.len);
+                try std.testing.expectEqualStrings("keybindings", ack.rejected[0].key);
+                try std.testing.expectEqualStrings("InvalidKeybindingRule", ack.rejected[0].reason);
+                try std.testing.expectEqualStrings("theme", ack.rejected[1].key);
+                try std.testing.expectEqualStrings("keybindings_rejected", ack.rejected[1].reason);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "ui key actions: input and textarea action handlers" {
     var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
     defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
