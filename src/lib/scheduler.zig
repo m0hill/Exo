@@ -106,8 +106,45 @@ pub const Scheduler = struct {
         return self.pending_full != null or self.pending_targets.count() > 0;
     }
 
+    pub fn hasPendingTarget(self: *const Scheduler, target: []const u8) bool {
+        return self.pending_targets.contains(target);
+    }
+
     pub fn hasPendingFull(self: *const Scheduler) bool {
         return self.pending_full != null;
+    }
+
+    pub fn pendingFullSeq(self: *const Scheduler) ?u64 {
+        if (self.pending_full) |p| return p.seq;
+        return null;
+    }
+
+    pub fn pendingTargetSeq(self: *const Scheduler, target: []const u8) ?u64 {
+        const p = self.pending_targets.get(target) orelse return null;
+        return p.seq;
+    }
+
+    pub fn oldestPendingTargetSeq(self: *const Scheduler) ?u64 {
+        var oldest: ?*PendingTarget = null;
+        var oldest_order: u64 = std.math.maxInt(u64);
+        var it = self.pending_targets.iterator();
+        while (it.next()) |entry| {
+            const p = entry.value_ptr.*;
+            if (p.order < oldest_order) {
+                oldest_order = p.order;
+                oldest = p;
+            }
+        }
+        if (oldest) |p| return p.seq;
+        return null;
+    }
+
+    pub fn appendPendingTargetSeqs(self: *const Scheduler, allocator: std.mem.Allocator, out: *std.ArrayList(u64)) !void {
+        var it = self.pending_targets.iterator();
+        while (it.next()) |entry| {
+            const p = entry.value_ptr.*;
+            if (p.seq) |seq| try out.append(allocator, seq);
+        }
     }
 
     pub fn putFullLeaky(self: *Scheduler, arena: *std.heap.ArenaAllocator, root: protocol.Node) !void {

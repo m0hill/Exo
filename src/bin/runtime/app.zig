@@ -222,7 +222,7 @@ fn parseBackendLineHint(allocator: std.mem.Allocator, line: []const u8) BackendL
     if (obj.get("seq")) |seq_val| {
         switch (seq_val) {
             .integer => |n| {
-                if (n >= 0) seq = @as(u64, @intCast(n));
+                if (n >= 0) seq = std.math.cast(u64, n);
             },
             else => {},
         }
@@ -237,20 +237,34 @@ fn parseBackendLineHint(allocator: std.mem.Allocator, line: []const u8) BackendL
     };
 }
 
+fn ackStatusString(status: protocol.AckStatus) []const u8 {
+    return switch (status) {
+        .queued => "queued",
+        .coalesced => "coalesced",
+        .applied => "applied",
+        .dropped_overflow => "dropped_overflow",
+        .dropped_stale => "dropped_stale",
+        .dropped_no_root => "dropped_no_root",
+        .dropped_not_found => "dropped_not_found",
+        .ignored_invalid => "ignored_invalid",
+    };
+}
+
 fn emitAckEvent(
     log_sink: *log.LogSink,
     backend_in: anytype,
+    backend_dirty: *bool,
     seq: u64,
-    status: []const u8,
+    status: protocol.AckStatus,
     detail: ?[]const u8,
 ) !void {
     if (detail) |d| {
-        log.logPrint(log_sink, "EVENT_TX name=ack seq={d} status={s} detail={s}\n", .{ seq, status, d });
+        log.logPrint(log_sink, "EVENT_TX name=ack seq={d} status={s} detail={s}\n", .{ seq, ackStatusString(status), d });
     } else {
-        log.logPrint(log_sink, "EVENT_TX name=ack seq={d} status={s}\n", .{ seq, status });
+        log.logPrint(log_sink, "EVENT_TX name=ack seq={d} status={s}\n", .{ seq, ackStatusString(status) });
     }
-    try protocol.writeAckEventJsonl(backend_in, seq, status, detail);
-    try backend_in.flush();
+    try protocol.writeAckEventJsonlStatus(backend_in, seq, status, detail);
+    backend_dirty.* = true;
 }
 
 pub fn writeConfigRejectAckAndErrorEvents(
@@ -476,6 +490,7 @@ pub fn run() !void {
         var requested_reason: ?RenderReason = null;
         var resize_changed_this_iter: bool = false;
         var handled_input_this_iter: bool = false;
+        var backend_flush_pending: bool = false;
         var exit_now: bool = false;
         var iter_parse_ns: u64 = 0;
         var iter_parse_lines: usize = 0;
@@ -568,7 +583,7 @@ pub fn run() !void {
                         iter_parse_ns += timing.monotonicNowNs() - parse_start_ns;
                         if (e == error.UnknownPatchMode) {
                             log.logPrint(&log_sink, "PATCH_ERR reason=unknown_mode\n", .{});
-                            emitRuntimeErrorEvent(
+                            try emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
                                 &error_event_limiter,
@@ -576,7 +591,7 @@ pub fn run() !void {
                                 "backend patch rejected: unknown patch mode",
                                 null,
                                 @errorName(e),
-                            ) catch {};
+                            );
                         } else if (line_hint.kind == .config and
                             (e == error.UnknownKeyAction or
                                 e == error.InvalidKeybindingRule or
@@ -585,8 +600,8 @@ pub fn run() !void {
                                 e == error.WrongType))
                         {
                             log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
-                            emitConfigRejectAckEvent(&log_sink, child_in, e, line_hint.has_theme_key) catch {};
-                            emitRuntimeErrorEvent(
+                            try emitConfigRejectAckEvent(&log_sink, child_in, e, line_hint.has_theme_key);
+                            try emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
                                 &error_event_limiter,
@@ -594,10 +609,10 @@ pub fn run() !void {
                                 "backend config rejected",
                                 null,
                                 @errorName(e),
-                            ) catch {};
+                            );
                         } else if (e == error.InvalidPatchShape) {
                             log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
-                            emitRuntimeErrorEvent(
+                            try emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
                                 &error_event_limiter,
@@ -605,10 +620,10 @@ pub fn run() !void {
                                 "backend patch rejected: invalid shape",
                                 null,
                                 @errorName(e),
-                            ) catch {};
+                            );
                         } else if (e == error.InvalidJson) {
                             log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
-                            emitRuntimeErrorEvent(
+                            try emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
                                 &error_event_limiter,
@@ -616,10 +631,10 @@ pub fn run() !void {
                                 "backend line rejected: invalid JSON",
                                 null,
                                 @errorName(e),
-                            ) catch {};
+                            );
                         } else {
                             log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
-                            emitRuntimeErrorEvent(
+                            try emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
                                 &error_event_limiter,
@@ -627,10 +642,10 @@ pub fn run() !void {
                                 "backend line rejected by protocol parser",
                                 null,
                                 @errorName(e),
-                            ) catch {};
+                            );
                         }
                         if (line_hint.seq) |seq| {
-                            emitAckEvent(&log_sink, child_in, seq, "ignored_invalid", @errorName(e)) catch {};
+                            try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .ignored_invalid, @errorName(e));
                         }
                         break;
                     };
@@ -646,19 +661,34 @@ pub fn run() !void {
                                             try protocol.writeDroppedEventJsonl(child_in, seq, "stale_seq");
                                             try child_in.flush();
                                         }
-                                        emitAckEvent(&log_sink, child_in, seq, "dropped_stale", "stale_seq") catch {};
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .dropped_stale, "stale_seq");
                                         break;
                                     }
                                     has_patch_seq_seen = true;
                                     last_patch_seq_seen = seq;
                                 }
 
+                                const pending_full_seq = sched.pendingFullSeq();
+                                var cleared_target_seqs: std.ArrayList(u64) = .empty;
+                                defer cleared_target_seqs.deinit(allocator);
+                                try sched.appendPendingTargetSeqs(allocator, &cleared_target_seqs);
+
                                 sched.putFullLeakyWithSeq(&next_arena, f.root, f.seq) catch |e| {
                                     log.logPrint(&log_sink, "SCHED_ERR reason={s}\n", .{@errorName(e)});
                                     break;
                                 };
                                 if (f.seq) |seq| {
-                                    emitAckEvent(&log_sink, child_in, seq, "queued", "full") catch {};
+                                    try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .queued, "full");
+                                }
+                                if (pending_full_seq) |seq| {
+                                    if (f.seq == null or seq != f.seq.?) {
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .coalesced, "full_overwrite");
+                                    }
+                                }
+                                for (cleared_target_seqs.items) |seq| {
+                                    if (f.seq == null or seq != f.seq.?) {
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .coalesced, "superseded_by_full");
+                                    }
                                 }
                                 sched_changed_live = true;
                             },
@@ -670,7 +700,7 @@ pub fn run() !void {
                                             try protocol.writeDroppedEventJsonl(child_in, seq, "stale_seq");
                                             try child_in.flush();
                                         }
-                                        emitAckEvent(&log_sink, child_in, seq, "dropped_stale", "stale_seq") catch {};
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .dropped_stale, "stale_seq");
                                         break;
                                     }
                                     has_patch_seq_seen = true;
@@ -680,10 +710,16 @@ pub fn run() !void {
                                 if (current_root == null and !sched.hasPendingFull()) {
                                     log.logPrint(&log_sink, "SCHED_DROP reason=no_root target={s}\n", .{t.target});
                                     if (t.seq) |seq| {
-                                        emitAckEvent(&log_sink, child_in, seq, "dropped_no_root", "no_root") catch {};
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .dropped_no_root, "no_root");
                                     }
                                     break;
                                 }
+
+                                const prior_target_seq = sched.pendingTargetSeq(t.target);
+                                const may_drop_oldest = prior_target_seq == null and
+                                    sched.overflow_policy == .drop_oldest and
+                                    sched.counts().pending_targets >= sched.max_pending_targets;
+                                const dropped_oldest_seq = if (may_drop_oldest) sched.oldestPendingTargetSeq() else null;
 
                                 const r = sched.putTargetLeakyWithSeq(&next_arena, t.target, t.node, t.mode, t.seq) catch |e| {
                                     log.logPrint(&log_sink, "SCHED_ERR reason={s}\n", .{@errorName(e)});
@@ -701,18 +737,28 @@ pub fn run() !void {
                                             try child_in.flush();
                                         }
                                         if (t.seq) |seq| {
-                                            emitAckEvent(&log_sink, child_in, seq, "dropped_overflow", "queue_overflow") catch {};
+                                            try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .dropped_overflow, "queue_overflow");
                                         }
                                     },
                                     .stored_new => {
+                                        if (dropped_oldest_seq) |old_seq| {
+                                            if (t.seq == null or old_seq != t.seq.?) {
+                                                try emitAckEvent(&log_sink, child_in, &backend_flush_pending, old_seq, .dropped_overflow, "queue_overflow");
+                                            }
+                                        }
                                         if (t.seq) |seq| {
-                                            emitAckEvent(&log_sink, child_in, seq, "queued", "target") catch {};
+                                            try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .queued, "target");
                                         }
                                         sched_changed_live = true;
                                     },
                                     .stored_overwrite => {
+                                        if (prior_target_seq) |old_seq| {
+                                            if (t.seq == null or old_seq != t.seq.?) {
+                                                try emitAckEvent(&log_sink, child_in, &backend_flush_pending, old_seq, .coalesced, "target_overwrite");
+                                            }
+                                        }
                                         if (t.seq) |seq| {
-                                            emitAckEvent(&log_sink, child_in, seq, "coalesced", "target_overwrite") catch {};
+                                            try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .coalesced, "target_overwrite");
                                         }
                                         sched_changed_live = true;
                                     },
@@ -732,14 +778,14 @@ pub fn run() !void {
                                         try protocol.writeClipboardEventJsonl(child_in, .write, false, 0, null, reason);
                                         try child_in.flush();
                                         if (w.seq) |seq| {
-                                            emitAckEvent(&log_sink, child_in, seq, "applied", reason) catch {};
+                                            try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .applied, reason);
                                         }
                                         break;
                                     };
                                     try protocol.writeClipboardEventJsonl(child_in, .write, true, 0, null, null);
                                     try child_in.flush();
                                     if (w.seq) |seq| {
-                                        emitAckEvent(&log_sink, child_in, seq, "applied", null) catch {};
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .applied, null);
                                     }
                                 },
                                 .read => |r| {
@@ -752,7 +798,7 @@ pub fn run() !void {
                                         try protocol.writeClipboardEventJsonl(child_in, .read, false, r.request_id, null, reason);
                                         try child_in.flush();
                                         if (r.seq) |seq| {
-                                            emitAckEvent(&log_sink, child_in, seq, "applied", reason) catch {};
+                                            try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .applied, reason);
                                         }
                                         break;
                                     };
@@ -825,7 +871,7 @@ pub fn run() !void {
                                     try protocol.writePasteEventJsonl(child_in, .clipboard, payload_owned.len);
                                     try child_in.flush();
                                     if (r.seq) |seq| {
-                                        emitAckEvent(&log_sink, child_in, seq, "applied", null) catch {};
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .applied, null);
                                     }
                                 },
                             }
@@ -851,13 +897,13 @@ pub fn run() !void {
                                         };
                                         rejected_len += 1;
                                     }
-                                    emitConfigAckEvent(
+                                    try emitConfigAckEvent(
                                         &log_sink,
                                         child_in,
                                         applied_keys[0..applied_len],
                                         rejected_keys[0..rejected_len],
-                                    ) catch {};
-                                    emitRuntimeErrorEvent(
+                                    );
+                                    try emitRuntimeErrorEvent(
                                         &log_sink,
                                         child_in,
                                         &error_event_limiter,
@@ -865,9 +911,9 @@ pub fn run() !void {
                                         "backend config rejected",
                                         null,
                                         @errorName(e),
-                                    ) catch {};
+                                    );
                                     if (cfg.seq) |seq| {
-                                        emitAckEvent(&log_sink, child_in, seq, "ignored_invalid", @errorName(e)) catch {};
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .ignored_invalid, @errorName(e));
                                     }
                                     break;
                                 };
@@ -890,7 +936,7 @@ pub fn run() !void {
                                 );
                             }
                             if (cfg.seq) |seq| {
-                                emitAckEvent(&log_sink, child_in, seq, "applied", null) catch {};
+                                try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .applied, null);
                             }
                         },
                         .theme => |tm| {
@@ -1345,6 +1391,11 @@ pub fn run() !void {
             }
         }
 
+        if (backend_flush_pending) {
+            try child_in.flush();
+            backend_flush_pending = false;
+        }
+
         if (exit_now) break;
 
         try maybeSendPendingResizeEvent(&log_sink, child_in, &pending_resize, &last_resize_tx_ns);
@@ -1362,10 +1413,10 @@ pub fn run() !void {
                 scheduler_mod.FlushResult{ .dropped_targets = sched.counts().dropped_targets };
             const sched_flush_ns = timing.monotonicNowNs() - flush_start_ns;
             for (flush_res.applied_seqs) |seq| {
-                emitAckEvent(&log_sink, child_in, seq, "applied", null) catch {};
+                try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .applied, null);
             }
             for (flush_res.not_found_seqs) |seq| {
-                emitAckEvent(&log_sink, child_in, seq, "dropped_not_found", "target_not_found") catch {};
+                try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .dropped_not_found, "target_not_found");
             }
 
             if (current_root != null) {
@@ -1435,6 +1486,7 @@ pub fn run() !void {
                 }
                 pointer_engine.pruneAfterPatchWithIndex(current_root.?, &id_index);
                 try child_in.flush();
+                backend_flush_pending = false;
 
                 if (resize_changed_this_iter) {
                     ui.clampLocalStateForResize(&widgets, current_root.?, last_term_size);

@@ -105,9 +105,20 @@ pub const RuntimeErrorEvent = struct {
     v: ?u32 = null,
 };
 
+pub const AckStatus = enum {
+    queued,
+    coalesced,
+    applied,
+    dropped_overflow,
+    dropped_stale,
+    dropped_no_root,
+    dropped_not_found,
+    ignored_invalid,
+};
+
 pub const AckEvent = struct {
     seq: u64,
-    status: []const u8,
+    status: AckStatus,
     detail: ?[]const u8 = null,
     v: ?u32 = null,
 };
@@ -687,6 +698,7 @@ pub const ParseMsgError = error{
     UnknownClipboardOp,
     UnknownClipboardTarget,
     UnknownPasteSource,
+    UnknownAckStatus,
     UnknownThemeName,
     UnknownKeyAction,
     InvalidKeybindingRule,

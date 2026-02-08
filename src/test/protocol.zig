@@ -1041,7 +1041,7 @@ test "protocol: parse ack event" {
         .event => |ev| switch (ev) {
             .ack => |ack| {
                 try std.testing.expectEqual(@as(u64, 42), ack.seq);
-                try std.testing.expectEqualStrings("applied", ack.status);
+                try std.testing.expectEqual(protocol.AckStatus.applied, ack.status);
                 try std.testing.expectEqualStrings("target", ack.detail orelse return error.TestUnexpectedResult);
             },
             else => return error.TestUnexpectedResult,
@@ -1063,7 +1063,7 @@ test "protocol: write+parse ack event" {
         .event => |ev| switch (ev) {
             .ack => |ack| {
                 try std.testing.expectEqual(@as(u64, 88), ack.seq);
-                try std.testing.expectEqualStrings("dropped_overflow", ack.status);
+                try std.testing.expectEqual(protocol.AckStatus.dropped_overflow, ack.status);
                 try std.testing.expectEqualStrings("queue_overflow", ack.detail orelse return error.TestUnexpectedResult);
             },
             else => return error.TestUnexpectedResult,

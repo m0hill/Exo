@@ -235,7 +235,7 @@ test "scheduler: dropped overflow emits dropped_overflow ack payload" {
         .event => |ev| switch (ev) {
             .ack => |ack| {
                 try std.testing.expectEqual(@as(u64, 2), ack.seq);
-                try std.testing.expectEqualStrings("dropped_overflow", ack.status);
+                try std.testing.expectEqual(protocol.AckStatus.dropped_overflow, ack.status);
                 try std.testing.expectEqualStrings("queue_overflow", ack.detail orelse return error.TestUnexpectedResult);
             },
             else => return error.TestUnexpectedResult,

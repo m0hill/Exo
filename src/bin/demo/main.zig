@@ -663,7 +663,7 @@ pub fn main() !void {
                         .ack => |ack| {
                             std.debug.print(
                                 "EVENT_RX name=ack seq={d} status={s} detail={s}\n",
-                                .{ ack.seq, ack.status, ack.detail orelse "" },
+                                .{ ack.seq, @tagName(ack.status), ack.detail orelse "" },
                             );
                         },
                         .config_ack => |ack| {

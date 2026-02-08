@@ -22,6 +22,7 @@ const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
 const PasteSource = protocol.PasteSource;
 const RuntimeErrorEvent = protocol.RuntimeErrorEvent;
+const AckStatus = protocol.AckStatus;
 const AckEvent = protocol.AckEvent;
 const ConfigAckEvent = protocol.ConfigAckEvent;
 const KeybindingsConfig = protocol.KeybindingsConfig;
@@ -471,10 +472,50 @@ pub fn writeAckEventJsonl(writer: anytype, seq: u64, status: []const u8, detail:
     return writeAckEventJsonlVersion(writer, seq, status, detail, null);
 }
 
+fn ackStatusString(status: AckStatus) []const u8 {
+    return switch (status) {
+        .queued => "queued",
+        .coalesced => "coalesced",
+        .applied => "applied",
+        .dropped_overflow => "dropped_overflow",
+        .dropped_stale => "dropped_stale",
+        .dropped_no_root => "dropped_no_root",
+        .dropped_not_found => "dropped_not_found",
+        .ignored_invalid => "ignored_invalid",
+    };
+}
+
+fn parseAckStatusString(status: []const u8) ParseMsgError!AckStatus {
+    if (std.mem.eql(u8, status, "queued")) return .queued;
+    if (std.mem.eql(u8, status, "coalesced")) return .coalesced;
+    if (std.mem.eql(u8, status, "applied")) return .applied;
+    if (std.mem.eql(u8, status, "dropped_overflow")) return .dropped_overflow;
+    if (std.mem.eql(u8, status, "dropped_stale")) return .dropped_stale;
+    if (std.mem.eql(u8, status, "dropped_no_root")) return .dropped_no_root;
+    if (std.mem.eql(u8, status, "dropped_not_found")) return .dropped_not_found;
+    if (std.mem.eql(u8, status, "ignored_invalid")) return .ignored_invalid;
+    return error.UnknownAckStatus;
+}
+
 pub fn writeAckEventJsonlVersion(
     writer: anytype,
     seq: u64,
     status: []const u8,
+    detail: ?[]const u8,
+    v: ?u32,
+) !void {
+    const parsed_status = try parseAckStatusString(status);
+    return writeAckEventJsonlStatusVersion(writer, seq, parsed_status, detail, v);
+}
+
+pub fn writeAckEventJsonlStatus(writer: anytype, seq: u64, status: AckStatus, detail: ?[]const u8) !void {
+    return writeAckEventJsonlStatusVersion(writer, seq, status, detail, null);
+}
+
+pub fn writeAckEventJsonlStatusVersion(
+    writer: anytype,
+    seq: u64,
+    status: AckStatus,
     detail: ?[]const u8,
     v: ?u32,
 ) !void {
@@ -487,7 +528,7 @@ pub fn writeAckEventJsonlVersion(
     try writer.writeAll("{\"type\":\"event\"");
     try writeVersionField(writer, ack.v);
     try writer.print(",\"name\":\"ack\",\"seq\":{d},\"status\":", .{ack.seq});
-    try writeJsonString(writer, ack.status);
+    try writeJsonString(writer, ackStatusString(ack.status));
     if (ack.detail) |d| {
         try writer.writeAll(",\"detail\":");
         try writeJsonString(writer, d);
