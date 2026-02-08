@@ -939,10 +939,6 @@ pub fn run() !void {
                                 try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .applied, null);
                             }
                         },
-                        .theme => |tm| {
-                            active_theme = render.themeFromName(tm.name);
-                            log.logPrint(&log_sink, "CONFIG_APPLY kind=theme name={s}\n", .{@tagName(tm.name)});
-                        },
                         else => {},
                     }
                 },

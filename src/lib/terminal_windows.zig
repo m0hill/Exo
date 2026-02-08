@@ -246,14 +246,6 @@ pub const Terminal = struct {
         self.mouse_enabled_1002 = false;
         updateCrashStateFromTerminal(self);
     }
-
-    pub fn enableMouseMotion(self: *Terminal) !void {
-        return self.enableMouseMotionAny();
-    }
-
-    pub fn disableMouseMotion(self: *Terminal) !void {
-        return self.disableMouseMotionAny();
-    }
 };
 
 pub const CrashRestoreState = struct {

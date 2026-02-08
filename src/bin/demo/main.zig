@@ -719,7 +719,10 @@ pub fn main() !void {
                                 theme_idx = (theme_idx + 1) % theme_cycle.len;
                                 const next_theme = theme_cycle[theme_idx];
                                 std.debug.print("CONFIG_TX kind=theme name={s}\n", .{@tagName(next_theme)});
-                                try protocol.writeThemeJsonlVersion(out, next_theme, DEMO_PROTOCOL_VERSION);
+                                try protocol.writeConfigJsonlVersion(out, .{
+                                    .theme = next_theme,
+                                    .v = DEMO_PROTOCOL_VERSION,
+                                }, null);
                                 try out.flush();
                             } else if ((std.mem.eql(u8, k.key, "x") and k.mods == 0) or
                                 std.mem.eql(u8, k.key, "ctrl-c") or

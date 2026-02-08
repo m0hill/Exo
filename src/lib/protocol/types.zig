@@ -6,7 +6,6 @@ pub const Msg = union(enum) {
     event: EventMsg,
     clipboard: ClipboardMsg,
     config: ConfigMsg,
-    theme: ThemeMsg,
 };
 
 pub const PatchMsg = union(enum) {
@@ -145,11 +144,6 @@ pub const ThemeName = enum {
     default,
     light,
     ocean,
-};
-
-pub const ThemeMsg = struct {
-    name: ThemeName,
-    v: ?u32 = null,
 };
 
 pub const KeybindingsConfig = struct {
@@ -702,4 +696,5 @@ pub const ParseMsgError = error{
     UnknownThemeName,
     UnknownKeyAction,
     InvalidKeybindingRule,
+    UnknownField,
 } || std.mem.Allocator.Error;

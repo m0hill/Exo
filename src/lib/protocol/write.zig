@@ -607,22 +607,6 @@ pub fn writeConfigJsonlVersion(writer: anytype, cfg: protocol.ConfigMsg, v: ?u32
     try writer.writeAll("}\n");
 }
 
-pub fn writeThemeJsonl(writer: anytype, name: ThemeName) !void {
-    return writeThemeJsonlVersion(writer, name, null);
-}
-
-pub fn writeThemeJsonlVersion(writer: anytype, name: ThemeName, v: ?u32) !void {
-    try writer.writeAll("{\"type\":\"theme\"");
-    try writeVersionField(writer, v);
-    try writer.writeAll(",\"name\":");
-    try writeJsonString(writer, switch (name) {
-        .default => "default",
-        .light => "light",
-        .ocean => "ocean",
-    });
-    try writer.writeAll("}\n");
-}
-
 fn writeKeybindingContext(
     writer: anytype,
     name: []const u8,

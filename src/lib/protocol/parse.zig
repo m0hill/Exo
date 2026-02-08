@@ -36,7 +36,6 @@ const HelloLimits = protocol.HelloLimits;
 const HelloEvent = protocol.HelloEvent;
 const ConfigMsg = protocol.ConfigMsg;
 const ThemeName = protocol.ThemeName;
-const ThemeMsg = protocol.ThemeMsg;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
@@ -300,10 +299,6 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
     } else if (std.mem.eql(u8, type_str, "config")) {
         const cfg = try parseConfigMsg(allocator, obj, version);
         return .{ .config = cfg };
-    } else if (std.mem.eql(u8, type_str, "theme")) {
-        const name = try parseThemeName(try getRequiredString(obj, "name"));
-        const tm: ThemeMsg = .{ .name = name, .v = version };
-        return .{ .theme = tm };
     } else {
         return error.UnknownMsgType;
     }
@@ -669,10 +664,7 @@ fn parseFocusScope(obj: std.json.ObjectMap) ParseMsgError!?[]const u8 {
         if (scope.len == 0) return null;
         return scope;
     }
-    if (try getOptionalString(obj, "focus_group")) |scope| {
-        if (scope.len == 0) return null;
-        return scope;
-    }
+    if (obj.get("focus_group") != null) return error.UnknownField;
     return null;
 }
 

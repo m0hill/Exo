@@ -1470,11 +1470,8 @@ fn applyTextareaStateFromNode(
 }
 
 fn listModeSuppressesAutoSelect(mode: protocol.StateMode) bool {
-    return switch (mode) {
-        .uncontrolled => false,
-        .controlled => true,
-        .init => true,
-    };
+    _ = mode;
+    return true;
 }
 
 fn applyListStateFromNode(
@@ -1510,9 +1507,7 @@ fn applyListStateFromNode(
     for (list_node.children) |child| {
         if (std.mem.eql(u8, node_util.nodeId(child), st.selected_id.items)) return;
     }
-    if (!listModeSuppressesAutoSelect(list_node.state_mode)) {
-        st.selected_id.clearRetainingCapacity();
-    }
+    st.selected_id.clearRetainingCapacity();
 }
 
 fn applyScrollStateFromNode(

@@ -17,11 +17,25 @@ zig build test -- <filter>
 # Example: zig build test -- "render: focused input"
 ```
 
+## Protocol Schema Validation
+
+```bash
+# Install dependency for schema checks
+python3 -m pip install jsonschema
+
+# Canonical schema drift check (schema <-> Zig types + docs examples)
+python3 scripts/check_protocol_schema.py --docs docs/PROTOCOL.md
+
+# Validate captured runtime/backend JSONL traffic against schema
+python3 scripts/check_protocol_schema.py --jsonl tui_backend.jsonl --jsonl tui_events.jsonl
+```
+
 ## Project Structure
 
 - `src/bin/` - Executables (`tui_runtime.zig`, `backend_demo.zig`)
 - `src/lib/` - Library code imported as `tui` module
 - `src/test/` - Tests + test-only helpers (`testing_terminal.zig`)
+- `scripts/` - Developer tooling and validation scripts (including protocol schema checks)
 
 ## Code Style
 
@@ -75,6 +89,6 @@ zig build test -- <filter>
 ## Protocol (Runtime <-> Backend)
 
 - JSONL over stdin/stdout pipes
-- Messages: `patch` (backend→runtime), `event` (runtime→backend)
-- Nodes: `vbox`, `text`, `input` with required `id` field
-- Event types: `key`, `focus`, `input`
+- Messages: `patch` (backend→runtime), `event` (runtime→backend), `clipboard`, `config`
+- Canonical schema artifact: `protocol.schema.json`
+- Run `scripts/check_protocol_schema.py` when protocol types/docs/schema change

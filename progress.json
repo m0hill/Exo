@@ -1188,4 +1188,40 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 41,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Protocol cleanup: remove theme message, consolidate into config; strict schema validation; remove legacy aliases",
+    "deliverables": [
+      "src/lib/protocol/types.zig: removed `ThemeMsg` type; theme now only via `ConfigMsg.theme`",
+      "src/lib/protocol/parse.zig: removed `theme` message parsing; added `UnknownField` error for strict validation",
+      "src/lib/protocol/write.zig: removed `writeThemeMsgJsonl` and theme message write support",
+      "docs/PROTOCOL.md: documented `protocol.schema.json` as canonical artifact; updated strictness policy (`additionalProperties: false`)",
+      "docs/PROTOCOL.md: removed `theme` message documentation; theme only via config",
+      "docs/PROTOCOL.md: removed `focus_group` alias documentation (now only `focus_scope`)",
+      "docs/PROTOCOL.md: documented list no longer auto-selects on patch (backend must set `selected_id`)",
+      "AGENTS.md: added protocol schema validation section with `scripts/check_protocol_schema.py` usage",
+      "README.md: added `protocol.schema.json` and `SCHEMA_DRIFT.md` references",
+      "src/bin/demo/main.zig: removed theme message emission; use config for theme changes",
+      "src/lib/terminal_posix.zig + src/lib/terminal_windows.zig: removed unused code",
+      "src/test/protocol.zig: updated tests for removed theme message and stricter validation"
+    ],
+    "boundaries_hit": [
+      "Theme changes consolidated into config message (single channel for runtime configuration)",
+      "Strict schema validation: unknown fields rejected, not ignored (`additionalProperties: false`)",
+      "Removed backward-compat aliases to simplify protocol surface",
+      "Canonical schema in `protocol.schema.json` is source of truth for SDKs and validation"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build test",
+      "python3 scripts/check_protocol_schema.py --docs docs/PROTOCOL.md",
+      "zig build demo",
+      "Confirm theme changes still work via config (press 't' to cycle themes)",
+      "Confirm `focus_group` no longer parsed (use `focus_scope` instead)",
+      "Exit with 'x'"
+    ]
+  }
 ]

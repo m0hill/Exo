@@ -5,7 +5,16 @@ Transport is **newline-delimited JSON (JSONL)** over stdin/stdout pipes:
 - backend → runtime: patches (and clipboard requests)
 - runtime → backend: events
 
-This repo’s current protocol is defined by the Zig types in `src/lib/protocol/types.zig`.
+Canonical protocol artifact for SDK generation and validation is `../protocol.schema.json` (JSON Schema
+2020-12).
+
+The Zig types in `src/lib/protocol/types.zig` are the reference implementation and must remain in sync
+with `../protocol.schema.json`.
+
+## JSONL Validation
+
+- One JSON object per line.
+- Validate each line against `Msg` (the schema entrypoint in `../protocol.schema.json`).
 
 ## Messages
 
@@ -15,7 +24,6 @@ Every line is a single JSON object with a `type`:
 - `event` (runtime → backend)
 - `clipboard` (backend → runtime)
 - `config` (backend → runtime)
-- `theme` (backend → runtime)
 
 Optional top-level version field:
 
@@ -23,12 +31,13 @@ Optional top-level version field:
 - current protocol version is `1`
 - receivers must accept messages with or without `v`
 - senders may omit `v` to keep payloads smaller
+- if `v` is present it must be `1`
 
-Compatibility policy:
+Strictness policy:
 
-- additive fields are non-breaking
-- unknown fields must be ignored
-- removing or changing meaning of existing fields is breaking and requires a new version rollout plan
+- schema validation is strict (`additionalProperties: false` on message/event/node objects)
+- unknown fields are rejected by the canonical schema
+- canonical schema excludes compatibility aliases/quirks
 
 ### Patch (backend → runtime)
 
@@ -126,14 +135,6 @@ Theme names:
 - `light`
 - `ocean`
 
-### Theme (backend -> runtime)
-
-A dedicated theme message can also change active theme at runtime:
-
-```json
-{"type":"theme","name":"ocean"}
-```
-
 Action names:
 
 - focus/actions: `noop`, `focus_next`, `focus_prev`, `focus_scope_next`, `focus_scope_prev`, `focus_clear`, `action_activate`
@@ -197,7 +198,7 @@ Hover / pointer (emitted only for nodes that opt in; see `hoverable`/`mouseable`
 
 ```json
 {"type":"event","name":"hover","id":"btn-ok","x":10,"y":4,"item":null}
-{"type":"event","name":"pointer","kind":"down","id":"btn-ok","x":10,"y":4,"local_x":1,"local_y":0,"button":"left","clicks":1}
+{"type":"event","name":"pointer","kind":"down","id":"btn-ok","x":10,"y":4,"local_x":1,"local_y":0,"button":"left","buttons":1,"mods":0,"clicks":1,"scroll_dx":0,"scroll_dy":0,"captured":false}
 ```
 
 Clipboard result + paste semantic:
@@ -284,7 +285,7 @@ Node types (current):
 - `class` (string, optional): theme class hook (exact string match; no selector language)
 - layout: `w`/`h` (int?), `flex` (int), `pad` (int), `clip` (bool)
 - interaction/state: `hoverable` (bool), `mouseable` (bool), `focusable` (bool), `disabled` (bool), `readonly` (bool)
-- focus scoping: `focus_scope` (string, optional; alias `focus_group` accepted on input)
+- focus scoping: `focus_scope` (string, optional)
 - validation: `validation` (`none|error|warning|success`)
 - `style` (object, optional): style overrides
 
@@ -299,7 +300,7 @@ State-capable widgets support `state_mode`:
 Patch application rule:
 
 - runtime never emits events just because a patch applied widget state
-- exception kept for compatibility: uncontrolled `list` still auto-selects first item and emits initial `select`
+- runtime never auto-selects list items on patch; backend must set `selected_id` when selection is needed
 
 State fields by widget:
 
@@ -383,3 +384,7 @@ Capability profile + feature disables:
 - unknown node type / missing required fields: runtime logs and ignores the patch (keeps last good tree)
 - patch-by-id with unknown `target`: runtime logs and ignores it
 - runtime also emits `event:error` (rate-limited) for invalid lines, invalid patch shape/mode, and config rejection
+
+## Schema Drift
+
+For manual schema drift checks and traffic validation workflow, see `../SCHEMA_DRIFT.md`.

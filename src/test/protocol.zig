@@ -231,25 +231,12 @@ test "protocol: write+parse widget state fields" {
     try std.testing.expectEqualStrings("panel-a", b.focus_scope orelse return error.TestUnexpectedResult);
 }
 
-test "protocol: parse focus_group alias" {
+test "protocol: reject non-canonical focus_group field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
     const line = "{\"type\":\"patch\",\"root\":{\"type\":\"input\",\"id\":\"q\",\"focus_group\":\"main\"}}";
-    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
-    const root = switch (msg) {
-        .patch => |p| switch (p) {
-            .full => |f| f.root,
-            else => return error.TestUnexpectedResult,
-        },
-        else => return error.TestUnexpectedResult,
-    };
-
-    const inp = switch (root) {
-        .input => |i| i,
-        else => return error.TestUnexpectedResult,
-    };
-    try std.testing.expectEqualStrings("main", inp.focus_scope orelse return error.TestUnexpectedResult);
+    try std.testing.expectError(error.UnknownField, protocol.parseMsgLeaky(arena.allocator(), line));
 }
 
 test "protocol: write+parse textarea + list marker" {
@@ -681,17 +668,6 @@ test "protocol: reject malformed keybinding rule" {
     const missing_key =
         "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"action\":\"focus_next\"}]}}";
     try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), missing_key));
-}
-
-test "protocol: parse theme message" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"theme\",\"name\":\"light\"}");
-    switch (msg) {
-        .theme => |tm| try std.testing.expectEqual(protocol.ThemeName.light, tm.name),
-        else => return error.TestUnexpectedResult,
-    }
 }
 
 test "protocol: parse config theme-only message" {
@@ -1184,13 +1160,14 @@ test "protocol: parse top-level version field across message types" {
         .config => |cfg| try std.testing.expectEqual(@as(?u32, 1), cfg.v),
         else => return error.TestUnexpectedResult,
     }
+}
 
-    const theme_msg = try protocol.parseMsgLeaky(
-        arena.allocator(),
-        "{\"type\":\"theme\",\"v\":1,\"name\":\"ocean\"}",
+test "protocol: reject removed theme message type" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    try std.testing.expectError(
+        error.UnknownMsgType,
+        protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"theme\",\"v\":1,\"name\":\"ocean\"}"),
     );
-    switch (theme_msg) {
-        .theme => |tm| try std.testing.expectEqual(@as(?u32, 1), tm.v),
-        else => return error.TestUnexpectedResult,
-    }
 }

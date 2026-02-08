@@ -26,6 +26,8 @@ zig build bench
 **Docs**
 
 - `docs/PROTOCOL.md` — JSONL protocol, node schema, styling, terminal caps/env overrides
+- `protocol.schema.json` — canonical JSON Schema artifact for JSONL message validation/SDK generation
+- `SCHEMA_DRIFT.md` — manual checklist for schema drift + real-traffic validation
 - `docs/DEVELOPMENT.md` — build/run tips, logging, troubleshooting
 - `docs/PERFORMANCE.md` — benchmark workloads, perf targets, runtime tuning knobs
 

@@ -238,15 +238,6 @@ pub const Terminal = struct {
         updateCrashStateFromTerminal(self);
     }
 
-    // Back-compat helpers used by earlier tracers.
-    pub fn enableMouseMotion(self: *Terminal) !void {
-        return self.enableMouseMotionAny();
-    }
-
-    pub fn disableMouseMotion(self: *Terminal) !void {
-        return self.disableMouseMotionAny();
-    }
-
     pub fn deinit(self: *Terminal) void {
         if (self.caps_.ansi) {
             if (self.paste_enabled) {
