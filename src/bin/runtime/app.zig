@@ -127,6 +127,40 @@ fn maybeSendPendingResizeEvent(
     pending_resize.* = null;
 }
 
+const ErrorEventLimiter = struct {
+    last_emit_ns: u64 = 0,
+    interval_ns: u64 = 200 * std.time.ns_per_ms,
+
+    fn allow(self: *ErrorEventLimiter, now_ns: u64) bool {
+        if (self.last_emit_ns != 0 and now_ns < self.last_emit_ns + self.interval_ns) return false;
+        self.last_emit_ns = now_ns;
+        return true;
+    }
+};
+
+fn emitRuntimeErrorEvent(
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    limiter: *ErrorEventLimiter,
+    code: []const u8,
+    message: []const u8,
+    seq: ?u64,
+    context: ?[]const u8,
+) !void {
+    const now_ns = timing.monotonicNowNs();
+    if (!limiter.allow(now_ns)) {
+        log.logPrint(log_sink, "EVENT_DROP name=error code={s} reason=rate_limit\n", .{code});
+        return;
+    }
+    if (context) |ctx| {
+        log.logPrint(log_sink, "EVENT_TX name=error code={s} message={s} context={s}\n", .{ code, message, ctx });
+    } else {
+        log.logPrint(log_sink, "EVENT_TX name=error code={s} message={s}\n", .{ code, message });
+    }
+    try protocol.writeErrorEventJsonl(backend_in, code, message, seq, context);
+    try backend_in.flush();
+}
+
 fn contextForFocusedKind(kind: ui.FocusKind) keybindings.Context {
     return switch (kind) {
         .input => .input,
@@ -284,6 +318,7 @@ pub fn run() !void {
     var keymap = try keybindings.KeymapState.initDefaults(allocator);
     defer keymap.deinit();
     var active_theme: render.Theme = render.default_theme;
+    var error_event_limiter: ErrorEventLimiter = .{};
     var emergency_last_ns: u64 = 0;
     const emergency_window_ns: u64 = 900 * std.time.ns_per_ms;
 
@@ -395,10 +430,59 @@ pub fn run() !void {
                         iter_parse_ns += timing.monotonicNowNs() - parse_start_ns;
                         if (e == error.UnknownPatchMode) {
                             log.logPrint(&log_sink, "PATCH_ERR reason=unknown_mode\n", .{});
+                            emitRuntimeErrorEvent(
+                                &log_sink,
+                                child_in,
+                                &error_event_limiter,
+                                "invalid_patch_shape",
+                                "backend patch rejected: unknown patch mode",
+                                null,
+                                @errorName(e),
+                            ) catch {};
                         } else if (e == error.UnknownKeyAction or e == error.InvalidKeybindingRule or e == error.UnknownThemeName) {
                             log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
+                            emitRuntimeErrorEvent(
+                                &log_sink,
+                                child_in,
+                                &error_event_limiter,
+                                "config_rejected",
+                                "backend config rejected",
+                                null,
+                                @errorName(e),
+                            ) catch {};
+                        } else if (e == error.InvalidPatchShape) {
+                            log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
+                            emitRuntimeErrorEvent(
+                                &log_sink,
+                                child_in,
+                                &error_event_limiter,
+                                "invalid_patch_shape",
+                                "backend patch rejected: invalid shape",
+                                null,
+                                @errorName(e),
+                            ) catch {};
+                        } else if (e == error.InvalidJson) {
+                            log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
+                            emitRuntimeErrorEvent(
+                                &log_sink,
+                                child_in,
+                                &error_event_limiter,
+                                "invalid_line",
+                                "backend line rejected: invalid JSON",
+                                null,
+                                @errorName(e),
+                            ) catch {};
                         } else {
                             log.logPrint(&log_sink, "PATCH_ERR reason={s}\n", .{@errorName(e)});
+                            emitRuntimeErrorEvent(
+                                &log_sink,
+                                child_in,
+                                &error_event_limiter,
+                                "invalid_line",
+                                "backend line rejected by protocol parser",
+                                null,
+                                @errorName(e),
+                            ) catch {};
                         }
                         break;
                     };
@@ -568,6 +652,15 @@ pub fn run() !void {
                             if (cfg.keybindings) |kb| {
                                 keymap.applyConfigReplace(kb) catch |e| {
                                     log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
+                                    emitRuntimeErrorEvent(
+                                        &log_sink,
+                                        child_in,
+                                        &error_event_limiter,
+                                        "config_rejected",
+                                        "backend config rejected",
+                                        null,
+                                        @errorName(e),
+                                    ) catch {};
                                     break;
                                 };
                                 log.logPrint(&log_sink, "CONFIG_APPLY kind=keybindings\n", .{});

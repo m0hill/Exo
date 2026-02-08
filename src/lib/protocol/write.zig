@@ -21,6 +21,7 @@ const PointerEvent = protocol.PointerEvent;
 const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
 const PasteSource = protocol.PasteSource;
+const RuntimeErrorEvent = protocol.RuntimeErrorEvent;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
@@ -353,6 +354,47 @@ pub fn writePasteEventJsonlVersion(writer: anytype, source: PasteSource, bytes: 
         .clipboard => "clipboard",
     });
     try writer.print(",\"bytes\":{d}}}\n", .{bytes});
+}
+
+pub fn writeErrorEventJsonl(
+    writer: anytype,
+    code: []const u8,
+    message: []const u8,
+    seq: ?u64,
+    context: ?[]const u8,
+) !void {
+    return writeErrorEventJsonlVersion(writer, code, message, seq, context, null);
+}
+
+pub fn writeErrorEventJsonlVersion(
+    writer: anytype,
+    code: []const u8,
+    message: []const u8,
+    seq: ?u64,
+    context: ?[]const u8,
+    v: ?u32,
+) !void {
+    const ev: RuntimeErrorEvent = .{
+        .code = code,
+        .message = message,
+        .seq = seq,
+        .context = context,
+        .v = v,
+    };
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, ev.v);
+    try writer.writeAll(",\"name\":\"error\",\"code\":");
+    try writeJsonString(writer, ev.code);
+    try writer.writeAll(",\"message\":");
+    try writeJsonString(writer, ev.message);
+    if (ev.seq) |s| {
+        try writer.print(",\"seq\":{d}", .{s});
+    }
+    if (ev.context) |ctx| {
+        try writer.writeAll(",\"context\":");
+        try writeJsonString(writer, ctx);
+    }
+    try writer.writeAll("}\n");
 }
 
 pub fn writeRenderedEventJsonl(

@@ -32,6 +32,7 @@ pub const EventMsg = union(enum) {
     pointer: PointerEvent,
     clipboard: ClipboardEvent,
     paste: PasteEvent,
+    @"error": RuntimeErrorEvent,
     rendered: struct { seq: u64, dropped: u64 = 0, bytes: usize = 0, changed_cells: usize = 0, v: ?u32 = null },
     dropped: struct { seq: u64, reason: []const u8, v: ?u32 = null },
 };
@@ -91,6 +92,14 @@ pub const PasteSource = enum {
 pub const PasteEvent = struct {
     source: PasteSource,
     bytes: usize,
+    v: ?u32 = null,
+};
+
+pub const RuntimeErrorEvent = struct {
+    code: []const u8,
+    message: []const u8,
+    seq: ?u64 = null,
+    context: ?[]const u8 = null,
     v: ?u32 = null,
 };
 

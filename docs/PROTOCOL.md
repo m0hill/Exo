@@ -195,12 +195,24 @@ Clipboard result + paste semantic:
 {"type":"event","name":"paste","source":"clipboard","bytes":6}
 ```
 
+Runtime error event (machine-readable runtime-side rejection):
+
+```json
+{"type":"event","name":"error","code":"invalid_patch_shape","message":"backend patch rejected: invalid shape","seq":42,"context":"InvalidPatchShape"}
+```
+
 Optional runtime render/drop telemetry:
 
 ```json
 {"type":"event","name":"rendered","seq":42,"dropped":0,"bytes":512,"changed_cells":27}
 {"type":"event","name":"dropped","seq":41,"reason":"stale_seq"}
 ```
+
+Stable `event:error` codes:
+
+- `invalid_line`: runtime rejected a backend line (invalid JSON or invalid message schema)
+- `invalid_patch_shape`: runtime rejected a backend patch shape/mode
+- `config_rejected`: runtime rejected backend config (parse-time or apply-time)
 
 ## Nodes
 
@@ -317,3 +329,4 @@ Capability profile + feature disables:
 - invalid JSON line: runtime logs and ignores the line
 - unknown node type / missing required fields: runtime logs and ignores the patch (keeps last good tree)
 - patch-by-id with unknown `target`: runtime logs and ignores it
+- runtime also emits `event:error` (rate-limited) for invalid lines, invalid patch shape/mode, and config rejection

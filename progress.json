@@ -1091,4 +1091,31 @@
       "Exit with 'x'"
     ]
   }
+  ,
+  {
+    "slice": 38,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Structured runtime errors: machine-readable `event:error` for invalid lines, invalid patch shape/mode, and config rejection",
+    "deliverables": [
+      "src/lib/protocol/types.zig: added `EventMsg.error` (`@\"error\"`) with `RuntimeErrorEvent { code, message, seq?, context?, v? }`",
+      "src/lib/protocol/parse.zig + src/lib/protocol/write.zig + src/lib/protocol/mod.zig: added parse/write/export support for `{\"type\":\"event\",\"name\":\"error\",...}`",
+      "src/bin/runtime/app.zig: mapped parse/config log-only failures to runtime `event:error` emission with a rate limiter (200ms window)",
+      "docs/PROTOCOL.md: documented `event:error` schema and stable error codes (`invalid_line`, `invalid_patch_shape`, `config_rejected`)",
+      "src/test/protocol.zig: added write+parse coverage for `event:error`"
+    ],
+    "boundaries_hit": [
+      "Error events are rate-limited to prevent floods under repeated invalid backend lines",
+      "Runtime still logs locally; `event:error` augments logs with machine-readable backend-facing diagnostics",
+      "Kept payload additive and version-compatible using optional fields (`seq`, `context`, `v`)"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build test",
+      "Run runtime/backend and send malformed JSON line from backend; confirm runtime emits `event:error code=invalid_line`",
+      "Send patch with invalid shape or unknown mode; confirm runtime emits `event:error code=invalid_patch_shape`",
+      "Send invalid config keybinding/theme; confirm runtime emits `event:error code=config_rejected` with context",
+      "Send repeated invalid lines quickly; confirm error events are rate-limited (logs show `EVENT_DROP name=error ... reason=rate_limit`)"
+    ]
+  }
 ]

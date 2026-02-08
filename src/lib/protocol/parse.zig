@@ -26,6 +26,7 @@ const ClipboardTarget = protocol.ClipboardTarget;
 const ClipboardEvent = protocol.ClipboardEvent;
 const PasteSource = protocol.PasteSource;
 const PasteEvent = protocol.PasteEvent;
+const RuntimeErrorEvent = protocol.RuntimeErrorEvent;
 const HelloCaps = protocol.HelloCaps;
 const HelloLimits = protocol.HelloLimits;
 const HelloEvent = protocol.HelloEvent;
@@ -245,6 +246,22 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             const bytes = try getRequiredUsize(obj, "bytes");
             const pev: PasteEvent = .{ .source = src, .bytes = bytes, .v = version };
             return .{ .event = .{ .paste = pev } };
+        } else if (std.mem.eql(u8, name, "error")) {
+            const code = try getRequiredString(obj, "code");
+            const message = try getRequiredString(obj, "message");
+            const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
+                @as(u64, @intCast(seq_usize))
+            else
+                null;
+            const context = try getOptionalString(obj, "context");
+            const err_ev: RuntimeErrorEvent = .{
+                .code = code,
+                .message = message,
+                .seq = seq,
+                .context = context,
+                .v = version,
+            };
+            return .{ .event = .{ .@"error" = err_ev } };
         } else if (std.mem.eql(u8, name, "rendered")) {
             const seq_usize = try getRequiredUsize(obj, "seq");
             const dropped = try getOptionalUsize(obj, "dropped") orelse 0;

@@ -649,6 +649,17 @@ pub fn main() !void {
                                 },
                             );
                         },
+                        .@"error" => |err_ev| {
+                            std.debug.print(
+                                "EVENT_RX name=error code={s} message={s} seq={?d} context={s}\n",
+                                .{
+                                    err_ev.code,
+                                    err_ev.message,
+                                    err_ev.seq,
+                                    err_ev.context orelse "",
+                                },
+                            );
+                        },
                         .key => |k| {
                             if (k.seq) |s| {
                                 std.debug.print("EVENT_RX name=key key={s} mods={d} seq_len={d}\n", .{ k.key, k.mods, s.len });

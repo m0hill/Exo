@@ -911,6 +911,35 @@ test "protocol: write+parse rendered and dropped events" {
     }
 }
 
+test "protocol: write+parse error event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try protocol.writeErrorEventJsonl(
+        buf.writer(std.testing.allocator),
+        "config_rejected",
+        "backend config rejected",
+        42,
+        "InvalidKeybindingRule",
+    );
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (msg) {
+        .event => |ev| switch (ev) {
+            .@"error" => |err_ev| {
+                try std.testing.expectEqualStrings("config_rejected", err_ev.code);
+                try std.testing.expectEqualStrings("backend config rejected", err_ev.message);
+                try std.testing.expectEqual(@as(?u64, 42), err_ev.seq);
+                try std.testing.expectEqualStrings("InvalidKeybindingRule", err_ev.context orelse return error.TestUnexpectedResult);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "protocol: write+parse hello event" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
