@@ -6,6 +6,7 @@ const unicode = @import("../unicode.zig");
 const Frame = frame_mod.Frame;
 
 pub fn countWrappedLines(text: []const u8, cols: usize) usize {
+    const metrics = unicode.defaultTextMetrics();
     var lines: usize = 1;
     var col: usize = 0;
 
@@ -18,17 +19,23 @@ pub fn countWrappedLines(text: []const u8, cols: usize) usize {
             continue;
         }
 
-        const g = unicode.nextGrapheme(text, i);
+        const g = metrics.nextGrapheme(text, i);
         if (g.end <= i) break;
+        const b0: u8 = text[g.start];
+        if (b0 == '\r') {
+            i = g.end;
+            continue;
+        }
 
-        if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+        const width = metrics.graphemeWidthAtCol(text, g, col);
+        if (cols != 0 and width > 0 and col > 0 and col + width > cols) {
             lines += 1;
             col = 0;
             continue;
         }
 
-        if (g.width <= cols or cols == 0) {
-            col += g.width;
+        if (width <= cols or cols == 0) {
+            col += width;
         }
         i = g.end;
     }
@@ -36,6 +43,7 @@ pub fn countWrappedLines(text: []const u8, cols: usize) usize {
 }
 
 pub fn countWrappedLinesSpans(spans: []const protocol.Span, cols: usize) usize {
+    const metrics = unicode.defaultTextMetrics();
     var lines: usize = 1;
     var col: usize = 0;
 
@@ -50,17 +58,23 @@ pub fn countWrappedLinesSpans(spans: []const protocol.Span, cols: usize) usize {
                 continue;
             }
 
-            const g = unicode.nextGrapheme(text, i);
+            const g = metrics.nextGrapheme(text, i);
             if (g.end <= i) break;
+            const b0: u8 = text[g.start];
+            if (b0 == '\r') {
+                i = g.end;
+                continue;
+            }
+            const width = metrics.graphemeWidthAtCol(text, g, col);
 
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+            if (cols != 0 and width > 0 and col > 0 and col + width > cols) {
                 lines += 1;
                 col = 0;
                 continue;
             }
 
-            if (g.width <= cols or cols == 0) {
-                col += g.width;
+            if (width <= cols or cols == 0) {
+                col += width;
             }
             i = g.end;
         }
@@ -74,7 +88,7 @@ pub fn putGraphemeClipped(
     row: isize,
     col: isize,
     bytes: []const u8,
-    width: u2,
+    width: usize,
     clip: anytype,
     st: style.PackedStyle,
 ) void {
@@ -83,17 +97,34 @@ pub fn putGraphemeClipped(
     if (row < clip.y or row >= clip.y + @as(isize, @intCast(clip.h))) return;
     if (col < clip.x or col + @as(isize, @intCast(width)) > clip.x + @as(isize, @intCast(clip.w))) return;
     if (row < 0 or col < 0) return;
-    frame.putGraphemeStyled(
-        @as(usize, @intCast(row)),
-        @as(usize, @intCast(col)),
-        bytes,
-        width,
-        st,
-    );
+    if (width <= 2) {
+        frame.putGraphemeStyled(
+            @as(usize, @intCast(row)),
+            @as(usize, @intCast(col)),
+            bytes,
+            @as(u2, @intCast(width)),
+            st,
+        );
+        return;
+    }
+
+    // Frame cells encode width 0/1/2 only. Expand wider measured runs (e.g. tabs)
+    // into plain spaces so column accounting remains correct.
+    var dx: usize = 0;
+    while (dx < width) : (dx += 1) {
+        frame.putGraphemeStyled(
+            @as(usize, @intCast(row)),
+            @as(usize, @intCast(col + @as(isize, @intCast(dx)))),
+            " ",
+            1,
+            st,
+        );
+    }
 }
 
 pub fn drawWrappedTextInRect(frame: *Frame, rect: anytype, clip: anytype, text: []const u8, st: style.PackedStyle) void {
     if (rect.w == 0 or rect.h == 0) return;
+    const metrics = unicode.defaultTextMetrics();
 
     const max_rows: isize = rect.y + @as(isize, @intCast(rect.h));
     const cols: usize = rect.w;
@@ -110,25 +141,31 @@ pub fn drawWrappedTextInRect(frame: *Frame, rect: anytype, clip: anytype, text: 
             continue;
         }
 
-        const g = unicode.nextGrapheme(text, i);
+        const g = metrics.nextGrapheme(text, i);
         if (g.end <= i) break;
+        const b0: u8 = text[g.start];
+        if (b0 == '\r') {
+            i = g.end;
+            continue;
+        }
+        const width = metrics.graphemeWidthAtCol(text, g, col);
 
-        if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+        if (cols != 0 and width > 0 and col > 0 and col + width > cols) {
             row += 1;
             col = 0;
             continue;
         }
 
-        if (g.width > 0 and cols != 0 and g.width > cols) {
+        if (width > 0 and cols != 0 and width > cols) {
             // Too wide to fit anywhere in this rect; skip without corrupting the grid.
             i = g.end;
             continue;
         }
 
-        if (g.width > 0) {
+        if (width > 0) {
             const abs_col: isize = rect.x + @as(isize, @intCast(col));
-            putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
-            col += g.width;
+            putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], width, clip, st);
+            col += width;
         }
         i = g.end;
     }
@@ -143,6 +180,7 @@ pub fn drawWrappedStyledSpansInRect(
     attrs_or: u8,
 ) void {
     if (rect.w == 0 or rect.h == 0) return;
+    const metrics = unicode.defaultTextMetrics();
 
     const max_rows: isize = rect.y + @as(isize, @intCast(rect.h));
     const cols: usize = rect.w;
@@ -167,24 +205,30 @@ pub fn drawWrappedStyledSpansInRect(
                 continue;
             }
 
-            const g = unicode.nextGrapheme(text, i);
+            const g = metrics.nextGrapheme(text, i);
             if (g.end <= i) break;
+            const b0: u8 = text[g.start];
+            if (b0 == '\r') {
+                i = g.end;
+                continue;
+            }
+            const width = metrics.graphemeWidthAtCol(text, g, col);
 
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+            if (cols != 0 and width > 0 and col > 0 and col + width > cols) {
                 row += 1;
                 col = 0;
                 continue;
             }
 
-            if (g.width > 0 and cols != 0 and g.width > cols) {
+            if (width > 0 and cols != 0 and width > cols) {
                 i = g.end;
                 continue;
             }
 
-            if (g.width > 0) {
+            if (width > 0) {
                 const abs_col: isize = rect.x + @as(isize, @intCast(col));
-                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
-                col += g.width;
+                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], width, clip, span_packed);
+                col += width;
             }
             i = g.end;
         }
@@ -201,6 +245,7 @@ pub fn drawWrappedTextInRectAligned(
     v_align: protocol.VerticalAlign,
 ) void {
     if (rect.w == 0 or rect.h == 0) return;
+    const metrics = unicode.defaultTextMetrics();
 
     const cols: usize = rect.w;
     const total_lines: usize = countWrappedLines(text, cols);
@@ -218,19 +263,25 @@ pub fn drawWrappedTextInRectAligned(
         while (j < text.len) {
             if (text[j] == '\n') break;
 
-            const g = unicode.nextGrapheme(text, j);
+            const g = metrics.nextGrapheme(text, j);
             if (g.end <= j) break;
+            const b0: u8 = text[g.start];
+            if (b0 == '\r') {
+                j = g.end;
+                continue;
+            }
+            const width = metrics.graphemeWidthAtCol(text, g, col);
 
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+            if (cols != 0 and width > 0 and col > 0 and col + width > cols) {
                 break;
             }
 
-            if (g.width > 0 and cols != 0 and g.width > cols) {
+            if (width > 0 and cols != 0 and width > cols) {
                 j = g.end;
                 continue;
             }
 
-            if (g.width > 0) col += g.width;
+            if (width > 0) col += width;
             j = g.end;
         }
 
@@ -239,20 +290,26 @@ pub fn drawWrappedTextInRectAligned(
         var draw_col: usize = 0;
         var k: usize = i;
         while (k < j and draw_col < cols) {
-            const g = unicode.nextGrapheme(text, k);
+            const g = metrics.nextGrapheme(text, k);
             if (g.end <= k) break;
+            const b0: u8 = text[g.start];
+            if (b0 == '\r') {
+                k = g.end;
+                continue;
+            }
+            const width = metrics.graphemeWidthAtCol(text, g, draw_col);
 
-            if (g.width > 0 and cols != 0 and g.width > cols) {
+            if (width > 0 and cols != 0 and width > cols) {
                 k = g.end;
                 continue;
             }
 
-            if (g.width > 0 and draw_col + g.width > cols) break;
+            if (width > 0 and draw_col + width > cols) break;
 
-            if (g.width > 0) {
+            if (width > 0) {
                 const abs_col: isize = rect.x + @as(isize, @intCast(x_off + draw_col));
-                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
-                draw_col += g.width;
+                putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], width, clip, st);
+                draw_col += width;
             }
             k = g.end;
         }
@@ -276,6 +333,7 @@ pub fn drawWrappedStyledSpansInRectAligned(
     v_align: protocol.VerticalAlign,
 ) void {
     if (rect.w == 0 or rect.h == 0) return;
+    const metrics = unicode.defaultTextMetrics();
 
     const cols: usize = rect.w;
     const total_lines: usize = countWrappedLinesSpans(spans, cols);
@@ -312,21 +370,27 @@ pub fn drawWrappedStyledSpansInRectAligned(
                 break;
             }
 
-            const g = unicode.nextGrapheme(s, scan.idx);
+            const g = metrics.nextGrapheme(s, scan.idx);
             if (g.end <= scan.idx) break;
+            const b0: u8 = s[g.start];
+            if (b0 == '\r') {
+                scan.idx = g.end;
+                continue;
+            }
+            const width = metrics.graphemeWidthAtCol(s, g, col);
 
-            if (cols != 0 and g.width > 0 and col > 0 and col + g.width > cols) {
+            if (cols != 0 and width > 0 and col > 0 and col + width > cols) {
                 end_pos = scan;
                 next_pos = scan;
                 break;
             }
 
-            if (g.width > 0 and cols != 0 and g.width > cols) {
+            if (width > 0 and cols != 0 and width > cols) {
                 scan.idx = g.end;
                 continue;
             }
 
-            if (g.width > 0) col += g.width;
+            if (width > 0) col += width;
             scan.idx = g.end;
             end_pos = scan;
             next_pos = scan;
@@ -347,20 +411,26 @@ pub fn drawWrappedStyledSpansInRectAligned(
                 if (eql(draw, end_pos)) break;
                 if (s[draw.idx] == '\n') break;
 
-                const g = unicode.nextGrapheme(s, draw.idx);
+                const g = metrics.nextGrapheme(s, draw.idx);
                 if (g.end <= draw.idx) break;
+                const b0: u8 = s[g.start];
+                if (b0 == '\r') {
+                    draw.idx = g.end;
+                    continue;
+                }
+                const width = metrics.graphemeWidthAtCol(s, g, draw_col);
 
-                if (g.width > 0 and cols != 0 and g.width > cols) {
+                if (width > 0 and cols != 0 and width > cols) {
                     draw.idx = g.end;
                     continue;
                 }
 
-                if (g.width > 0 and draw_col + g.width > cols) break;
+                if (width > 0 and draw_col + width > cols) break;
 
-                if (g.width > 0) {
+                if (width > 0) {
                     const abs_col: isize = rect.x + @as(isize, @intCast(x_off + draw_col));
-                    putGraphemeClipped(frame, row, abs_col, s[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
-                    draw_col += g.width;
+                    putGraphemeClipped(frame, row, abs_col, s[g.start..g.end], width, clip, span_packed);
+                    draw_col += width;
                 }
 
                 draw.idx = g.end;

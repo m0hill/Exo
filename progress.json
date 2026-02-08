@@ -995,4 +995,40 @@
       "Optionally set backpressure knobs and verify startup `RUNTIME_CFG` log reflects values (e.g. `TUI_MAX_FPS=60 TUI_MAX_PENDING_TARGETS=64 TUI_QUEUE_OVERFLOW=drop_oldest`)"
     ]
   }
+  ,
+  {
+    "slice": 35,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Unicode text metrics: grapheme-aware layout with configurable width/ tab handling and context-aware rendering",
+    "deliverables": [
+      "src/lib/unicode.zig: TextMetrics struct with configurable Options (ambiguous_width, tab_width, fast_approx)",
+      "src/lib/unicode.zig: context-aware width calculations via graphemeWidthAtCol with column-dependent tab expansion",
+      "src/lib/unicode.zig: WrapIter for grapheme-aware text wrapping with row/col tracking",
+      "src/lib/unicode.zig: proper handling of \\r (ignored) and \\t (expanded to tab stops)",
+      "src/lib/render/mod.zig: all rendering paths updated to use TextMetrics for consistent width calculations",
+      "src/lib/render/text.zig: span and text rendering with grapheme-safe clipping and selection",
+      "README.md: added Unicode/Text Guarantees section documenting grapheme awareness and width behavior",
+      "docs/DEVELOPMENT.md: added Unicode knobs documentation (TUI_UNICODE_AMBIGUOUS_WIDTH, TUI_TAB_WIDTH, TUI_UNICODE_FAST_APPROX)",
+      "src/test/unicode.zig + src/test/render.zig: unit tests for TextMetrics, wrap iterator, and rendering with new unicode handling"
+    ],
+    "boundaries_hit": [
+      "Terminal-style Unicode width with emoji ZWJ/flags/modifiers and variation selectors",
+      "Ambiguous East Asian width configurable (narrow default vs wide)",
+      "Tab stops are context-aware (expand based on current column position)",
+      "CR (\\\\r) is ignored for layout/editing (no carriage return behavior)",
+      "Out of scope: full bidi reordering/shaping and terminal-font-specific glyph shaping"
+    ],
+    "timestamp": "2026-02-08",
+    "manual_repro": [
+      "zig build test",
+      "zig build demo",
+      "Type text with tabs in an input/textarea; confirm tabs expand to 4-column stops by default",
+      "Type text with \\r characters; confirm they are ignored (no visual effect)",
+      "Type emoji sequences (flags, ZWJ like 👩‍👩‍👧‍👦, modifiers); confirm proper width calculation and rendering",
+      "Test with TUI_TAB_WIDTH=8 zig build demo; confirm tab stops change",
+      "Test with TUI_UNICODE_AMBIGUOUS_WIDTH=wide zig build demo; confirm ambiguous chars (e.g., some CJK punctuation) render as 2 cells",
+      "Exit with 'x'"
+    ]
+  }
 ]

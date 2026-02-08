@@ -42,108 +42,11 @@ pub fn inputVisibleCols(cols: usize) usize {
 }
 
 fn textareaCursorVisualY(value: []const u8, cursor: usize, cols: usize) usize {
-    const effective_cursor = unicode.clampGraphemeBoundary(value, @min(cursor, value.len));
-    if (effective_cursor == 0) return 0;
-
-    var byte_idx: usize = 0;
-    var y: usize = 0;
-    var x: usize = 0;
-
-    while (byte_idx < effective_cursor) {
-        const g = unicode.nextGrapheme(value, byte_idx);
-        if (g.end <= byte_idx) break;
-
-        const b0: u8 = value[g.start];
-        if (b0 == '\r') {
-            byte_idx = g.end;
-            continue;
-        }
-        if (b0 == '\n') {
-            y += 1;
-            x = 0;
-            byte_idx = g.end;
-            continue;
-        }
-
-        var width: usize = g.width;
-        if (b0 == '\t') width = 1;
-        if (width == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (cols == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (width > cols) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (x + width > cols) {
-            y += 1;
-            x = 0;
-            continue;
-        }
-
-        x += width;
-        byte_idx = g.end;
-    }
-
-    return y;
+    return unicode.defaultTextMetrics().visualPosForByte(value, cursor, cols).y;
 }
 
 fn textareaVisualLines(value: []const u8, cols: usize) usize {
-    var byte_idx: usize = 0;
-    var y: usize = 0;
-    var x: usize = 0;
-
-    while (byte_idx < value.len) {
-        const g = unicode.nextGrapheme(value, byte_idx);
-        if (g.end <= byte_idx) break;
-
-        const b0: u8 = value[g.start];
-        if (b0 == '\r') {
-            byte_idx = g.end;
-            continue;
-        }
-        if (b0 == '\n') {
-            y += 1;
-            x = 0;
-            byte_idx = g.end;
-            continue;
-        }
-
-        var width: usize = g.width;
-        if (b0 == '\t') width = 1;
-        if (width == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (cols == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (width > cols) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (x + width > cols) {
-            y += 1;
-            x = 0;
-            continue;
-        }
-
-        x += width;
-        byte_idx = g.end;
-    }
-
-    return y + 1;
+    return unicode.defaultTextMetrics().visualPosForByte(value, value.len, cols).y + 1;
 }
 
 fn textareaSelectionRange(value: []const u8, cursor: usize, anchor: ?usize) ?struct { start: usize, end: usize } {
@@ -2487,132 +2390,12 @@ pub fn handleFocusedInputPaste(
     return changed or scroll_changed;
 }
 
-const VisualPos = struct {
-    y: usize,
-    x: usize,
-};
-
-fn textareaCursorVisualPos(value: []const u8, cursor: usize, cols: usize) VisualPos {
-    const effective_cursor = unicode.clampGraphemeBoundary(value, @min(cursor, value.len));
-    if (effective_cursor == 0) return .{ .y = 0, .x = 0 };
-
-    var byte_idx: usize = 0;
-    var y: usize = 0;
-    var x: usize = 0;
-
-    while (byte_idx < effective_cursor) {
-        const g = unicode.nextGrapheme(value, byte_idx);
-        if (g.end <= byte_idx) break;
-
-        const b0: u8 = value[g.start];
-        if (b0 == '\r') {
-            byte_idx = g.end;
-            continue;
-        }
-        if (b0 == '\n') {
-            y += 1;
-            x = 0;
-            byte_idx = g.end;
-            continue;
-        }
-
-        var width: usize = g.width;
-        if (b0 == '\t') width = 1;
-        if (width == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (cols == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (width > cols) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (x + width > cols) {
-            y += 1;
-            x = 0;
-            continue;
-        }
-
-        x += width;
-        byte_idx = g.end;
-    }
-
-    return .{ .y = y, .x = x };
+fn textareaCursorVisualPos(value: []const u8, cursor: usize, cols: usize) unicode.VisualPos {
+    return unicode.defaultTextMetrics().visualPosForByte(value, cursor, cols);
 }
 
 fn textareaByteIndexForVisualPos(value: []const u8, target_y: usize, target_x: usize, cols: usize) usize {
-    var byte_idx: usize = 0;
-    var y: usize = 0;
-    var x: usize = 0;
-
-    var found: bool = false;
-    var best_byte: usize = 0;
-    var best_x: usize = 0;
-
-    while (true) {
-        if (y == target_y) {
-            if (!found) {
-                found = true;
-                best_byte = byte_idx;
-                best_x = x;
-            } else if (x <= target_x and x >= best_x) {
-                best_byte = byte_idx;
-                best_x = x;
-            }
-        }
-
-        if (byte_idx >= value.len) break;
-
-        const g = unicode.nextGrapheme(value, byte_idx);
-        if (g.end <= byte_idx) break;
-
-        const b0: u8 = value[g.start];
-        if (b0 == '\r') {
-            byte_idx = g.end;
-            continue;
-        }
-        if (b0 == '\n') {
-            y += 1;
-            x = 0;
-            byte_idx = g.end;
-            continue;
-        }
-
-        var width: usize = g.width;
-        if (b0 == '\t') width = 1;
-        if (width == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (cols == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (width > cols) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (x + width > cols) {
-            y += 1;
-            x = 0;
-            continue;
-        }
-
-        x += width;
-        byte_idx = g.end;
-    }
-
-    if (!found) return @min(value.len, unicode.clampGraphemeBoundary(value, value.len));
-    return unicode.clampGraphemeBoundary(value, best_byte);
+    return unicode.defaultTextMetrics().byteForVisualPos(value, target_y, target_x, cols);
 }
 
 const textarea_max_history: usize = 50;

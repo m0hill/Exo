@@ -353,6 +353,54 @@ test "render: input selection paints selected graphemes" {
     try std.testing.expect((frame.rowSlice(0)[4].style.attrs & style.ATTR_INVERSE) != 0);
 }
 
+test "render: input cursor uses grapheme width for emoji zwj sequence" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 20);
+    frame.clear(' ');
+
+    const value = "a👩‍💻b";
+    const emoji = unicode.nextGrapheme(value, 1);
+    const root = protocol.Node{ .input = .{ .id = "i" } };
+    const st: render.InputState = .{
+        .id = "i",
+        .value = value,
+        .cursor = emoji.end,
+        .scroll_x = 0,
+    };
+    render.renderToFrame(root, .{ .focused_id = "i", .inputs = &.{st} }, &frame);
+
+    const cur = frame.cursor orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 1), cur.row);
+    // prefix(2) + 'a'(1) + emoji(2) => visual col 5 (0-based), cursor uses 1-based.
+    try std.testing.expectEqual(@as(usize, 6), cur.col);
+}
+
+test "render: textarea tab expands to configured tab stop columns" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 8);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .textarea = .{ .id = "ta" } };
+    const st: render.TextareaState = .{ .id = "ta", .value = "\tX", .cursor = 2, .scroll_y = 0 };
+    render.renderToFrame(root, .{ .focused_id = "ta", .textareas = &.{st} }, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'X'), cellByte(&frame, 0, 4));
+}
+
+test "render: mixed-direction text renders without crashing" {
+    var term = testing_terminal.Terminal.init(std.testing.allocator, .{ .rows = 2, .cols = 20 });
+    defer term.deinit();
+
+    var renderer = renderer_mod.Renderer.init(std.testing.allocator);
+    defer renderer.deinit();
+
+    const root = protocol.Node{ .text = .{ .id = "mix", .text = "abc אבג 👩‍💻" } };
+    try renderer.draw(&term, root, .{});
+    try std.testing.expect(std.mem.indexOf(u8, term.out.items, "abc") != null);
+}
+
 test "render: box shadow dims underlying cells" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);

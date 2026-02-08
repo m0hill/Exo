@@ -28,3 +28,11 @@ zig build bench
 - `docs/PROTOCOL.md` — JSONL protocol, node schema, styling, terminal caps/env overrides
 - `docs/DEVELOPMENT.md` — build/run tips, logging, troubleshooting
 - `docs/PERFORMANCE.md` — benchmark workloads, perf targets, runtime tuning knobs
+
+## Unicode/Text Guarantees
+
+- Grapheme-aware editing/rendering (cursor movement, selection, wrapping) for modern UTF-8 text.
+- Width calculation follows terminal-style Unicode width behavior, including emoji ZWJ/flags/modifiers and variation selectors.
+- `\\r` is ignored for layout/editing; `\\t` expands to tab stops (default 4 columns).
+- Ambiguous East Asian width defaults to narrow (`1` cell), configurable to wide (`2` cells).
+- Out of scope (for now): full bidi reordering/shaping and terminal-font-specific glyph shaping quirks.

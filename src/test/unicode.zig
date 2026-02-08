@@ -55,3 +55,50 @@ test "unicode: flag cluster treated as one grapheme width 2" {
     try std.testing.expectEqual(@as(usize, flag.len), g.end);
     try std.testing.expectEqual(@as(usize, 2), g.width);
 }
+
+test "unicode: emoji zwj sequence is one grapheme width 2" {
+    const fam = "👩‍👩‍👧‍👦";
+    const g = unicode.nextGrapheme(fam, 0);
+    try std.testing.expectEqual(@as(usize, fam.len), g.end);
+    try std.testing.expectEqual(@as(usize, 2), g.width);
+}
+
+test "unicode: emoji profession zwj sequence is one grapheme width 2" {
+    const s = "🧑‍💻";
+    const g = unicode.nextGrapheme(s, 0);
+    try std.testing.expectEqual(@as(usize, s.len), g.end);
+    try std.testing.expectEqual(@as(usize, 2), g.width);
+}
+
+test "unicode: skin tone modifier stays in grapheme" {
+    const s = "👍🏽";
+    const g = unicode.nextGrapheme(s, 0);
+    try std.testing.expectEqual(@as(usize, s.len), g.end);
+    try std.testing.expectEqual(@as(usize, 2), g.width);
+}
+
+test "unicode: variation selectors text vs emoji presentation" {
+    const text_style = "❤\u{FE0E}";
+    const emoji_style = "❤\u{FE0F}";
+    try std.testing.expectEqual(@as(usize, 1), unicode.displayWidth(text_style));
+    try std.testing.expectEqual(@as(usize, 2), unicode.displayWidth(emoji_style));
+}
+
+test "unicode: ambiguous width policy configurable" {
+    const cp = @as(u21, 0x00B7); // middle dot, East-Asian Ambiguous
+    var narrow = unicode.textMetrics(.{ .ambiguous_width = .narrow });
+    var wide = unicode.textMetrics(.{ .ambiguous_width = .wide });
+    try std.testing.expectEqual(@as(u2, 1), narrow.cellWidth(cp));
+    try std.testing.expectEqual(@as(u2, 2), wide.cellWidth(cp));
+}
+
+test "unicode: tabs advance by configured tab stop" {
+    var metrics = unicode.textMetrics(.{ .tab_width = 4 });
+    try std.testing.expectEqual(@as(usize, 4), metrics.displayWidth("a\t"));
+    try std.testing.expectEqual(@as(usize, 6), metrics.displayWidth("ab\tcd"));
+}
+
+test "unicode: mixed direction text computes width and does not crash" {
+    const s = "abc אבג 123";
+    try std.testing.expect(unicode.displayWidth(s) >= 9);
+}

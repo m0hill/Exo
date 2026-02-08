@@ -979,6 +979,7 @@ fn drawInlineStyledSpansInRect(
 ) void {
     if (rect.w == 0) return;
     if (row < rect.y or row >= rect.y + @as(isize, @intCast(rect.h))) return;
+    const metrics = unicode.defaultTextMetrics();
 
     var used: usize = start_col;
     for (spans) |sp| {
@@ -993,18 +994,24 @@ fn drawInlineStyledSpansInRect(
         while (i < text.len and used < rect.w) {
             if (text[i] == '\n') return;
 
-            const g = unicode.nextGrapheme(text, i);
+            const g = metrics.nextGrapheme(text, i);
             if (g.end <= i) break;
-            if (g.width > 0 and used + g.width > rect.w) return;
-            if (g.width > 0 and rect.w != 0 and g.width > rect.w) {
+            const b0: u8 = text[g.start];
+            if (b0 == '\r') {
+                i = g.end;
+                continue;
+            }
+            const width = metrics.graphemeWidthAtCol(text, g, used);
+            if (width > 0 and used + width > rect.w) return;
+            if (width > 0 and rect.w != 0 and width > rect.w) {
                 i = g.end;
                 continue;
             }
 
-            if (g.width > 0) {
+            if (width > 0) {
                 const abs_col: isize = rect.x + @as(isize, @intCast(used));
-                render_text.putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, span_packed);
-                used += g.width;
+                render_text.putGraphemeClipped(frame, row, abs_col, text[g.start..g.end], width, clip, span_packed);
+                used += width;
             }
             i = g.end;
         }
@@ -1021,6 +1028,7 @@ fn renderLinePiecesInRectStyled(
 ) void {
     if (rect.w == 0) return;
     std.debug.assert(pieces.len == styles.len);
+    const metrics = unicode.defaultTextMetrics();
 
     var used: usize = 0;
     for (pieces, 0..) |p, pi| {
@@ -1028,18 +1036,24 @@ fn renderLinePiecesInRectStyled(
         if (used >= rect.w) break;
         var i: usize = 0;
         while (i < p.len and used < rect.w) {
-            const g = unicode.nextGrapheme(p, i);
+            const g = metrics.nextGrapheme(p, i);
             if (g.end <= i) break;
-            if (g.width > 0 and used + g.width > rect.w) break;
-            if (g.width > 0 and rect.w != 0 and g.width > rect.w) {
+            const b0: u8 = p[g.start];
+            if (b0 == '\r') {
+                i = g.end;
+                continue;
+            }
+            const width = metrics.graphemeWidthAtCol(p, g, used);
+            if (width > 0 and used + width > rect.w) break;
+            if (width > 0 and rect.w != 0 and width > rect.w) {
                 i = g.end;
                 continue;
             }
 
-            if (g.width > 0) {
+            if (width > 0) {
                 const abs_col: isize = rect.x + @as(isize, @intCast(used));
-                render_text.putGraphemeClipped(frame, row, abs_col, p[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
-                used += g.width;
+                render_text.putGraphemeClipped(frame, row, abs_col, p[g.start..g.end], width, clip, st);
+                used += width;
             }
             i = g.end;
         }
@@ -1055,22 +1069,29 @@ fn drawInlineTextAt(
     max_w: usize,
     st: style.PackedStyle,
 ) void {
+    const metrics = unicode.defaultTextMetrics();
     var used: usize = 0;
     var i: usize = 0;
     while (i < text.len and used < max_w) {
-        const g = unicode.nextGrapheme(text, i);
+        const g = metrics.nextGrapheme(text, i);
         if (g.end <= i) break;
-
-        if (g.width > 0 and max_w != 0 and g.width > max_w) {
+        const b0: u8 = text[g.start];
+        if (b0 == '\r') {
             i = g.end;
             continue;
         }
-        if (g.width > 0 and used + g.width > max_w) break;
+        const width = metrics.graphemeWidthAtCol(text, g, used);
 
-        if (g.width > 0) {
+        if (width > 0 and max_w != 0 and width > max_w) {
+            i = g.end;
+            continue;
+        }
+        if (width > 0 and used + width > max_w) break;
+
+        if (width > 0) {
             const x: isize = col_abs + @as(isize, @intCast(used));
-            render_text.putGraphemeClipped(frame, row, x, text[g.start..g.end], @as(u2, @intCast(g.width)), clip, st);
-            used += g.width;
+            render_text.putGraphemeClipped(frame, row, x, text[g.start..g.end], width, clip, st);
+            used += width;
         }
         i = g.end;
     }
@@ -1089,19 +1110,26 @@ fn drawInlineTextWithSelectionAt(
     base_style: style.PackedStyle,
     selected_style: style.PackedStyle,
 ) void {
+    const metrics = unicode.defaultTextMetrics();
     var used: usize = 0;
     var i: usize = 0;
     while (i < text.len and used < max_w) {
-        const g = unicode.nextGrapheme(text, i);
+        const g = metrics.nextGrapheme(text, i);
         if (g.end <= i) break;
-
-        if (g.width > 0 and max_w != 0 and g.width > max_w) {
+        const b0: u8 = text[g.start];
+        if (b0 == '\r') {
             i = g.end;
             continue;
         }
-        if (g.width > 0 and used + g.width > max_w) break;
+        const width = metrics.graphemeWidthAtCol(text, g, used);
 
-        if (g.width > 0) {
+        if (width > 0 and max_w != 0 and width > max_w) {
+            i = g.end;
+            continue;
+        }
+        if (width > 0 and used + width > max_w) break;
+
+        if (width > 0) {
             const x: isize = col_abs + @as(isize, @intCast(used));
             const abs_start = base_offset + g.start;
             const selected = selection_start != null and selection_end != null and abs_start >= selection_start.? and abs_start < selection_end.?;
@@ -1110,11 +1138,11 @@ fn drawInlineTextWithSelectionAt(
                 row,
                 x,
                 text[g.start..g.end],
-                @as(u2, @intCast(g.width)),
+                width,
                 clip,
                 if (selected) selected_style else base_style,
             );
-            used += g.width;
+            used += width;
         }
         i = g.end;
     }
@@ -1474,6 +1502,7 @@ fn paintTextarea(
     inherited: style.Style,
 ) void {
     if (rect.w == 0 or rect.h == 0) return;
+    const metrics = unicode.defaultTextMetrics();
 
     const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, t.id);
     const textarea_state = findTextareaState(state.textareas, t.id);
@@ -1515,92 +1544,45 @@ fn paintTextarea(
     const cols: usize = rect.w;
     const rows: usize = rect.h;
 
-    var byte_idx: usize = 0;
-    var vis_y: usize = 0;
-    var vis_x: usize = 0;
-
     var cursor_vis_y: usize = 0;
     var cursor_vis_x: usize = 0;
     var cursor_found: bool = false;
+    var last_vis_y: usize = 0;
+    var last_vis_x: usize = 0;
 
-    if (effective_cursor == 0) {
-        cursor_vis_y = 0;
-        cursor_vis_x = 0;
-        cursor_found = true;
-    }
-
-    while (byte_idx < value.len) {
-        if (!cursor_found and byte_idx == effective_cursor) {
-            cursor_vis_y = vis_y;
-            cursor_vis_x = vis_x;
+    var wrap = metrics.wrapIter(value, cols);
+    while (wrap.next()) |item| {
+        if (!cursor_found and item.grapheme.start >= effective_cursor) {
+            cursor_vis_y = item.row;
+            cursor_vis_x = item.col;
             cursor_found = true;
         }
 
-        const g = unicode.nextGrapheme(value, byte_idx);
-        if (g.end <= byte_idx) break;
-
-        const b0: u8 = value[g.start];
-        if (b0 == '\r') {
-            byte_idx = g.end;
-            continue;
-        }
-        if (b0 == '\n') {
-            vis_y += 1;
-            vis_x = 0;
-            byte_idx = g.end;
-            continue;
-        }
-
-        var glyph: []const u8 = value[g.start..g.end];
-        var width: usize = g.width;
-        if (b0 == '\t') {
-            glyph = " ";
-            width = 1;
-        }
-
-        if (width == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (cols == 0) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (width > cols) {
-            byte_idx = g.end;
-            continue;
-        }
-
-        if (vis_x + width > cols) {
-            vis_y += 1;
-            vis_x = 0;
-            continue;
-        }
-
-        if (vis_y >= scroll_y and vis_y < scroll_y + rows) {
-            const row: isize = rect.y + @as(isize, @intCast(vis_y - scroll_y));
-            const col_abs: isize = rect.x + @as(isize, @intCast(vis_x));
-            const selected = sel_start != null and sel_end != null and g.start >= sel_start.? and g.start < sel_end.?;
+        if (item.row >= scroll_y and item.row < scroll_y + rows) {
+            const b0: u8 = value[item.grapheme.start];
+            const glyph: []const u8 = if (b0 == '\t') " " else value[item.grapheme.start..item.grapheme.end];
+            const row: isize = rect.y + @as(isize, @intCast(item.row - scroll_y));
+            const col_abs: isize = rect.x + @as(isize, @intCast(item.col));
+            const selected = sel_start != null and sel_end != null and item.grapheme.start >= sel_start.? and item.grapheme.start < sel_end.?;
             render_text.putGraphemeClipped(
                 frame,
                 row,
                 col_abs,
                 glyph,
-                @as(u2, @intCast(width)),
+                item.width,
                 clip,
                 if (selected) sel_packed else base_packed,
             );
         }
 
-        vis_x += width;
-        byte_idx = g.end;
+        last_vis_y = item.row;
+        last_vis_x = item.col + item.width;
     }
 
     if (!cursor_found) {
-        cursor_vis_y = vis_y;
-        cursor_vis_x = vis_x;
+        const pos = metrics.visualPosForByte(value, effective_cursor, cols);
+        cursor_vis_y = if (effective_cursor == value.len) @max(pos.y, last_vis_y) else pos.y;
+        cursor_vis_x = if (effective_cursor == value.len and pos.y == last_vis_y) @max(pos.x, last_vis_x) else pos.x;
         cursor_found = true;
     }
 
