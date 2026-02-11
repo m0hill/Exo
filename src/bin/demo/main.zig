@@ -111,6 +111,7 @@ fn nodeId(node: protocol.Node) []const u8 {
         .input => |i| i.id,
         .textarea => |t| t.id,
         .list => |l| l.id,
+        .vlist => |l| l.id,
     };
 }
 
@@ -243,6 +244,9 @@ pub fn main() !void {
     var term_rows: ?usize = null;
     var term_cols: ?usize = null;
     const list_height: usize = 8;
+    const vlist_total: usize = 1_000_000;
+    var vlist_window_start: usize = 0;
+    var vlist_window_len: usize = 80;
 
     var arena_tx = std.heap.ArenaAllocator.init(allocator);
     defer arena_tx.deinit();
@@ -301,6 +305,9 @@ pub fn main() !void {
             inputs[0..],
             lists[0..],
             list_height,
+            vlist_total,
+            vlist_window_start,
+            vlist_window_len,
             popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
             widgets,
             tick,
@@ -544,6 +551,9 @@ pub fn main() !void {
                     lists[0..],
                     layout_alt,
                     list_height,
+                    vlist_total,
+                    vlist_window_start,
+                    vlist_window_len,
                     popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                     widgets,
                     tick,
@@ -820,6 +830,29 @@ pub fn main() !void {
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
                         },
+                        .vlist_range => |vr| {
+                            std.debug.print(
+                                "EVENT_RX name=vlist_range id={s} req={d} start={d} len={d} viewport={d} reason={s}\n",
+                                .{ vr.id, vr.request_id, vr.start, vr.len, vr.viewport_h, @tagName(vr.reason) },
+                            );
+                            if (std.mem.eql(u8, vr.id, "results-vlist")) {
+                                vlist_window_start = @min(vr.start, vlist_total);
+                                vlist_window_len = @min(vr.len, vlist_total - vlist_window_start);
+                                std.debug.print(
+                                    "PATCH_TX target={s} mode=morph window_start={d} len={d}\n",
+                                    .{ vr.id, vlist_window_start, vlist_window_len },
+                                );
+                                try render.emitVListWindowPatch(
+                                    out,
+                                    vr.id,
+                                    vlist_total,
+                                    vlist_window_start,
+                                    vlist_window_len,
+                                    vr.request_id,
+                                );
+                                try out.flush();
+                            }
+                        },
                         .select => |s| {
                             std.debug.print("EVENT_RX name=select id={s} item={s}\n", .{ s.id, s.item });
                             if (state.findListSlot(lists[0..], s.id)) |slot| {
@@ -1085,6 +1118,9 @@ pub fn main() !void {
                                 lists[0..],
                                 layout_alt,
                                 list_height,
+                                vlist_total,
+                                vlist_window_start,
+                                vlist_window_len,
                                 popupsInfo(
                                     popup_modal_open,
                                     popup_dropdown_open,
@@ -1193,6 +1229,9 @@ pub fn main() !void {
                                     lists[0..],
                                     layout_alt,
                                     list_height,
+                                    vlist_total,
+                                    vlist_window_start,
+                                    vlist_window_len,
                                     popupsInfo(popup_modal_open, popup_dropdown_open, popup_tooltip_on, focus_id.items, hover_id.items, hover_item.items),
                                     widgets,
                                     tick,
@@ -1509,6 +1548,9 @@ pub fn main() !void {
                                     lists[0..],
                                     layout_alt,
                                     list_height,
+                                    vlist_total,
+                                    vlist_window_start,
+                                    vlist_window_len,
                                     popupsInfo(
                                         popup_modal_open,
                                         popup_dropdown_open,

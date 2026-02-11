@@ -1,8 +1,11 @@
 const std = @import("std");
+const tui = @import("tui");
+const protocol = tui.protocol;
 
 pub const FocusKind = enum {
     input,
     list,
+    vlist,
     scroll,
     textarea,
     action,
@@ -43,6 +46,28 @@ const ListWidgetState = struct {
     scroll: usize = 0,
 };
 
+const VListWidgetState = struct {
+    pub const RangeRequest = struct {
+        start: usize,
+        len: usize,
+        request_id: u64,
+    };
+
+    pub const Window = struct {
+        window_start: usize,
+        window_len: usize,
+    };
+
+    scroll: usize = 0,
+    selected_index: ?usize = null,
+    next_request_id: u64 = 1,
+    last_range_request: ?RangeRequest = null,
+    last_satisfied_window: ?Window = null,
+    pending_start: ?usize = null,
+    pending_len: usize = 0,
+    pending_reason: protocol.VListRangeReason = .init,
+};
+
 const ScrollWidgetState = struct {
     scroll_y: usize = 0,
     content_h: usize = 0,
@@ -54,6 +79,7 @@ const ActionWidgetState = struct {};
 pub const WidgetState = union(enum) {
     input: InputWidgetState,
     list: ListWidgetState,
+    vlist: VListWidgetState,
     scroll: ScrollWidgetState,
     textarea: TextareaWidgetState,
     action: ActionWidgetState,

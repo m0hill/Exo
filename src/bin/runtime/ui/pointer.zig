@@ -22,6 +22,7 @@ const Capture = struct {
     id: ?[]const u8 = null,
     item_buf: std.ArrayList(u8) = .empty,
     item: ?[]const u8 = null,
+    item_index: ?usize = null,
     down_x: usize = 0,
     down_y: usize = 0,
     dragging: bool = false,
@@ -79,6 +80,7 @@ pub const PointerEngine = struct {
             if (treeContainsIdFast(root, id, id_index)) continue;
             clearOptId(&c.id_buf, &c.id);
             clearOptId(&c.item_buf, &c.item);
+            c.item_index = null;
             c.dragging = false;
         }
 
@@ -116,6 +118,7 @@ pub const PointerEngine = struct {
                 .scroll_dx = 0,
                 .scroll_dy = 0,
                 .item = null,
+                .item_index = null,
                 .captured = false,
             });
             return true;
@@ -149,6 +152,7 @@ pub const PointerEngine = struct {
                 .scroll_dx = 0,
                 .scroll_dy = 0,
                 .item = null,
+                .item_index = null,
                 .captured = false,
             });
             return true;
@@ -156,6 +160,8 @@ pub const PointerEngine = struct {
 
         if (self.last_over_id != null and std.mem.eql(u8, self.last_over_id.?, hit.id.?)) return false;
         try setOptId(allocator, &self.last_over_id_buf, &self.last_over_id, hit.id);
+        var item_buf: [128]u8 = undefined;
+        const resolved_item = resolvePointerItem(root, hit.id.?, hit.item, hit.item_index, &item_buf);
         const out: PointerEvent = .{
             .kind = .move,
             .id = hit.id.?,
@@ -169,7 +175,8 @@ pub const PointerEngine = struct {
             .clicks = 1,
             .scroll_dx = 0,
             .scroll_dy = 0,
-            .item = hit.item,
+            .item = resolved_item,
+            .item_index = hit.item_index,
             .captured = false,
         };
         return try self.writeMoveCoalesced(allocator, backend_in, out);
@@ -205,6 +212,7 @@ pub const PointerEngine = struct {
                     .scroll_dx = 0,
                     .scroll_dy = 0,
                     .item = null,
+                    .item_index = null,
                     .captured = false,
                 });
                 return true;
@@ -248,7 +256,10 @@ pub const PointerEngine = struct {
 
                 const cap = &self.captures[@as(usize, @intFromEnum(pb))];
                 try setOptId(allocator, &cap.id_buf, &cap.id, hit.id);
-                try setOptId(allocator, &cap.item_buf, &cap.item, hit.item);
+                var item_buf: [128]u8 = undefined;
+                const resolved_item = resolvePointerItem(root, hit.id.?, hit.item, hit.item_index, &item_buf);
+                try setOptId(allocator, &cap.item_buf, &cap.item, resolved_item);
+                cap.item_index = hit.item_index;
                 cap.down_x = ev.x;
                 cap.down_y = ev.y;
                 cap.dragging = false;
@@ -267,7 +278,8 @@ pub const PointerEngine = struct {
                     .clicks = clicks,
                     .scroll_dx = 0,
                     .scroll_dy = 0,
-                    .item = hit.item,
+                    .item = resolved_item,
+                    .item_index = hit.item_index,
                     .captured = false,
                 };
                 try protocol.writePointerEventJsonl(backend_in, out);
@@ -280,6 +292,7 @@ pub const PointerEngine = struct {
                 const cap = &self.captures[@as(usize, @intFromEnum(pb))];
                 const captured_id = cap.id;
                 const captured_item = cap.item;
+                const captured_item_index = cap.item_index;
 
                 var need_tx: bool = false;
                 if (captured_id != null) {
@@ -309,6 +322,7 @@ pub const PointerEngine = struct {
                             .scroll_dx = 0,
                             .scroll_dy = 0,
                             .item = captured_item,
+                            .item_index = captured_item_index,
                             .captured = true,
                         });
                         need_tx = true;
@@ -317,6 +331,7 @@ pub const PointerEngine = struct {
 
                 clearOptId(&cap.id_buf, &cap.id);
                 clearOptId(&cap.item_buf, &cap.item);
+                cap.item_index = null;
                 cap.dragging = false;
                 return need_tx;
             },
@@ -345,6 +360,7 @@ pub const PointerEngine = struct {
                         .scroll_dx = 0,
                         .scroll_dy = 0,
                         .item = cap.item,
+                        .item_index = cap.item_index,
                         .captured = true,
                     };
                     return try self.writeMoveCoalesced(allocator, backend_in, out);
@@ -382,6 +398,7 @@ pub const PointerEngine = struct {
                             .scroll_dx = 0,
                             .scroll_dy = 0,
                             .item = null,
+                            .item_index = null,
                             .captured = false,
                         });
                         return true;
@@ -390,6 +407,8 @@ pub const PointerEngine = struct {
                 }
 
                 try setOptId(allocator, &self.last_over_id_buf, &self.last_over_id, hit.id);
+                var item_buf: [128]u8 = undefined;
+                const resolved_item = resolvePointerItem(root, hit.id.?, hit.item, hit.item_index, &item_buf);
                 const out: PointerEvent = .{
                     .kind = .move,
                     .id = hit.id.?,
@@ -403,7 +422,8 @@ pub const PointerEngine = struct {
                     .clicks = 1,
                     .scroll_dx = 0,
                     .scroll_dy = 0,
-                    .item = hit.item,
+                    .item = resolved_item,
+                    .item_index = hit.item_index,
                     .captured = false,
                 };
                 return try self.writeMoveCoalesced(allocator, backend_in, out);
@@ -422,6 +442,8 @@ pub const PointerEngine = struct {
                     &layout_cache,
                 );
                 if (hit.id == null) return false;
+                var item_buf: [128]u8 = undefined;
+                const resolved_item = resolvePointerItem(root, hit.id.?, hit.item, hit.item_index, &item_buf);
                 const out: PointerEvent = .{
                     .kind = .scroll,
                     .id = hit.id.?,
@@ -435,7 +457,8 @@ pub const PointerEngine = struct {
                     .clicks = 1,
                     .scroll_dx = ev.wheel_dx,
                     .scroll_dy = ev.wheel_dy,
-                    .item = hit.item,
+                    .item = resolved_item,
+                    .item_index = hit.item_index,
                     .captured = false,
                 };
                 try protocol.writePointerEventJsonl(backend_in, out);
@@ -512,6 +535,7 @@ const Hit = struct {
     local_x: usize = 0,
     local_y: usize = 0,
     item: ?[]const u8 = null,
+    item_index: ?usize = null,
 };
 
 fn collectRenderScrollStates(allocator: std.mem.Allocator, widget_entries: []const widgets_mod.WidgetEntry) !std.ArrayList(render.ScrollState) {
@@ -563,8 +587,8 @@ fn hitTestMouseables(
 
     const lx = clampLocal(x, hit_rect.x, hit_rect.w);
     const ly = clampLocal(y, hit_rect.y, hit_rect.h);
-    const item = listItemAtPoint(root, widget_entries, hit_id.?, hit_rect, y);
-    return .{ .id = hit_id, .local_x = lx, .local_y = ly, .item = item };
+    const info = listItemAtPoint(root, widget_entries, hit_id.?, hit_rect, y);
+    return .{ .id = hit_id, .local_x = lx, .local_y = ly, .item = info.item, .item_index = info.index };
 }
 
 fn hitTestId(
@@ -584,27 +608,56 @@ fn hitTestId(
     const r = layout_cache.findRect(id) orelse return null;
     const lx = clampLocal(x, r.x, r.w);
     const ly = clampLocal(y, r.y, r.h);
-    const item = listItemAtPoint(root, widget_entries, id, r, y);
-    return .{ .id = id, .local_x = lx, .local_y = ly, .item = item };
+    const info = listItemAtPoint(root, widget_entries, id, r, y);
+    return .{ .id = id, .local_x = lx, .local_y = ly, .item = info.item, .item_index = info.index };
 }
 
-fn listItemAtPoint(root: protocol.Node, widget_entries: []const widgets_mod.WidgetEntry, id: []const u8, rect: render.Rect, y: usize) ?[]const u8 {
-    const l = node_util.findListNodeById(root, id) orelse return null;
-    const visible_height = listVisibleHeight(rect, l);
-    if (visible_height == 0) return null;
-    const scroll_y = findListScroll(widget_entries, id);
+fn listItemAtPoint(
+    root: protocol.Node,
+    widget_entries: []const widgets_mod.WidgetEntry,
+    id: []const u8,
+    rect: render.Rect,
+    y: usize,
+) struct { item: ?[]const u8, index: ?usize } {
+    if (node_util.findListNodeById(root, id)) |l| {
+        const visible_height = listVisibleHeight(rect, l);
+        if (visible_height == 0) return .{ .item = null, .index = null };
+        const scroll_y = findListScroll(widget_entries, id);
 
-    if (y < rect.y) return null;
-    const row_idx: usize = y - rect.y;
-    if (row_idx >= visible_height) return null;
+        if (y < rect.y) return .{ .item = null, .index = null };
+        const row_idx: usize = y - rect.y;
+        if (row_idx >= visible_height) return .{ .item = null, .index = null };
 
-    const start: usize = @min(scroll_y, l.children.len);
-    const item_idx: usize = start + row_idx;
-    if (item_idx >= l.children.len) return null;
-    return node_util.nodeId(l.children[item_idx]);
+        const start: usize = @min(scroll_y, l.children.len);
+        const item_idx: usize = start + row_idx;
+        if (item_idx >= l.children.len) return .{ .item = null, .index = null };
+        return .{ .item = node_util.nodeId(l.children[item_idx]), .index = item_idx };
+    }
+
+    if (node_util.findVListNodeById(root, id)) |l| {
+        const visible_height = vlistVisibleHeight(rect, l);
+        if (visible_height == 0 or l.total == 0) return .{ .item = null, .index = null };
+        const scroll_y = findVListScroll(widget_entries, id);
+
+        if (y < rect.y) return .{ .item = null, .index = null };
+        const row_idx: usize = y - rect.y;
+        if (row_idx >= visible_height) return .{ .item = null, .index = null };
+
+        const start: usize = @min(scroll_y, l.total);
+        const item_idx: usize = start + row_idx;
+        if (item_idx >= l.total) return .{ .item = null, .index = null };
+
+        return .{ .item = null, .index = item_idx };
+    }
+    return .{ .item = null, .index = null };
 }
 
 fn listVisibleHeight(rect: render.Rect, l: protocol.ListNode) usize {
+    const desired = l.height orelse rect.h;
+    return @min(desired, rect.h);
+}
+
+fn vlistVisibleHeight(rect: render.Rect, l: protocol.VListNode) usize {
     const desired = l.height orelse rect.h;
     return @min(desired, rect.h);
 }
@@ -616,6 +669,28 @@ fn findListScroll(widget_entries: []const widgets_mod.WidgetEntry, id: []const u
         return w.state.list.scroll;
     }
     return 0;
+}
+
+fn findVListScroll(widget_entries: []const widgets_mod.WidgetEntry, id: []const u8) usize {
+    for (widget_entries) |w| {
+        if (w.state != .vlist) continue;
+        if (!std.mem.eql(u8, w.id.items, id)) continue;
+        return w.state.vlist.scroll;
+    }
+    return 0;
+}
+
+fn resolvePointerItem(
+    root: protocol.Node,
+    id: []const u8,
+    item: ?[]const u8,
+    item_index: ?usize,
+    buf: []u8,
+) ?[]const u8 {
+    if (item) |it| return it;
+    const idx = item_index orelse return null;
+    const l = node_util.findVListNodeById(root, id) orelse return null;
+    return std.fmt.bufPrint(buf, "{s}{d}", .{ l.item_id_prefix, idx }) catch null;
 }
 
 fn clampLocal(abs: usize, origin: usize, span: usize) usize {
@@ -682,6 +757,7 @@ fn findTopmostModalLayerInto(node: protocol.Node, out: *?*const protocol.Node) v
         .box => |b| findTopmostModalLayerInto(b.child.*, out),
         .scroll => |s| findTopmostModalLayerInto(s.child.*, out),
         .list => |l| for (l.children) |child| findTopmostModalLayerInto(child, out),
+        .vlist => |l| for (l.children) |child| findTopmostModalLayerInto(child, out),
         else => {},
     }
 }

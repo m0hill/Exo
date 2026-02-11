@@ -16,6 +16,7 @@ fn nodeDisabled(node: protocol.Node) bool {
         .input => |i| i.disabled,
         .textarea => |t| t.disabled,
         .list => |l| l.disabled,
+        .vlist => |l| l.disabled,
     };
 }
 
@@ -33,6 +34,7 @@ fn nodeMouseable(node: protocol.Node) bool {
         .input => |i| i.mouseable,
         .textarea => |t| t.mouseable,
         .list => |l| l.mouseable,
+        .vlist => |l| l.mouseable,
     };
 }
 
@@ -73,6 +75,12 @@ pub fn treeHasMouseables(node: protocol.Node) bool {
             }
             break :blk false;
         },
+        .vlist => |l| blk: {
+            for (l.children) |child| {
+                if (treeHasMouseables(child)) break :blk true;
+            }
+            break :blk false;
+        },
         else => false,
     };
 }
@@ -102,6 +110,7 @@ fn collectMouseablesInto(
         .box => |b| try collectMouseablesInto(allocator, out, b.child.*),
         .scroll => |s| try collectMouseablesInto(allocator, out, s.child.*),
         .list => |l| for (l.children) |child| try collectMouseablesInto(allocator, out, child),
+        .vlist => |l| for (l.children) |child| try collectMouseablesInto(allocator, out, child),
         else => {},
     }
 }

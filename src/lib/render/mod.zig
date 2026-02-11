@@ -23,6 +23,7 @@ pub const RenderState = struct {
     inputs: []const InputState = &.{},
     textareas: []const TextareaState = &.{},
     lists: []const ListState = &.{},
+    vlists: []const VListState = &.{},
     scrolls: []const ScrollState = &.{},
 };
 
@@ -47,6 +48,12 @@ pub const TextareaState = struct {
 pub const ListState = struct {
     id: []const u8,
     selected_id: []const u8,
+    scroll: usize,
+};
+
+pub const VListState = struct {
+    id: []const u8,
+    selected_index: ?usize = null,
     scroll: usize,
 };
 
@@ -220,6 +227,7 @@ fn nodeAlignSelf(node: protocol.Node) ?protocol.AlignItems {
         .input => |i| i.align_self,
         .textarea => |t| t.align_self,
         .list => |l| l.align_self,
+        .vlist => |l| l.align_self,
     };
 }
 
@@ -325,6 +333,7 @@ fn nodeGridRow(node: protocol.Node) ?usize {
         .input => |i| i.grid_row,
         .textarea => |t| t.grid_row,
         .list => |l| l.grid_row,
+        .vlist => |l| l.grid_row,
     };
 }
 
@@ -341,6 +350,7 @@ fn nodeGridCol(node: protocol.Node) ?usize {
         .input => |i| i.grid_col,
         .textarea => |t| t.grid_col,
         .list => |l| l.grid_col,
+        .vlist => |l| l.grid_col,
     };
 }
 
@@ -357,6 +367,7 @@ fn nodeRowSpan(node: protocol.Node) usize {
         .input => |i| i.row_span,
         .textarea => |t| t.row_span,
         .list => |l| l.row_span,
+        .vlist => |l| l.row_span,
     };
     return if (raw == 0) 1 else raw;
 }
@@ -374,6 +385,7 @@ fn nodeColSpan(node: protocol.Node) usize {
         .input => |i| i.col_span,
         .textarea => |t| t.col_span,
         .list => |l| l.col_span,
+        .vlist => |l| l.col_span,
     };
     return if (raw == 0) 1 else raw;
 }
@@ -391,6 +403,7 @@ fn nodeGridArea(node: protocol.Node) ?[]const u8 {
         .input => |i| i.grid_area,
         .textarea => |t| t.grid_area,
         .list => |l| l.grid_area,
+        .vlist => |l| l.grid_area,
     };
 }
 
@@ -595,6 +608,7 @@ fn nodeId(node: protocol.Node) []const u8 {
         .input => |i| i.id,
         .textarea => |t| t.id,
         .list => |l| l.id,
+        .vlist => |l| l.id,
     };
 }
 
@@ -611,6 +625,7 @@ fn nodeHintW(node: protocol.Node) ?usize {
         .input => |i| i.w,
         .textarea => |t| t.w,
         .list => |l| l.w,
+        .vlist => |l| l.w,
     };
 }
 
@@ -627,6 +642,7 @@ fn nodeHintH(node: protocol.Node) ?usize {
         .input => |i| i.h,
         .textarea => |t| t.h,
         .list => |l| l.h,
+        .vlist => |l| l.h,
     };
 }
 
@@ -643,6 +659,7 @@ fn nodeFlex(node: protocol.Node) usize {
         .input => |i| i.flex,
         .textarea => |t| t.flex,
         .list => |l| l.flex,
+        .vlist => |l| l.flex,
     };
 }
 
@@ -701,6 +718,14 @@ fn measureMinWidth(node: protocol.Node) usize {
             }
             break :blk max_w;
         },
+        .vlist => |l| blk: {
+            var max_w: usize = 0;
+            for (l.children) |child| {
+                const w = measureMinWidth(child);
+                if (w > max_w) max_w = w;
+            }
+            break :blk max_w;
+        },
         .vbox => |v| blk: {
             var max_w: usize = 0;
             for (v.children) |child| {
@@ -744,6 +769,7 @@ fn measureHeight(node: protocol.Node, avail_w: usize) usize {
         .input => return 1,
         .textarea => return 3,
         .list => |l| return l.height orelse l.children.len,
+        .vlist => |l| return l.height orelse l.total,
         .box => |b| {
             const border_thickness: usize = if (b.border and avail_w >= 2) 1 else 0;
             const chrome: usize = border_thickness + b.pad;
@@ -1172,6 +1198,7 @@ fn nodeDisabled(node: protocol.Node) bool {
         .input => |i| i.disabled,
         .textarea => |t| t.disabled,
         .list => |l| l.disabled,
+        .vlist => |l| l.disabled,
     };
 }
 
@@ -1188,6 +1215,7 @@ fn nodeReadonly(node: protocol.Node) bool {
         .input => |i| i.readonly,
         .textarea => |t| t.readonly,
         .list => |l| l.readonly,
+        .vlist => |l| l.readonly,
     };
 }
 
@@ -1204,6 +1232,7 @@ fn nodeValidation(node: protocol.Node) protocol.ValidationState {
         .input => |i| i.validation,
         .textarea => |t| t.validation,
         .list => |l| l.validation,
+        .vlist => |l| l.validation,
     };
 }
 
@@ -1227,7 +1256,7 @@ fn applyStateOverlays(base: style.Style, node: protocol.Node, state: RenderState
         // For lists, prefer highlighting the hovered row (via `hovered_item`) rather than
         // painting the whole list rect.
         const is_list = switch (node) {
-            .list => true,
+            .list, .vlist => true,
             else => false,
         };
         if (!is_list) {
@@ -1257,6 +1286,7 @@ fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
         .input => |i| i.style,
         .textarea => |t| t.style,
         .list => |l| l.style,
+        .vlist => |l| l.style,
     };
 }
 
@@ -1273,6 +1303,7 @@ fn nodeClass(node: protocol.Node) ?[]const u8 {
         .input => |i| i.class,
         .textarea => |t| t.class,
         .list => |l| l.class,
+        .vlist => |l| l.class,
     };
 }
 
@@ -1288,7 +1319,7 @@ fn nodeKind(node: protocol.Node) theme_mod.NodeKind {
         .styled_text => .styled_text,
         .input => .input,
         .textarea => .textarea,
-        .list => .list,
+        .list, .vlist => .list,
     };
 }
 
@@ -1668,6 +1699,77 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
     }
 }
 
+fn paintVList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: protocol.VListNode, inherited: style.Style) void {
+    if (rect.h == 0 or l.total == 0) return;
+    const focused = state.focused_id != null and std.mem.eql(u8, state.focused_id.?, l.id);
+    const vlist_state = findVListState(state.vlists, l.id);
+    const selected_index = if (vlist_state) |st| st.selected_index else l.selected_index;
+    const scroll = if (vlist_state) |st| st.scroll else 0;
+    const hovered_item = if (state.hovered_id != null and std.mem.eql(u8, state.hovered_id.?, l.id)) state.hovered_item else null;
+    const chrome = state.theme.chrome;
+
+    const list_style = inherited;
+    const list_packed = style.pack(list_style);
+
+    const desired_height: usize = l.height orelse rect.h;
+    const height: usize = @min(desired_height, rect.h);
+    const start: usize = @min(scroll, l.total);
+
+    var row_idx: usize = 0;
+    while (row_idx < height) : (row_idx += 1) {
+        const index = start + row_idx;
+        if (index >= l.total) break;
+
+        var item_buf: [128]u8 = undefined;
+        const item_id = std.fmt.bufPrint(&item_buf, "{s}{d}", .{ l.item_id_prefix, index }) catch "";
+        const is_selected = selected_index != null and selected_index.? == index;
+        const is_hovered = hovered_item != null and item_id.len > 0 and std.mem.eql(u8, hovered_item.?, item_id);
+
+        const prefix = switch (l.marker) {
+            .none => "",
+            .default => if (is_selected) (if (focused) chrome.list_selected_focused_marker else chrome.list_selected_marker) else chrome.list_unselected_marker,
+        };
+        var row_style = list_style;
+        if (is_hovered and !is_selected) row_style = applyOverlay(row_style, state.theme.hovered_overlay);
+        var row_packed = style.pack(row_style);
+        if (is_selected and chrome.list_selected_inverse) row_packed.attrs |= style.ATTR_INVERSE;
+
+        const row: isize = rect.y + @as(isize, @intCast(row_idx));
+        const y_end: isize = rect.y + @as(isize, @intCast(rect.h));
+        if (row >= y_end) break;
+        const row_rect: RectI = .{ .x = rect.x, .y = row, .w = rect.w, .h = 1 };
+        if (!packedEq(row_packed, list_packed) and row_packed.affectsBlank()) {
+            fillRectStyle(frame, row_rect, clip, row_packed);
+        }
+
+        const local_idx_opt: ?usize = if (index >= l.window_start and index < l.window_start + l.children.len) (index - l.window_start) else null;
+        if (local_idx_opt == null) {
+            renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{prefix}, &.{row_packed});
+            continue;
+        }
+
+        const item = l.children[local_idx_opt.?];
+        const item_style = style.merge(row_style, nodeStyleOverride(item));
+        switch (item) {
+            .text => |t| renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{ prefix, t.text }, &.{ style.pack(item_style), style.pack(item_style) }),
+            .styled_text => |t| {
+                renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{prefix}, &.{style.pack(item_style)});
+                drawInlineStyledSpansInRect(
+                    frame,
+                    row,
+                    row_rect,
+                    clip,
+                    t.spans,
+                    item_style,
+                    unicode.displayWidth(prefix),
+                    if (is_selected) style.ATTR_INVERSE else 0,
+                );
+            },
+            else => renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{prefix}, &.{row_packed}),
+        }
+    }
+}
+
 fn paintVBox(
     frame: *Frame,
     rect: RectI,
@@ -1909,6 +2011,7 @@ fn paintNode(
         .input => |i| paintInput(frame, rect, node_clip, state, cursor_out, i, resolved),
         .textarea => |t| paintTextarea(frame, rect, node_clip, state, cursor_out, t, resolved),
         .list => |l| paintList(frame, rect, node_clip, state, l, resolved),
+        .vlist => |l| paintVList(frame, rect, node_clip, state, l, resolved),
         .vbox => |v| paintVBox(frame, rect, node_clip, state, cursor_out, v, resolved, mode),
         .hbox => |h| paintHBox(frame, rect, node_clip, state, cursor_out, h, resolved, mode),
         .grid => |g| paintGrid(frame, rect, node_clip, state, cursor_out, g, resolved, mode),
@@ -2190,6 +2293,21 @@ fn findListState(lists: []const ListState, id: []const u8) ?ListState {
     while (lo < hi) {
         const mid: usize = lo + (hi - lo) / 2;
         const st = lists[mid];
+        switch (std.mem.order(u8, st.id, id)) {
+            .lt => lo = mid + 1,
+            .gt => hi = mid,
+            .eq => return st,
+        }
+    }
+    return null;
+}
+
+fn findVListState(vlists: []const VListState, id: []const u8) ?VListState {
+    var lo: usize = 0;
+    var hi: usize = vlists.len;
+    while (lo < hi) {
+        const mid: usize = lo + (hi - lo) / 2;
+        const st = vlists[mid];
         switch (std.mem.order(u8, st.id, id)) {
             .lt => lo = mid + 1,
             .gt => hi = mid,

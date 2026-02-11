@@ -22,6 +22,8 @@ const PointerButton = protocol.PointerButton;
 const PointerEvent = protocol.PointerEvent;
 const SelectionEvent = protocol.SelectionEvent;
 const SelectionKind = protocol.SelectionKind;
+const VListRangeEvent = protocol.VListRangeEvent;
+const VListRangeReason = protocol.VListRangeReason;
 const ClipboardMsg = protocol.ClipboardMsg;
 const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
@@ -127,15 +129,39 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         } else if (std.mem.eql(u8, name, "select")) {
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
-            return .{ .event = .{ .select = .{ .id = id, .item = item, .v = version } } };
+            const index = try getOptionalUsize(obj, "index");
+            return .{ .event = .{ .select = .{ .id = id, .item = item, .index = index, .v = version } } };
         } else if (std.mem.eql(u8, name, "activate")) {
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
-            return .{ .event = .{ .activate = .{ .id = id, .item = item, .v = version } } };
+            const index = try getOptionalUsize(obj, "index");
+            return .{ .event = .{ .activate = .{ .id = id, .item = item, .index = index, .v = version } } };
         } else if (std.mem.eql(u8, name, "scroll")) {
             const id = try getRequiredString(obj, "id");
             const scroll_y = try getRequiredUsize(obj, "scroll_y");
             return .{ .event = .{ .scroll = .{ .id = id, .scroll_y = scroll_y, .v = version } } };
+        } else if (std.mem.eql(u8, name, "vlist_range")) {
+            const id = try getRequiredString(obj, "id");
+            const request_id_usize = try getRequiredUsize(obj, "request_id");
+            const request_id = try usizeToU64(request_id_usize);
+            const start = try getRequiredUsize(obj, "start");
+            const len = try getRequiredUsize(obj, "len");
+            const scroll = try getRequiredUsize(obj, "scroll");
+            const viewport_h = try getRequiredUsize(obj, "viewport_h");
+            const overscan = try getRequiredUsize(obj, "overscan");
+            const reason = try parseVListRangeReason(obj);
+            const ev: VListRangeEvent = .{
+                .id = id,
+                .request_id = request_id,
+                .start = start,
+                .len = len,
+                .scroll = scroll,
+                .viewport_h = viewport_h,
+                .overscan = overscan,
+                .reason = reason,
+                .v = version,
+            };
+            return .{ .event = .{ .vlist_range = ev } };
         } else if (std.mem.eql(u8, name, "resize")) {
             const rows = try getRequiredUsize(obj, "rows");
             const cols = try getRequiredUsize(obj, "cols");
@@ -150,6 +176,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .x = x,
                 .y = y,
                 .item = item,
+                .index = try getOptionalUsize(obj, "index"),
                 .v = version,
             } } };
         } else if (std.mem.eql(u8, name, "selection")) {
@@ -200,6 +227,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             const scroll_dx = try getRequiredIsize(obj, "scroll_dx");
             const scroll_dy = try getRequiredIsize(obj, "scroll_dy");
             const item = try getOptionalString(obj, "item");
+            const item_index = try getOptionalUsize(obj, "item_index");
             const captured = try getRequiredBool(obj, "captured");
             const ev: PointerEvent = .{
                 .kind = kind,
@@ -215,6 +243,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .scroll_dx = scroll_dx,
                 .scroll_dy = scroll_dy,
                 .item = item,
+                .item_index = item_index,
                 .captured = captured,
                 .v = version,
             };
@@ -798,6 +827,16 @@ fn parsePointerButton(obj: std.json.ObjectMap) ParseMsgError!PointerButton {
 fn parseSelectionKind(obj: std.json.ObjectMap) ParseMsgError!SelectionKind {
     const s = try getRequiredString(obj, "kind");
     if (std.mem.eql(u8, s, "document")) return .document;
+    return error.UnknownField;
+}
+
+fn parseVListRangeReason(obj: std.json.ObjectMap) ParseMsgError!VListRangeReason {
+    const s = try getRequiredString(obj, "reason");
+    if (std.mem.eql(u8, s, "init")) return .init;
+    if (std.mem.eql(u8, s, "scroll")) return .scroll;
+    if (std.mem.eql(u8, s, "resize")) return .resize;
+    if (std.mem.eql(u8, s, "focus")) return .focus;
+    if (std.mem.eql(u8, s, "selection")) return .selection;
     return error.UnknownField;
 }
 
@@ -1425,6 +1464,73 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .state_mode = state_mode,
             .selected_id = selected_id,
             .scroll = scroll,
+            .children = out,
+        } };
+    } else if (std.mem.eql(u8, type_str, "vlist")) {
+        const id = try getRequiredString(obj, "id");
+        const class = try parseClass(obj);
+        const w = try getOptionalUsize(obj, "w");
+        const h = try getOptionalUsize(obj, "h");
+        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const height = try getOptionalUsize(obj, "height");
+        const align_self = try parseAlignItemsOptional(obj, "align_self");
+        const hoverable = try parseHoverable(obj);
+        const mouseable = try parseMouseable(obj);
+        const disabled = try parseDisabled(obj);
+        const readonly = try parseReadonly(obj);
+        const validation = try parseValidation(obj);
+        const focusable = try parseFocusable(obj, true);
+        const focus_scope = try parseFocusScope(obj);
+        const marker = try parseListMarker(obj);
+        const state_mode = try parseStateMode(obj);
+        const selected_index = try getOptionalUsize(obj, "selected_index");
+        const scroll = try getOptionalUsize(obj, "scroll");
+        const total = try getRequiredUsize(obj, "total");
+        const window_start = try getRequiredUsize(obj, "window_start");
+        const item_id_prefix = try getRequiredString(obj, "item_id_prefix");
+        const overscan = try getOptionalUsize(obj, "overscan");
+        const req = if (try getOptionalUsize(obj, "req")) |req_usize|
+            try usizeToU64(req_usize)
+        else
+            null;
+        const gp = try parseGridPlacement(obj);
+        const st = try getOptionalStyleOverride(obj, "style");
+        const children_val = try getRequired(obj, "children");
+        const children_arr = try asArray(children_val);
+        var out = try allocator.alloc(Node, children_arr.items.len);
+        for (children_arr.items, 0..) |child_val, i| {
+            out[i] = try parseNodeLeaky(allocator, child_val);
+        }
+        return .{ .vlist = .{
+            .id = id,
+            .class = class,
+            .w = w,
+            .h = h,
+            .flex = flex,
+            .height = height,
+            .align_self = align_self,
+            .hoverable = hoverable,
+            .mouseable = mouseable,
+            .disabled = disabled,
+            .readonly = readonly,
+            .validation = validation,
+            .focusable = focusable,
+            .focus_scope = focus_scope,
+            .marker = marker,
+            .grid_row = gp.grid_row,
+            .grid_col = gp.grid_col,
+            .row_span = gp.row_span,
+            .col_span = gp.col_span,
+            .grid_area = gp.grid_area,
+            .style = st,
+            .state_mode = state_mode,
+            .selected_index = selected_index,
+            .scroll = scroll,
+            .total = total,
+            .window_start = window_start,
+            .item_id_prefix = item_id_prefix,
+            .overscan = overscan,
+            .req = req,
             .children = out,
         } };
     } else {

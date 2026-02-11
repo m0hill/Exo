@@ -43,8 +43,9 @@ test "ui: hover hit-test list item" {
 
     const root = protocol.Node{ .list = .{ .id = "results", .height = 3, .hoverable = true, .children = children[0..] } };
     const list_states = [_]render.ListState{.{ .id = "results", .selected_id = "", .scroll = 0 }};
+    const vlist_states = [_]render.VListState{};
     const empty_scrolls = [_]render.ScrollState{};
-    const hit = try hover.hoverHitTestLeaky(std.testing.allocator, root, 10, 10, 0, 1, empty_scrolls[0..], list_states[0..]);
+    const hit = try hover.hoverHitTestLeaky(std.testing.allocator, root, 10, 10, 0, 1, empty_scrolls[0..], list_states[0..], vlist_states[0..]);
     try std.testing.expectEqualStrings("results", hit.id orelse return error.TestUnexpectedResult);
     try std.testing.expectEqualStrings("results-1", hit.item orelse return error.TestUnexpectedResult);
 }
@@ -381,6 +382,129 @@ test "ui: controlled list does not auto-select on patch" {
 
     const list_widget = findWidget(widgets.items, "results") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 0), list_widget.state.list.selected_id.items.len);
+}
+
+test "ui: vlist emits init range request and coalesces identical request" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var auto_focus_done = true;
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    const root = protocol.Node{ .vlist = .{
+        .id = "results",
+        .focusable = true,
+        .hoverable = true,
+        .mouseable = true,
+        .total = 1_000_000,
+        .window_start = 0,
+        .item_id_prefix = "row-",
+        .children = &.{},
+    } };
+
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        20,
+        40,
+    );
+    try std.testing.expectEqual(@as(usize, 0), backend_out.items.len);
+
+    const changed_first = try runtime_ui.maybeRequestVListRanges(
+        std.testing.allocator,
+        writer,
+        &widgets,
+        root,
+        20,
+        40,
+        .init,
+    );
+    try std.testing.expect(changed_first);
+    const first_len = backend_out.items.len;
+    try std.testing.expect(std.mem.indexOf(u8, backend_out.items, "\"name\":\"vlist_range\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, backend_out.items, "\"id\":\"results\"") != null);
+
+    const changed_second = try runtime_ui.maybeRequestVListRanges(
+        std.testing.allocator,
+        writer,
+        &widgets,
+        root,
+        20,
+        40,
+        .init,
+    );
+    try std.testing.expect(!changed_second);
+    try std.testing.expectEqual(first_len, backend_out.items.len);
+}
+
+test "ui: vlist key navigation emits select with deterministic item and index" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var auto_focus_done = true;
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "row-0", .text = "0" } },
+        .{ .text = .{ .id = "row-1", .text = "1" } },
+        .{ .text = .{ .id = "row-2", .text = "2" } },
+    };
+    const root = protocol.Node{ .vlist = .{
+        .id = "results",
+        .focusable = true,
+        .total = 100,
+        .window_start = 0,
+        .item_id_prefix = "row-",
+        .children = children[0..],
+    } };
+
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        10,
+        40,
+    );
+
+    const changed = try runtime_ui.applyVListAction(
+        std.testing.allocator,
+        writer,
+        &widgets,
+        root,
+        10,
+        40,
+        "results",
+        .list_next,
+    );
+    try std.testing.expect(changed);
+    try std.testing.expect(std.mem.indexOf(u8, backend_out.items, "\"name\":\"select\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, backend_out.items, "\"item\":\"row-1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, backend_out.items, "\"index\":1") != null);
 }
 
 test "ui: mouse click in input places cursor by column" {

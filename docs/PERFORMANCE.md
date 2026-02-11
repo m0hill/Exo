@@ -61,9 +61,10 @@ Renderer metrics are surfaced through `Renderer.last_metrics`.
 
 ## Large Collections Strategy
 
-Current best practice for large datasets:
+Implemented virtualization strategy:
 
-- Backends should send only visible list children (windowed updates).
-- Prefer targeted patching (`patch` with `target`) over full snapshots when possible.
-
-Future extension (not implemented here): protocol-level virtual list range requests.
+- Use `type:"vlist"` for very large collections (`total` rows).
+- Runtime keeps local `scroll`/selection and requests needed windows via `event:vlist_range`.
+- Backend responds with targeted morph patches for that `vlist` id (`window_start` + `children`).
+- Keep child ids deterministic (`item_id_prefix + index`) so hover/select/activate stay stable.
+- Prefer targeted patching (`patch` with `target`) over full snapshots whenever possible.

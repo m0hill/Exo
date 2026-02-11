@@ -277,6 +277,37 @@ pub fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protoc
                 .children = children,
             } };
         },
+        .vlist => |l| blk: {
+            var children = try allocator.alloc(protocol.Node, l.children.len);
+            for (l.children, 0..) |child, idx| {
+                children[idx] = try cloneNodeLeaky(allocator, child);
+            }
+            break :blk .{ .vlist = .{
+                .id = try allocator.dupe(u8, l.id),
+                .class = if (l.class) |class| try allocator.dupe(u8, class) else null,
+                .w = l.w,
+                .h = l.h,
+                .flex = l.flex,
+                .height = l.height,
+                .hoverable = l.hoverable,
+                .mouseable = l.mouseable,
+                .disabled = l.disabled,
+                .readonly = l.readonly,
+                .validation = l.validation,
+                .focusable = l.focusable,
+                .marker = l.marker,
+                .style = l.style,
+                .state_mode = l.state_mode,
+                .selected_index = l.selected_index,
+                .scroll = l.scroll,
+                .total = l.total,
+                .window_start = l.window_start,
+                .item_id_prefix = try allocator.dupe(u8, l.item_id_prefix),
+                .overscan = l.overscan,
+                .req = l.req,
+                .children = children,
+            } };
+        },
     };
 }
 
@@ -293,6 +324,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
         .input => |i| i.id,
         .textarea => |t| t.id,
         .list => |l| l.id,
+        .vlist => |l| l.id,
     };
 }
 
@@ -338,6 +370,64 @@ pub fn findListNodeById(root: protocol.Node, id: []const u8) ?protocol.ListNode 
             }
             break :blk null;
         },
+        .vlist => |l| blk: {
+            for (l.children) |child| {
+                if (findListNodeById(child, id)) |ll| break :blk ll;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+pub fn findVListNodeById(root: protocol.Node, id: []const u8) ?protocol.VListNode {
+    if (std.mem.eql(u8, nodeId(root), id)) {
+        return switch (root) {
+            .vlist => |l| l,
+            else => null,
+        };
+    }
+
+    return switch (root) {
+        .vbox => |v| blk: {
+            for (v.children) |child| {
+                if (findVListNodeById(child, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
+        .hbox => |h| blk: {
+            for (h.children) |child| {
+                if (findVListNodeById(child, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
+        .grid => |g| blk: {
+            for (g.children) |child| {
+                if (findVListNodeById(child, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
+        .box => |b| return findVListNodeById(b.child.*, id),
+        .scroll => |s| return findVListNodeById(s.child.*, id),
+        .overlay => |o| blk: {
+            if (findVListNodeById(o.base.*, id)) |l| break :blk l;
+            for (o.layers) |layer| {
+                if (findVListNodeById(layer.node.*, id)) |l| break :blk l;
+            }
+            break :blk null;
+        },
+        .list => |l| blk: {
+            for (l.children) |child| {
+                if (findVListNodeById(child, id)) |ll| break :blk ll;
+            }
+            break :blk null;
+        },
+        .vlist => |l| blk: {
+            for (l.children) |child| {
+                if (findVListNodeById(child, id)) |ll| break :blk ll;
+            }
+            break :blk null;
+        },
         else => null,
     };
 }
@@ -379,6 +469,12 @@ pub fn findInputNodeById(root: protocol.Node, id: []const u8) ?protocol.InputNod
             break :blk null;
         },
         .list => |l| blk: {
+            for (l.children) |child| {
+                if (findInputNodeById(child, id)) |i| break :blk i;
+            }
+            break :blk null;
+        },
+        .vlist => |l| blk: {
             for (l.children) |child| {
                 if (findInputNodeById(child, id)) |i| break :blk i;
             }
@@ -430,6 +526,12 @@ pub fn findTextareaNodeById(root: protocol.Node, id: []const u8) ?protocol.Texta
             }
             break :blk null;
         },
+        .vlist => |l| blk: {
+            for (l.children) |child| {
+                if (findTextareaNodeById(child, id)) |t| break :blk t;
+            }
+            break :blk null;
+        },
         else => null,
     };
 }
@@ -471,6 +573,12 @@ pub fn findScrollNodeById(root: protocol.Node, id: []const u8) ?protocol.ScrollN
             break :blk null;
         },
         .list => |l| blk: {
+            for (l.children) |child| {
+                if (findScrollNodeById(child, id)) |s| break :blk s;
+            }
+            break :blk null;
+        },
+        .vlist => |l| blk: {
             for (l.children) |child| {
                 if (findScrollNodeById(child, id)) |s| break :blk s;
             }

@@ -243,7 +243,8 @@
         { "$ref": "#/$defs/NodeStyledText" },
         { "$ref": "#/$defs/NodeInput" },
         { "$ref": "#/$defs/NodeTextarea" },
-        { "$ref": "#/$defs/NodeList" }
+        { "$ref": "#/$defs/NodeList" },
+        { "$ref": "#/$defs/NodeVList" }
       ]
     },
 
@@ -636,6 +637,45 @@
       "additionalProperties": false
     },
 
+    "NodeVList": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "vlist" },
+        "id": { "$ref": "#/$defs/IdString" },
+        "class": { "type": "string" },
+        "w": { "type": "integer", "minimum": 0 },
+        "h": { "type": "integer", "minimum": 0 },
+        "flex": { "type": "integer", "minimum": 0 },
+        "height": { "type": "integer", "minimum": 0 },
+        "align_self": { "$ref": "#/$defs/AlignItems" },
+        "hoverable": { "type": "boolean" },
+        "mouseable": { "type": "boolean" },
+        "disabled": { "type": "boolean" },
+        "readonly": { "type": "boolean" },
+        "validation": { "$ref": "#/$defs/ValidationState" },
+        "focusable": { "type": "boolean" },
+        "focus_scope": { "$ref": "#/$defs/IdString" },
+        "marker": { "$ref": "#/$defs/ListMarker" },
+        "grid_row": { "type": "integer", "minimum": 0 },
+        "grid_col": { "type": "integer", "minimum": 0 },
+        "row_span": { "type": "integer", "minimum": 1 },
+        "col_span": { "type": "integer", "minimum": 1 },
+        "grid_area": { "type": "string" },
+        "style": { "$ref": "#/$defs/StyleOverride" },
+        "state_mode": { "$ref": "#/$defs/StateMode" },
+        "selected_index": { "type": "integer", "minimum": 0 },
+        "scroll": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "window_start": { "type": "integer", "minimum": 0 },
+        "item_id_prefix": { "type": "string" },
+        "overscan": { "type": "integer", "minimum": 0 },
+        "req": { "type": "integer", "minimum": 0 },
+        "children": { "$ref": "#/$defs/NodeArray" }
+      },
+      "required": ["type", "id", "total", "window_start", "item_id_prefix", "children"],
+      "additionalProperties": false
+    },
+
     "PatchMsgFull": {
       "type": "object",
       "properties": {
@@ -774,6 +814,7 @@
         { "$ref": "#/$defs/EventSelect" },
         { "$ref": "#/$defs/EventActivate" },
         { "$ref": "#/$defs/EventScroll" },
+        { "$ref": "#/$defs/EventVListRange" },
         { "$ref": "#/$defs/EventResize" },
         { "$ref": "#/$defs/EventHover" },
         { "$ref": "#/$defs/EventSelection" },
@@ -891,6 +932,7 @@
         "name": { "const": "select" },
         "id": { "$ref": "#/$defs/IdString" },
         "item": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
       "required": ["type", "name", "id", "item"],
@@ -904,6 +946,7 @@
         "name": { "const": "activate" },
         "id": { "$ref": "#/$defs/IdString" },
         "item": { "type": "string" },
+        "index": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
       "required": ["type", "name", "id", "item"],
@@ -920,6 +963,39 @@
         "v": { "$ref": "#/$defs/VersionField" }
       },
       "required": ["type", "name", "id", "scroll_y"],
+      "additionalProperties": false
+    },
+
+    "EventVListRange": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "event" },
+        "name": { "const": "vlist_range" },
+        "id": { "$ref": "#/$defs/IdString" },
+        "request_id": { "type": "integer", "minimum": 0 },
+        "start": { "type": "integer", "minimum": 0 },
+        "len": { "type": "integer", "minimum": 0 },
+        "scroll": { "type": "integer", "minimum": 0 },
+        "viewport_h": { "type": "integer", "minimum": 0 },
+        "overscan": { "type": "integer", "minimum": 0 },
+        "reason": {
+          "type": "string",
+          "enum": ["init", "scroll", "resize", "focus", "selection"]
+        },
+        "v": { "$ref": "#/$defs/VersionField" }
+      },
+      "required": [
+        "type",
+        "name",
+        "id",
+        "request_id",
+        "start",
+        "len",
+        "scroll",
+        "viewport_h",
+        "overscan",
+        "reason"
+      ],
       "additionalProperties": false
     },
 
@@ -950,6 +1026,7 @@
             { "type": "null" }
           ]
         },
+        "index": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
       "required": ["type", "name", "id", "x", "y"],
@@ -979,6 +1056,7 @@
             { "type": "null" }
           ]
         },
+        "item_index": { "type": "integer", "minimum": 0 },
         "captured": { "type": "boolean" },
         "v": { "$ref": "#/$defs/VersionField" }
       },

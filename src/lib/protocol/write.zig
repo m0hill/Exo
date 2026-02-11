@@ -19,6 +19,8 @@ const Span = protocol.Span;
 const GridTrack = protocol.GridTrack;
 const SelectionEvent = protocol.SelectionEvent;
 const SelectionKind = protocol.SelectionKind;
+const VListRangeEvent = protocol.VListRangeEvent;
+const VListRangeReason = protocol.VListRangeReason;
 const PointerEvent = protocol.PointerEvent;
 const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
@@ -167,30 +169,48 @@ pub fn writeInputEventJsonlVersion(writer: anytype, id: []const u8, value: []con
 }
 
 pub fn writeSelectEventJsonl(writer: anytype, id: []const u8, item: []const u8) !void {
-    return writeSelectEventJsonlVersion(writer, id, item, null);
+    return writeSelectEventJsonlWithIndexVersion(writer, id, item, null, null);
 }
 
 pub fn writeSelectEventJsonlVersion(writer: anytype, id: []const u8, item: []const u8, v: ?u32) !void {
+    return writeSelectEventJsonlWithIndexVersion(writer, id, item, null, v);
+}
+
+pub fn writeSelectEventJsonlWithIndex(writer: anytype, id: []const u8, item: []const u8, index: ?usize) !void {
+    return writeSelectEventJsonlWithIndexVersion(writer, id, item, index, null);
+}
+
+pub fn writeSelectEventJsonlWithIndexVersion(writer: anytype, id: []const u8, item: []const u8, index: ?usize, v: ?u32) !void {
     try writer.writeAll("{\"type\":\"event\"");
     try writeVersionField(writer, v);
     try writer.writeAll(",\"name\":\"select\",\"id\":");
     try writeJsonString(writer, id);
     try writer.writeAll(",\"item\":");
     try writeJsonString(writer, item);
+    if (index) |ii| try writer.print(",\"index\":{d}", .{ii});
     try writer.writeAll("}\n");
 }
 
 pub fn writeActivateEventJsonl(writer: anytype, id: []const u8, item: []const u8) !void {
-    return writeActivateEventJsonlVersion(writer, id, item, null);
+    return writeActivateEventJsonlWithIndexVersion(writer, id, item, null, null);
 }
 
 pub fn writeActivateEventJsonlVersion(writer: anytype, id: []const u8, item: []const u8, v: ?u32) !void {
+    return writeActivateEventJsonlWithIndexVersion(writer, id, item, null, v);
+}
+
+pub fn writeActivateEventJsonlWithIndex(writer: anytype, id: []const u8, item: []const u8, index: ?usize) !void {
+    return writeActivateEventJsonlWithIndexVersion(writer, id, item, index, null);
+}
+
+pub fn writeActivateEventJsonlWithIndexVersion(writer: anytype, id: []const u8, item: []const u8, index: ?usize, v: ?u32) !void {
     try writer.writeAll("{\"type\":\"event\"");
     try writeVersionField(writer, v);
     try writer.writeAll(",\"name\":\"activate\",\"id\":");
     try writeJsonString(writer, id);
     try writer.writeAll(",\"item\":");
     try writeJsonString(writer, item);
+    if (index) |ii| try writer.print(",\"index\":{d}", .{ii});
     try writer.writeAll("}\n");
 }
 
@@ -206,6 +226,34 @@ pub fn writeScrollEventJsonlVersion(writer: anytype, id: []const u8, scroll_y: u
     try writer.print(",\"scroll_y\":{d}}}\n", .{scroll_y});
 }
 
+fn vlistRangeReasonString(reason: VListRangeReason) []const u8 {
+    return switch (reason) {
+        .init => "init",
+        .scroll => "scroll",
+        .resize => "resize",
+        .focus => "focus",
+        .selection => "selection",
+    };
+}
+
+pub fn writeVListRangeEventJsonl(writer: anytype, ev: VListRangeEvent) !void {
+    return writeVListRangeEventJsonlVersion(writer, ev, null);
+}
+
+pub fn writeVListRangeEventJsonlVersion(writer: anytype, ev: VListRangeEvent, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v orelse ev.v);
+    try writer.writeAll(",\"name\":\"vlist_range\",\"id\":");
+    try writeJsonString(writer, ev.id);
+    try writer.print(
+        ",\"request_id\":{d},\"start\":{d},\"len\":{d},\"scroll\":{d},\"viewport_h\":{d},\"overscan\":{d}",
+        .{ ev.request_id, ev.start, ev.len, ev.scroll, ev.viewport_h, ev.overscan },
+    );
+    try writer.writeAll(",\"reason\":");
+    try writeJsonString(writer, vlistRangeReasonString(ev.reason));
+    try writer.writeAll("}\n");
+}
+
 pub fn writeResizeEventJsonl(writer: anytype, rows: usize, cols: usize) !void {
     return writeResizeEventJsonlVersion(writer, rows, cols, null);
 }
@@ -217,10 +265,18 @@ pub fn writeResizeEventJsonlVersion(writer: anytype, rows: usize, cols: usize, v
 }
 
 pub fn writeHoverEventJsonl(writer: anytype, id: []const u8, x: usize, y: usize, item: ?[]const u8) !void {
-    return writeHoverEventJsonlVersion(writer, id, x, y, item, null);
+    return writeHoverEventJsonlWithIndexVersion(writer, id, x, y, item, null, null);
 }
 
 pub fn writeHoverEventJsonlVersion(writer: anytype, id: []const u8, x: usize, y: usize, item: ?[]const u8, v: ?u32) !void {
+    return writeHoverEventJsonlWithIndexVersion(writer, id, x, y, item, null, v);
+}
+
+pub fn writeHoverEventJsonlWithIndex(writer: anytype, id: []const u8, x: usize, y: usize, item: ?[]const u8, index: ?usize) !void {
+    return writeHoverEventJsonlWithIndexVersion(writer, id, x, y, item, index, null);
+}
+
+pub fn writeHoverEventJsonlWithIndexVersion(writer: anytype, id: []const u8, x: usize, y: usize, item: ?[]const u8, index: ?usize, v: ?u32) !void {
     try writer.writeAll("{\"type\":\"event\"");
     try writeVersionField(writer, v);
     try writer.writeAll(",\"name\":\"hover\",\"id\":");
@@ -230,6 +286,7 @@ pub fn writeHoverEventJsonlVersion(writer: anytype, id: []const u8, x: usize, y:
         try writer.writeAll(",\"item\":");
         try writeJsonString(writer, it);
     }
+    if (index) |ii| try writer.print(",\"index\":{d}", .{ii});
     try writer.writeAll("}\n");
 }
 
@@ -300,6 +357,7 @@ pub fn writePointerEventJsonlVersion(writer: anytype, ev: PointerEvent, v: ?u32)
         try writer.writeAll(",\"item\":");
         try writeJsonString(writer, it);
     }
+    if (ev.item_index) |ii| try writer.print(",\"item_index\":{d}", .{ii});
     try writer.writeAll(",\"captured\":");
     try writer.writeAll(if (ev.captured) "true" else "false");
     try writer.writeAll("}\n");
@@ -1336,6 +1394,54 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
                 try writeJsonString(writer, selected_id);
             }
             if (l.scroll) |scroll| try writer.print(",\"scroll\":{d}", .{scroll});
+            try writer.writeAll(",\"children\":[");
+            for (l.children, 0..) |child, i| {
+                if (i != 0) try writer.writeByte(',');
+                try writeNodeJson(writer, child);
+            }
+            try writer.writeAll("]}");
+        },
+        .vlist => |l| {
+            try writer.writeAll("{\"type\":\"vlist\",\"id\":");
+            try writeJsonString(writer, l.id);
+            try writeClassField(writer, l.class);
+            if (l.w) |w| try writer.print(",\"w\":{d}", .{w});
+            if (l.h) |h| try writer.print(",\"h\":{d}", .{h});
+            if (l.flex != 0) try writer.print(",\"flex\":{d}", .{l.flex});
+            if (l.height) |height| try writer.print(",\"height\":{d}", .{height});
+            if (l.align_self) |as| {
+                try writer.writeAll(",\"align_self\":");
+                try writeJsonString(writer, switch (as) {
+                    .start => "start",
+                    .center => "center",
+                    .end => "end",
+                    .stretch => "stretch",
+                });
+            }
+            if (l.hoverable) try writer.writeAll(",\"hoverable\":true");
+            if (l.mouseable) try writer.writeAll(",\"mouseable\":true");
+            try writeWidgetStateFields(writer, l.disabled, l.readonly, l.validation, l.focusable, true, l.focus_scope);
+            if (l.marker != .default) {
+                try writer.writeAll(",\"marker\":");
+                try writeJsonString(writer, switch (l.marker) {
+                    .default => "default",
+                    .none => "none",
+                });
+            }
+            try writeGridPlacementFields(writer, l.grid_row, l.grid_col, l.row_span, l.col_span, l.grid_area);
+            if (l.style) |st| {
+                try writer.writeAll(",\"style\":");
+                try writeStyleOverrideJson(writer, st);
+            }
+            try writeStateModeField(writer, l.state_mode);
+            if (l.selected_index) |selected_index| try writer.print(",\"selected_index\":{d}", .{selected_index});
+            if (l.scroll) |scroll| try writer.print(",\"scroll\":{d}", .{scroll});
+            try writer.print(",\"total\":{d}", .{l.total});
+            try writer.print(",\"window_start\":{d}", .{l.window_start});
+            try writer.writeAll(",\"item_id_prefix\":");
+            try writeJsonString(writer, l.item_id_prefix);
+            if (l.overscan) |overscan| try writer.print(",\"overscan\":{d}", .{overscan});
+            if (l.req) |req| try writer.print(",\"req\":{d}", .{req});
             try writer.writeAll(",\"children\":[");
             for (l.children, 0..) |child, i| {
                 if (i != 0) try writer.writeByte(',');

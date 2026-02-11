@@ -24,6 +24,9 @@ pub fn emitInitialFull(
     inputs: []const state.InputSlot,
     lists: []const state.ListSlot,
     list_height: usize,
+    vlist_total: usize,
+    vlist_window_start: usize,
+    vlist_window_len: usize,
     popups: state.PopupInfo,
     widgets: state.WidgetsState,
     tick: u64,
@@ -45,6 +48,9 @@ pub fn emitInitialFull(
         lists,
         false,
         list_height,
+        vlist_total,
+        vlist_window_start,
+        vlist_window_len,
         popups,
         widgets,
         tick,
@@ -68,6 +74,9 @@ pub fn emitRootMorphPatch(
     lists: []const state.ListSlot,
     layout_alt: bool,
     list_height: usize,
+    vlist_total: usize,
+    vlist_window_start: usize,
+    vlist_window_len: usize,
     popups: state.PopupInfo,
     widgets: state.WidgetsState,
     tick: u64,
@@ -89,6 +98,9 @@ pub fn emitRootMorphPatch(
         lists,
         layout_alt,
         list_height,
+        vlist_total,
+        vlist_window_start,
+        vlist_window_len,
         popups,
         widgets,
         tick,
@@ -267,6 +279,42 @@ pub fn emitListMorphPatch(writer: anytype, list_id: []const u8, items: []const u
     try writer.writeAll("}\n");
 }
 
+pub fn emitVListWindowPatch(
+    writer: anytype,
+    list_id: []const u8,
+    total: usize,
+    window_start: usize,
+    window_len: usize,
+    req: ?u64,
+) !void {
+    try writer.writeAll("{\"type\":\"patch\",\"target\":");
+    try protocol.writeJsonString(writer, list_id);
+    try writer.writeAll(",\"mode\":\"morph\",\"node\":");
+    try writer.writeAll("{\"type\":\"vlist\",\"id\":");
+    try protocol.writeJsonString(writer, list_id);
+    try writer.print(",\"mouseable\":true,\"hoverable\":true,\"focusable\":true,\"height\":8,\"total\":{d},\"window_start\":{d},\"item_id_prefix\":\"vrow-\",\"overscan\":10", .{ total, window_start });
+    if (req) |request_id| try writer.print(",\"req\":{d}", .{request_id});
+    try writer.writeAll(",\"children\":[");
+    const end = @min(total, window_start + window_len);
+    var idx = window_start;
+    var wrote_any = false;
+    while (idx < end) : (idx += 1) {
+        if (wrote_any) try writer.writeByte(',');
+        wrote_any = true;
+        var id_buf: [64]u8 = undefined;
+        var text_buf: [64]u8 = undefined;
+        const row_id = try std.fmt.bufPrint(&id_buf, "vrow-{d}", .{idx});
+        const row_text = try std.fmt.bufPrint(&text_buf, "Virtual row {d}", .{idx});
+        try writer.writeAll("{\"type\":\"text\",\"id\":");
+        try protocol.writeJsonString(writer, row_id);
+        try writer.writeAll(",\"text\":");
+        try protocol.writeJsonString(writer, row_text);
+        try writer.writeByte('}');
+    }
+    try writer.writeAll("]}}");
+    try writer.writeByte('\n');
+}
+
 pub fn emitMarkdownMorphPatch(
     allocator: std.mem.Allocator,
     writer: anytype,
@@ -376,6 +424,54 @@ fn writePanelNode(
     );
     try writer.writeByte(',');
     try writeListNode(writer, list_id, list_height, items, "{\"fg\":\"#e5e7eb\"}", true, true);
+    try writer.writeAll("]}");
+    try writer.writeByte('}');
+}
+
+fn writeVirtualPanelNode(
+    writer: anytype,
+    id: []const u8,
+    focus_scope: []const u8,
+    title: []const u8,
+    total: usize,
+    window_start: usize,
+    window_len: usize,
+) !void {
+    var body_buf: [128]u8 = undefined;
+    const body_id = try std.fmt.bufPrint(&body_buf, "{s}-body", .{id});
+
+    try writer.writeAll("{\"type\":\"box\",\"id\":");
+    try protocol.writeJsonString(writer, id);
+    try writer.writeAll(",\"focus_scope\":");
+    try protocol.writeJsonString(writer, focus_scope);
+    try writer.writeAll(",\"flex\":1,\"pad\":1,\"clip\":true");
+    try writer.writeAll(",\"style\":{\"bg\":\"#0b1220\",\"fg\":\"#7dd3fc\"}");
+    try writer.writeAll(",\"title\":");
+    try protocol.writeJsonString(writer, title);
+    try writer.writeAll(",\"child\":");
+    try writer.writeAll("{\"type\":\"vbox\",\"id\":");
+    try protocol.writeJsonString(writer, body_id);
+    try writer.writeAll(",\"clip\":true,\"children\":[");
+    try writer.writeAll("{\"type\":\"vlist\",\"id\":\"results-vlist\",\"mouseable\":true,\"hoverable\":true,\"focusable\":true,\"height\":8");
+    try writer.print(",\"total\":{d},\"window_start\":{d},\"item_id_prefix\":\"vrow-\",\"overscan\":10", .{ total, window_start });
+    try writer.writeAll(",\"children\":[");
+    const end = @min(total, window_start + window_len);
+    var idx = window_start;
+    var wrote_any = false;
+    while (idx < end) : (idx += 1) {
+        if (wrote_any) try writer.writeByte(',');
+        wrote_any = true;
+        var id_buf: [64]u8 = undefined;
+        var text_buf: [64]u8 = undefined;
+        const row_id = try std.fmt.bufPrint(&id_buf, "vrow-{d}", .{idx});
+        const row_text = try std.fmt.bufPrint(&text_buf, "Virtual row {d}", .{idx});
+        try writer.writeAll("{\"type\":\"text\",\"id\":");
+        try protocol.writeJsonString(writer, row_id);
+        try writer.writeAll(",\"text\":");
+        try protocol.writeJsonString(writer, row_text);
+        try writer.writeByte('}');
+    }
+    try writer.writeAll("]}");
     try writer.writeAll("]}");
     try writer.writeByte('}');
 }
@@ -831,6 +927,9 @@ fn writeRootNode(
     lists: []const state.ListSlot,
     layout_alt: bool,
     list_height: usize,
+    vlist_total: usize,
+    vlist_window_start: usize,
+    vlist_window_len: usize,
     popups: state.PopupInfo,
     widgets: state.WidgetsState,
     tick: u64,
@@ -1021,6 +1120,8 @@ fn writeRootNode(
     }
     try writer.writeByte(',');
     try writeAlignmentPanelNode(writer, "scope-align");
+    try writer.writeByte(',');
+    try writeVirtualPanelNode(writer, "panel-vlist", "scope-vlist", "Virtual List (1e6 rows)", vlist_total, vlist_window_start, vlist_window_len);
     try writer.writeByte(',');
     try writeWidgetsPanelNode(allocator, writer, "scope-widgets", widgets, tick);
     try writer.writeAll("]}");

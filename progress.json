@@ -1258,5 +1258,35 @@
       "Press Ctrl-C with an active document selection; confirm local clipboard copy behavior",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 43,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Protocol-level virtualization for big collections: new `vlist` node, runtime `vlist_range` requests, deterministic item ids, and index-aware item events",
+    "deliverables": [
+      "src/lib/protocol/{types,parse,write,mod}.zig + protocol.schema.json: added `vlist` node, `event:vlist_range`, and optional `index`/`item_index` on item-bearing events",
+      "src/lib/render/mod.zig: added `RenderState.vlists`, `VListState`, and `paintVList` rendering (loaded window rows + unloaded placeholder rows)",
+      "src/bin/runtime/ui/{widgets,mod,node_util}.zig: added vlist widget state (`scroll`, `selected_index`, request tracking), sync/apply logic, key/mouse behavior, and range request emission helpers",
+      "src/bin/runtime/app.zig: requests vlist ranges after patch sync and passes vlist render state",
+      "src/lib/hover.zig + src/bin/runtime/ui/pointer.zig: vlist hit testing with deterministic items and global indices (`hover.index`, `pointer.item_index`)",
+      "src/test/{protocol,ui,render}.zig + src/bin/runtime/ui_test_api.zig: coverage for vlist parse/write, vlist range requests/coalescing, vlist select index payloads, and vlist rendering behavior",
+      "docs/PROTOCOL.md + docs/PERFORMANCE.md: documented `vlist`, `vlist_range`, deterministic id contract, and virtualization workflow",
+      "src/bin/demo/{render,main}.zig: added a virtual list demo panel (`results-vlist`) and backend handling for `event:vlist_range` window patches"
+    ],
+    "boundaries_hit": [
+      "Runtime owns local vlist scroll/selection and requests backend windows on demand",
+      "Backend window identity is deterministic (`item_id_prefix + index`) and index is carried on item-bearing events",
+      "Range requests are suppressed when current backend window already covers visible+overscan rows"
+    ],
+    "timestamp": "2026-02-11",
+    "manual_repro": [
+      "zig build test",
+      "python3 scripts/check_protocol_schema.py --docs docs/PROTOCOL.md",
+      "zig build demo",
+      "In demo, focus panel \"Virtual List (1e6 rows)\" and scroll/select; confirm `EVENT_RX name=vlist_range ...` and targeted vlist window patches",
+      "Inspect emitted select/activate events for vlist and confirm `item` + `index` are present",
+      "Exit with 'x'"
+    ]
   }
 ]

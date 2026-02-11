@@ -23,11 +23,12 @@ pub const EventMsg = union(enum) {
     key: struct { key: []const u8, mods: u8 = 0, seq: ?[]const u8 = null, v: ?u32 = null },
     focus: struct { id: []const u8, v: ?u32 = null },
     input: struct { id: []const u8, value: []const u8, cursor: usize, v: ?u32 = null },
-    select: struct { id: []const u8, item: []const u8, v: ?u32 = null },
-    activate: struct { id: []const u8, item: []const u8, v: ?u32 = null },
+    select: struct { id: []const u8, item: []const u8, index: ?usize = null, v: ?u32 = null },
+    activate: struct { id: []const u8, item: []const u8, index: ?usize = null, v: ?u32 = null },
     scroll: struct { id: []const u8, scroll_y: usize, v: ?u32 = null },
+    vlist_range: VListRangeEvent,
     resize: struct { rows: usize, cols: usize, v: ?u32 = null },
-    hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null, v: ?u32 = null },
+    hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null, index: ?usize = null, v: ?u32 = null },
     selection: SelectionEvent,
     pointer: PointerEvent,
     clipboard: ClipboardEvent,
@@ -41,6 +42,26 @@ pub const EventMsg = union(enum) {
 
 pub const SelectionKind = enum {
     document,
+};
+
+pub const VListRangeReason = enum {
+    init,
+    scroll,
+    resize,
+    focus,
+    selection,
+};
+
+pub const VListRangeEvent = struct {
+    id: []const u8,
+    request_id: u64,
+    start: usize,
+    len: usize,
+    scroll: usize,
+    viewport_h: usize,
+    overscan: usize,
+    reason: VListRangeReason,
+    v: ?u32 = null,
 };
 
 pub const SelectionEvent = struct {
@@ -272,6 +293,7 @@ pub const Node = union(enum) {
     input: InputNode,
     textarea: TextareaNode,
     list: ListNode,
+    vlist: VListNode,
 };
 
 pub const JustifyContent = enum {
@@ -656,6 +678,39 @@ pub const ListNode = struct {
     children: []Node,
 };
 
+pub const VListNode = struct {
+    id: []const u8,
+    class: ?[]const u8 = null,
+    w: ?usize = null,
+    h: ?usize = null,
+    flex: usize = 0,
+    height: ?usize = null,
+    align_self: ?AlignItems = null,
+    hoverable: bool = false,
+    mouseable: bool = false,
+    disabled: bool = false,
+    readonly: bool = false,
+    validation: ValidationState = .none,
+    focusable: bool = true,
+    focus_scope: ?[]const u8 = null,
+    marker: ListMarker = .default,
+    grid_row: ?usize = null,
+    grid_col: ?usize = null,
+    row_span: usize = 1,
+    col_span: usize = 1,
+    grid_area: ?[]const u8 = null,
+    style: ?style.StyleOverride = null,
+    state_mode: StateMode = .uncontrolled,
+    selected_index: ?usize = null,
+    scroll: ?usize = null,
+    total: usize,
+    window_start: usize,
+    item_id_prefix: []const u8,
+    overscan: ?usize = null,
+    req: ?u64 = null,
+    children: []Node,
+};
+
 pub const PointerKind = enum {
     down,
     up,
@@ -685,6 +740,7 @@ pub const PointerEvent = struct {
     scroll_dx: isize = 0,
     scroll_dy: isize = 0,
     item: ?[]const u8 = null,
+    item_index: ?usize = null,
     captured: bool = false,
     v: ?u32 = null,
 };

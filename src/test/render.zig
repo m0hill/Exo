@@ -149,6 +149,55 @@ test "render: list marker none removes prefix" {
     try std.testing.expect((frame.rowSlice(0)[0].style.attrs & style.ATTR_INVERSE) != 0);
 }
 
+test "render: vlist renders loaded rows from window_start" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 8);
+    frame.clear(' ');
+
+    var items = [_]protocol.Node{
+        .{ .text = .{ .id = "row-10", .text = "A" } },
+        .{ .text = .{ .id = "row-11", .text = "B" } },
+        .{ .text = .{ .id = "row-12", .text = "C" } },
+    };
+    const root = protocol.Node{ .vlist = .{
+        .id = "results",
+        .marker = .none,
+        .total = 100,
+        .window_start = 10,
+        .item_id_prefix = "row-",
+        .children = items[0..],
+    } };
+    const st: render.VListState = .{ .id = "results", .selected_index = 11, .scroll = 10 };
+    render.renderToFrame(root, .{ .focused_id = "results", .vlists = &.{st} }, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'A'), cellByte(&frame, 0, 0));
+    try std.testing.expectEqual(@as(u8, 'B'), cellByte(&frame, 1, 0));
+    try std.testing.expectEqual(@as(u8, 'C'), cellByte(&frame, 2, 0));
+}
+
+test "render: vlist keeps marker on unloaded selected row" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 8);
+    frame.clear(' ');
+
+    var items = [_]protocol.Node{
+        .{ .text = .{ .id = "row-10", .text = "A" } },
+    };
+    const root = protocol.Node{ .vlist = .{
+        .id = "results",
+        .total = 100,
+        .window_start = 10,
+        .item_id_prefix = "row-",
+        .children = items[0..],
+    } };
+    const st: render.VListState = .{ .id = "results", .selected_index = 12, .scroll = 10 };
+    render.renderToFrame(root, .{ .focused_id = "results", .vlists = &.{st} }, &frame);
+
+    try std.testing.expectEqual(@as(u8, '>'), cellByte(&frame, 2, 0));
+}
+
 test "render: overlay layer can anchor to prior layer node" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

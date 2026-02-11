@@ -316,7 +316,7 @@ fn contextForFocusedKind(kind: ui.FocusKind) keybindings.Context {
     return switch (kind) {
         .input => .input,
         .textarea => .textarea,
-        .list => .list,
+        .list, .vlist => .list,
         .scroll => .scroll,
         .action => .action,
     };
@@ -458,6 +458,8 @@ pub fn run() !void {
     defer render_textareas.deinit(allocator);
     var render_lists: std.ArrayList(render.ListState) = .empty;
     defer render_lists.deinit(allocator);
+    var render_vlists: std.ArrayList(render.VListState) = .empty;
+    defer render_vlists.deinit(allocator);
     var render_scrolls: std.ArrayList(render.ScrollState) = .empty;
     defer render_scrolls.deinit(allocator);
 
@@ -815,6 +817,7 @@ pub fn run() !void {
                                             break :blk switch (w.state) {
                                                 .input => .input,
                                                 .list => .list,
+                                                .vlist => .vlist,
                                                 .scroll => .scroll,
                                                 .textarea => .textarea,
                                                 .action => .action,
@@ -958,6 +961,7 @@ pub fn run() !void {
                             break :blk switch (w.state) {
                                 .input => .input,
                                 .list => .list,
+                                .vlist => .vlist,
                                 .scroll => .scroll,
                                 .textarea => .textarea,
                                 .action => .action,
@@ -1316,6 +1320,23 @@ pub fn run() !void {
                                                             requested_reason = .input;
                                                         }
                                                     },
+                                                    .vlist => {
+                                                        consumed = ui.applyVListAction(
+                                                            allocator,
+                                                            &log_sink,
+                                                            child_in,
+                                                            &widgets,
+                                                            current_root.?,
+                                                            rows,
+                                                            cols,
+                                                            focused_id.?,
+                                                            action,
+                                                        ) catch false;
+                                                        if (consumed) {
+                                                            need_backend_flush = true;
+                                                            requested_reason = .input;
+                                                        }
+                                                    },
                                                     .scroll => {
                                                         consumed = ui.applyScrollAction(
                                                             allocator,
@@ -1394,6 +1415,25 @@ pub fn run() !void {
                                                 ) catch false;
                                                 if (consumed) {
                                                     pending_input_event = true;
+                                                    requested_reason = .input;
+                                                }
+                                            },
+                                            .vlist => {
+                                                const rows: usize = @as(usize, last_term_size.rows);
+                                                const cols: usize = @as(usize, last_term_size.cols);
+                                                consumed = ui.handleFocusedVListKey(
+                                                    allocator,
+                                                    &log_sink,
+                                                    child_in,
+                                                    &widgets,
+                                                    current_root.?,
+                                                    rows,
+                                                    cols,
+                                                    focused_id.?,
+                                                    kev,
+                                                ) catch false;
+                                                if (consumed) {
+                                                    need_backend_flush = true;
                                                     requested_reason = .input;
                                                 }
                                             },
@@ -1505,6 +1545,17 @@ pub fn run() !void {
                     rows,
                     cols,
                 );
+                if (try ui.maybeRequestVListRanges(
+                    allocator,
+                    child_in,
+                    &widgets,
+                    current_root.?,
+                    rows,
+                    cols,
+                    if (resize_changed_this_iter) .resize else .init,
+                )) {
+                    backend_flush_pending = true;
+                }
                 if (doc_selection.has_selection and !tree.treeContainsId(current_root.?, doc_selection.clipId())) {
                     doc_selection.clear();
                 }
@@ -1555,6 +1606,7 @@ pub fn run() !void {
                     &render_inputs,
                     &render_textareas,
                     &render_lists,
+                    &render_vlists,
                     &render_scrolls,
                     focused_id,
                     hover_id,

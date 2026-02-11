@@ -182,6 +182,19 @@ List selection / activation:
 {"type":"event","name":"activate","id":"results","item":"row-2"}
 ```
 
+For virtual lists (`type:"vlist"`), runtime also includes global row indices:
+
+```json
+{"type":"event","name":"select","id":"results-vlist","item":"vrow-481","index":481}
+{"type":"event","name":"activate","id":"results-vlist","item":"vrow-481","index":481}
+```
+
+Virtual list range request (runtime -> backend):
+
+```json
+{"type":"event","name":"vlist_range","id":"results-vlist","request_id":123,"start":480,"len":80,"scroll":500,"viewport_h":60,"overscan":10,"reason":"scroll"}
+```
+
 Scroll:
 
 ```json
@@ -200,6 +213,8 @@ Hover / pointer (emitted only for nodes that opt in; see `hoverable`/`mouseable`
 {"type":"event","name":"hover","id":"btn-ok","x":10,"y":4,"item":null}
 {"type":"event","name":"pointer","kind":"down","id":"btn-ok","x":10,"y":4,"local_x":1,"local_y":0,"button":"left","buttons":1,"mods":0,"clicks":1,"scroll_dx":0,"scroll_dy":0,"captured":false}
 ```
+
+When `item` is present, hover may include `index`, and pointer may include `item_index`.
 
 Document selection commit (emitted on left mouse-up after local drag-selection over `text`/`styled_text`):
 
@@ -291,7 +306,7 @@ Node types (current):
 - containers: `vbox`, `hbox`, `grid`, `box`, `scroll`, `overlay`
 - text: `text`, `styled_text`
 - inputs: `input`, `textarea`
-- collection: `list`
+- collection: `list`, `vlist`
 
 ### Common fields (most nodes)
 
@@ -321,6 +336,7 @@ State fields by widget:
 - `input`: `value`, `cursor`, `scroll_x`, `selection_start`, `selection_end`
 - `textarea`: `value`, `cursor`, `scroll_y`, `selection_start`, `selection_end`
 - `list`: `selected_id`, `scroll`
+- `vlist`: `selected_index`, `scroll`
 - `scroll`: `scroll_y`
 
 Examples:
@@ -342,6 +358,20 @@ Controlled scroll viewport:
 ```json
 {"type":"patch","root":{"type":"scroll","id":"viewport","state_mode":"controlled","scroll_y":12,"child":{"type":"text","id":"body","text":"...content..."}}}
 ```
+
+### Virtual List (`type:"vlist"`)
+
+`vlist` represents a logical collection with backend-provided windows:
+
+- required: `total`, `window_start`, `item_id_prefix`, `children`
+- optional: `overscan` (default `10`), `req` (debug echo of fulfilled request id)
+- runtime-local state: `selected_index`, `scroll` (same `state_mode` rules as other widgets)
+- deterministic item id contract: item at global index `i` must have `id == item_id_prefix + i`
+
+Range contract:
+
+- runtime emits `event:vlist_range` when desired visible+overscan rows are not covered by current `children` window
+- backend responds with a patch for that `vlist` id, updating `window_start` + `children`
 
 `focus_scope` behavior:
 

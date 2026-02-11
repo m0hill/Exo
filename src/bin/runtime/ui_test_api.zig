@@ -53,6 +53,32 @@ pub fn applyScrollAction(
     return ui.applyScrollAction(allocator, &sink, backend_in, widgets, root, rows, cols, scroll_id, action);
 }
 
+pub fn applyVListAction(
+    allocator: std.mem.Allocator,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: @import("tui").protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+    action: @import("tui").protocol.KeyAction,
+) !bool {
+    var sink = ui.makeNoopLogSink();
+    return ui.applyVListAction(allocator, &sink, backend_in, widgets, root, rows, cols, list_id, action);
+}
+
+pub fn maybeRequestVListRanges(
+    allocator: std.mem.Allocator,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: @import("tui").protocol.Node,
+    rows: usize,
+    cols: usize,
+    reason: @import("tui").protocol.VListRangeReason,
+) !bool {
+    return ui.maybeRequestVListRanges(allocator, backend_in, widgets, root, rows, cols, reason);
+}
+
 pub fn applyActionWidgetAction(backend_in: anytype, id: []const u8, action: @import("tui").protocol.KeyAction) !bool {
     var sink = ui.makeNoopLogSink();
     return ui.applyActionWidgetAction(&sink, backend_in, id, action);

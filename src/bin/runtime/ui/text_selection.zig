@@ -299,6 +299,7 @@ fn findTextHit(
         .input => |i| i.disabled,
         .textarea => |t| t.disabled,
         .list => |l| l.disabled,
+        .vlist => |l| l.disabled,
     };
     if (disabled) return;
 
@@ -329,6 +330,7 @@ fn findTextHit(
             for (o.layers) |layer| findTextHit(layer.node.*, disabled, current_scroll, layout_cache, x, y, out);
         },
         .list => |l| for (l.children) |child| findTextHit(child, disabled, current_scroll, layout_cache, x, y, out),
+        .vlist => |l| for (l.children) |child| findTextHit(child, disabled, current_scroll, layout_cache, x, y, out),
         .input, .textarea => {},
     }
 }

@@ -14,6 +14,7 @@ pub fn nodeId(node: protocol.Node) []const u8 {
         .input => |i| i.id,
         .textarea => |t| t.id,
         .list => |l| l.id,
+        .vlist => |l| l.id,
     };
 }
 
@@ -125,6 +126,16 @@ pub const IdIndex = struct {
                     _ = stack.pop();
                 }
             },
+            .vlist => |*l| {
+                for (l.children, 0..) |*child, idx| {
+                    try stack.append(self.allocator, .{
+                        .kind = .list_child,
+                        .index = idx,
+                    });
+                    try self.collect(child, stack);
+                    _ = stack.pop();
+                }
+            },
             .box => |*b| {
                 try stack.append(self.allocator, .{ .kind = .box_child });
                 try self.collect(b.child, stack);
@@ -222,6 +233,11 @@ fn resolvePath(root: *protocol.Node, steps: []const PathStep) ?*protocol.Node {
                         if (idx >= l.children.len) return null;
                         cur = &l.children[idx];
                     },
+                    .vlist => |*l| {
+                        const idx = step.index;
+                        if (idx >= l.children.len) return null;
+                        cur = &l.children[idx];
+                    },
                     else => return null,
                 }
             },
@@ -294,6 +310,12 @@ fn findNodePtrById(root: *protocol.Node, id: []const u8) ?*protocol.Node {
             }
             break :blk null;
         },
+        .vlist => |*l| blk: {
+            for (l.children) |*child| {
+                if (findNodePtrById(child, id)) |ptr| break :blk ptr;
+            }
+            break :blk null;
+        },
         else => null,
     };
 }
@@ -329,6 +351,12 @@ pub fn treeContainsId(node: protocol.Node, id: []const u8) bool {
             return false;
         },
         .list => |l| {
+            for (l.children) |child| {
+                if (treeContainsId(child, id)) return true;
+            }
+            return false;
+        },
+        .vlist => |l| {
             for (l.children) |child| {
                 if (treeContainsId(child, id)) return true;
             }
@@ -373,6 +401,12 @@ pub fn applyPatchById(root: *protocol.Node, target: []const u8, replacement: pro
             return false;
         },
         .list => |*l| {
+            for (l.children) |*child| {
+                if (applyPatchById(child, target, replacement)) return true;
+            }
+            return false;
+        },
+        .vlist => |*l| {
             for (l.children) |*child| {
                 if (applyPatchById(child, target, replacement)) return true;
             }
@@ -431,6 +465,12 @@ pub fn morphPatchByIdLeaky(
             return false;
         },
         .list => |*l| {
+            for (l.children) |*child| {
+                if (try morphPatchByIdLeaky(allocator, child, target, incoming, stats)) return true;
+            }
+            return false;
+        },
+        .vlist => |*l| {
             for (l.children) |*child| {
                 if (try morphPatchByIdLeaky(allocator, child, target, incoming, stats)) return true;
             }
@@ -936,6 +976,81 @@ fn morphNodeLeaky(
             l.col_span = inc.col_span;
             l.grid_area = inc.grid_area;
             l.style = inc.style;
+
+            var used = try allocator.alloc(bool, existing_children.len);
+            @memset(used, false);
+
+            var next_children = try allocator.alloc(protocol.Node, inc.children.len);
+            var matched: usize = 0;
+
+            for (inc.children, 0..) |inc_child, out_idx| {
+                const inc_id = nodeId(inc_child);
+                var found_idx: ?usize = null;
+
+                for (existing_children, 0..) |ex_child, ex_idx| {
+                    if (used[ex_idx]) continue;
+                    if (std.mem.eql(u8, nodeId(ex_child), inc_id)) {
+                        found_idx = ex_idx;
+                        break;
+                    }
+                }
+
+                if (found_idx) |ex_idx| {
+                    used[ex_idx] = true;
+                    matched += 1;
+
+                    const ex_child = existing_children[ex_idx];
+                    if (std.meta.activeTag(ex_child) == std.meta.activeTag(inc_child)) {
+                        stats.reused += 1;
+                        var next_child = ex_child;
+                        try morphNodeLeaky(allocator, &next_child, inc_child, stats);
+                        next_children[out_idx] = next_child;
+                    } else {
+                        stats.type_mismatch += 1;
+                        stats.replaced += 1;
+                        next_children[out_idx] = inc_child;
+                    }
+                } else {
+                    stats.inserted += 1;
+                    next_children[out_idx] = inc_child;
+                }
+            }
+
+            stats.removed += existing_children.len - matched;
+            l.children = next_children;
+        },
+        .vlist => |*l| {
+            const inc = incoming.vlist;
+            const existing_children = l.children;
+
+            l.class = inc.class;
+            l.w = inc.w;
+            l.h = inc.h;
+            l.flex = inc.flex;
+            l.height = inc.height;
+            l.align_self = inc.align_self;
+            l.hoverable = inc.hoverable;
+            l.mouseable = inc.mouseable;
+            l.disabled = inc.disabled;
+            l.readonly = inc.readonly;
+            l.validation = inc.validation;
+            l.focusable = inc.focusable;
+            l.focus_scope = inc.focus_scope;
+            l.marker = inc.marker;
+            l.grid_row = inc.grid_row;
+            l.grid_col = inc.grid_col;
+            l.row_span = inc.row_span;
+            l.col_span = inc.col_span;
+            l.grid_area = inc.grid_area;
+            l.style = inc.style;
+            l.state_mode = inc.state_mode;
+            l.selected_index = inc.selected_index;
+            l.scroll = inc.scroll;
+            l.total = inc.total;
+            l.window_start = inc.window_start;
+            l.item_id_prefix = inc.item_id_prefix;
+            l.overscan = inc.overscan;
+            l.req = inc.req;
 
             var used = try allocator.alloc(bool, existing_children.len);
             @memset(used, false);

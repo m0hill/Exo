@@ -1219,3 +1219,108 @@ test "protocol: reject removed theme message type" {
         protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"theme\",\"v\":1,\"name\":\"ocean\"}"),
     );
 }
+
+test "protocol: write+parse vlist node" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "row-10", .text = "ten" } },
+        .{ .text = .{ .id = "row-11", .text = "eleven" } },
+    };
+    const node = protocol.Node{ .vlist = .{
+        .id = "results",
+        .height = 5,
+        .state_mode = .controlled,
+        .selected_index = 11,
+        .scroll = 9,
+        .total = 1000,
+        .window_start = 10,
+        .item_id_prefix = "row-",
+        .overscan = 10,
+        .req = 55,
+        .children = children[0..],
+    } };
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
+    try buf.appendSlice(std.testing.allocator, "}");
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+    const l = switch (root) {
+        .vlist => |vv| vv,
+        else => return error.TestUnexpectedResult,
+    };
+
+    try std.testing.expectEqualStrings("results", l.id);
+    try std.testing.expectEqual(@as(usize, 1000), l.total);
+    try std.testing.expectEqual(@as(usize, 10), l.window_start);
+    try std.testing.expectEqualStrings("row-", l.item_id_prefix);
+    try std.testing.expectEqual(@as(?usize, 11), l.selected_index);
+    try std.testing.expectEqual(@as(?usize, 9), l.scroll);
+    try std.testing.expectEqual(@as(?usize, 10), l.overscan);
+    try std.testing.expectEqual(@as(?u64, 55), l.req);
+    try std.testing.expectEqual(@as(usize, 2), l.children.len);
+}
+
+test "protocol: parse+write vlist range and optional indices" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeVListRangeEventJsonl(buf.writer(std.testing.allocator), .{
+        .id = "results",
+        .request_id = 123,
+        .start = 480,
+        .len = 80,
+        .scroll = 500,
+        .viewport_h = 60,
+        .overscan = 10,
+        .reason = .scroll,
+    });
+    const range_msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (range_msg) {
+        .event => |ev| switch (ev) {
+            .vlist_range => |r| {
+                try std.testing.expectEqualStrings("results", r.id);
+                try std.testing.expectEqual(@as(u64, 123), r.request_id);
+                try std.testing.expectEqual(@as(usize, 480), r.start);
+                try std.testing.expectEqual(@as(usize, 80), r.len);
+                try std.testing.expectEqual(protocol.VListRangeReason.scroll, r.reason);
+            },
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const select_line = "{\"type\":\"event\",\"name\":\"select\",\"id\":\"results\",\"item\":\"row-99\",\"index\":99}";
+    const select_msg = try protocol.parseMsgLeaky(arena.allocator(), select_line);
+    switch (select_msg) {
+        .event => |ev| switch (ev) {
+            .select => |s| try std.testing.expectEqual(@as(?usize, 99), s.index),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const pointer_line = "{\"type\":\"event\",\"name\":\"pointer\",\"kind\":\"down\",\"id\":\"results\",\"x\":1,\"y\":2,\"local_x\":0,\"local_y\":0,\"button\":\"left\",\"buttons\":1,\"mods\":0,\"clicks\":1,\"scroll_dx\":0,\"scroll_dy\":0,\"item\":\"row-99\",\"item_index\":99,\"captured\":false}";
+    const pointer_msg = try protocol.parseMsgLeaky(arena.allocator(), pointer_line);
+    switch (pointer_msg) {
+        .event => |ev| switch (ev) {
+            .pointer => |p| try std.testing.expectEqual(@as(?usize, 99), p.item_index),
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}

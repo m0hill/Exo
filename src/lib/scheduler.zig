@@ -848,5 +848,43 @@ fn cloneNodeLeaky(allocator: std.mem.Allocator, node: protocol.Node) !protocol.N
                 .children = children,
             } };
         },
+        .vlist => |l| blk: {
+            var children = try allocator.alloc(protocol.Node, l.children.len);
+            for (l.children, 0..) |child, idx| {
+                children[idx] = try cloneNodeLeaky(allocator, child);
+            }
+            break :blk .{ .vlist = .{
+                .id = try allocator.dupe(u8, l.id),
+                .class = if (l.class) |class| try allocator.dupe(u8, class) else null,
+                .w = l.w,
+                .h = l.h,
+                .flex = l.flex,
+                .height = l.height,
+                .align_self = l.align_self,
+                .hoverable = l.hoverable,
+                .mouseable = l.mouseable,
+                .disabled = l.disabled,
+                .readonly = l.readonly,
+                .validation = l.validation,
+                .focusable = l.focusable,
+                .focus_scope = if (l.focus_scope) |scope| try allocator.dupe(u8, scope) else null,
+                .marker = l.marker,
+                .grid_row = l.grid_row,
+                .grid_col = l.grid_col,
+                .row_span = l.row_span,
+                .col_span = l.col_span,
+                .grid_area = if (l.grid_area) |a| try allocator.dupe(u8, a) else null,
+                .style = l.style,
+                .state_mode = l.state_mode,
+                .selected_index = l.selected_index,
+                .scroll = l.scroll,
+                .total = l.total,
+                .window_start = l.window_start,
+                .item_id_prefix = try allocator.dupe(u8, l.item_id_prefix),
+                .overscan = l.overscan,
+                .req = l.req,
+                .children = children,
+            } };
+        },
     };
 }

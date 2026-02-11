@@ -120,6 +120,7 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 s.scroll_y = state.scrollIntoView(s.scroll_y, visible_rows, cursor_y, cursor_y + 1, content_h);
             },
             .list => {},
+            .vlist => {},
             .scroll => {},
             .action => {},
         }
@@ -141,6 +142,21 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 }
 
                 clampListScrollForNode(widgets, l, visible_height);
+            },
+            .vlist => {
+                const list_id = e.id.items;
+                const l = node_util.findVListNodeById(root, list_id) orelse continue;
+                var visible_height: usize = 0;
+
+                if (findRectNoScrollCached(&layout_cache, &root, rows, cols, list_id)) |r| {
+                    visible_height = r.h;
+                    const desired: usize = l.height orelse visible_height;
+                    visible_height = @min(desired, visible_height);
+                } else {
+                    visible_height = l.height orelse rows;
+                }
+
+                clampVListScrollForNode(widgets, l, visible_height);
             },
             .scroll => {
                 syncScrollForId(widgets, root, rows, cols, e.id.items);
@@ -165,6 +181,15 @@ fn clampListScrollForNode(widgets: *std.ArrayList(WidgetEntry), l: protocol.List
     }
 
     st.scroll = state.clampListScroll(st.scroll, selected_index, visible_height, l.children.len);
+}
+
+fn clampVListScrollForNode(widgets: *std.ArrayList(WidgetEntry), l: protocol.VListNode, visible_height: usize) void {
+    const idx = findWidgetIndex(widgets.items, l.id) orelse return;
+    var st = &widgets.items[idx].state.vlist;
+
+    const selected_index: ?usize = if (st.selected_index) |sel| @min(sel, if (l.total > 0) l.total - 1 else 0) else null;
+    st.selected_index = selected_index;
+    st.scroll = state.clampListScroll(st.scroll, selected_index, visible_height, l.total);
 }
 
 // cloneNodeLeaky/nodeId moved to ui_node_util.zig
@@ -263,6 +288,7 @@ pub fn deinitWidgetEntries(allocator: std.mem.Allocator, widgets: *std.ArrayList
                 deinitTextareaHistory(allocator, s);
             },
             .list => |*s| s.selected_id.deinit(allocator),
+            .vlist => {},
             .scroll => {},
             .action => {},
         }
@@ -276,6 +302,7 @@ pub fn buildRenderState(
     render_inputs: *std.ArrayList(render.InputState),
     render_textareas: *std.ArrayList(render.TextareaState),
     render_lists: *std.ArrayList(render.ListState),
+    render_vlists: *std.ArrayList(render.VListState),
     render_scrolls: *std.ArrayList(render.ScrollState),
     focused_id: ?[]const u8,
     hovered_id: ?[]const u8,
@@ -285,6 +312,7 @@ pub fn buildRenderState(
     render_inputs.clearRetainingCapacity();
     render_textareas.clearRetainingCapacity();
     render_lists.clearRetainingCapacity();
+    render_vlists.clearRetainingCapacity();
     render_scrolls.clearRetainingCapacity();
 
     for (widgets) |e| {
@@ -318,6 +346,13 @@ pub fn buildRenderState(
                     .scroll = s.scroll,
                 });
             },
+            .vlist => |s| {
+                try render_vlists.append(allocator, .{
+                    .id = e.id.items,
+                    .selected_index = s.selected_index,
+                    .scroll = s.scroll,
+                });
+            },
             .scroll => |s| {
                 try render_scrolls.append(allocator, .{
                     .id = e.id.items,
@@ -345,6 +380,11 @@ pub fn buildRenderState(
             return std.mem.order(u8, a.id, b.id) == .lt;
         }
     }.lessThan);
+    std.sort.pdq(render.VListState, render_vlists.items, {}, struct {
+        fn lessThan(_: void, a: render.VListState, b: render.VListState) bool {
+            return std.mem.order(u8, a.id, b.id) == .lt;
+        }
+    }.lessThan);
     std.sort.pdq(render.ScrollState, render_scrolls.items, {}, struct {
         fn lessThan(_: void, a: render.ScrollState, b: render.ScrollState) bool {
             return std.mem.order(u8, a.id, b.id) == .lt;
@@ -359,6 +399,7 @@ pub fn buildRenderState(
         .inputs = render_inputs.items,
         .textareas = render_textareas.items,
         .lists = render_lists.items,
+        .vlists = render_vlists.items,
         .scrolls = render_scrolls.items,
     };
 }
@@ -383,6 +424,7 @@ fn nodeFocusScope(node: protocol.Node) ?[]const u8 {
         .input => |i| i.focus_scope,
         .textarea => |t| t.focus_scope,
         .list => |l| l.focus_scope,
+        .vlist => |l| l.focus_scope,
     };
 }
 
@@ -405,6 +447,7 @@ fn collectFocusablesInto(
         .input => |i| i.disabled,
         .textarea => |t| t.disabled,
         .list => |l| l.disabled,
+        .vlist => |l| l.disabled,
     };
     if (disabled) return;
     const local_scope = nodeFocusScope(node);
@@ -422,6 +465,11 @@ fn collectFocusablesInto(
         .list => |l| {
             if (!l.focusable) return;
             try out.append(allocator, .{ .id = l.id, .kind = .list, .scope = scope });
+        },
+        .vlist => |l| {
+            if (!l.focusable) return;
+            try out.append(allocator, .{ .id = l.id, .kind = .vlist, .scope = scope });
+            for (l.children) |child| try collectFocusablesInto(allocator, out, child, false, scope);
         },
         .box => |b| {
             if (b.focusable) try out.append(allocator, .{ .id = b.id, .kind = .action, .scope = scope });
@@ -609,6 +657,7 @@ fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]c
         .input => |i| i.disabled,
         .textarea => |t| t.disabled,
         .list => |l| l.disabled,
+        .vlist => |l| l.disabled,
     };
     if (disabled) return;
 
@@ -616,6 +665,10 @@ fn collectHitTestablesInto(allocator: std.mem.Allocator, out: *std.ArrayList([]c
         .input => |i| if (i.mouseable) try out.append(allocator, i.id),
         .textarea => |t| if (t.mouseable) try out.append(allocator, t.id),
         .list => |l| if (l.mouseable) try out.append(allocator, l.id),
+        .vlist => |l| {
+            if (l.mouseable) try out.append(allocator, l.id);
+            for (l.children) |child| try collectHitTestablesInto(allocator, out, child);
+        },
         .text => |t| if (t.mouseable) try out.append(allocator, t.id),
         .styled_text => |t| if (t.mouseable) try out.append(allocator, t.id),
         .vbox => |v| {
@@ -698,6 +751,8 @@ pub fn hoverHitTest(
 
     var list_states = try collectHoverListStates(allocator, widgets);
     defer list_states.deinit(allocator);
+    var vlist_states = try collectHoverVListStates(allocator, widgets);
+    defer vlist_states.deinit(allocator);
 
     return try hover.hoverHitTestLeaky(
         allocator,
@@ -708,6 +763,7 @@ pub fn hoverHitTest(
         y,
         scroll_states.items,
         list_states.items,
+        vlist_states.items,
     );
 }
 
@@ -734,10 +790,10 @@ fn updateHoverForCoords(
 
     log.logPrint(
         log_sink,
-        "EVENT_TX name=hover id={s} x={d} y={d} item={s}\n",
-        .{ hover_id.* orelse "", x, y, hover_item.* orelse "" },
+        "EVENT_TX name=hover id={s} x={d} y={d} item={s} index={d}\n",
+        .{ hover_id.* orelse "", x, y, hover_item.* orelse "", hit.index orelse 0 },
     );
-    try protocol.writeHoverEventJsonl(backend_in, hover_id.* orelse "", x, y, hover_item.*);
+    try protocol.writeHoverEventJsonlWithIndex(backend_in, hover_id.* orelse "", x, y, hover_item.*, hit.index);
     return true;
 }
 
@@ -848,6 +904,7 @@ fn nodeReadonlyInTreeInto(node: protocol.Node, id: []const u8, out: *bool) bool 
             .input => |i| i.readonly,
             .textarea => |t| t.readonly,
             .list => |l| l.readonly,
+            .vlist => |l| l.readonly,
         };
         return true;
     }
@@ -866,6 +923,7 @@ fn nodeReadonlyInTreeInto(node: protocol.Node, id: []const u8, out: *bool) bool 
             return false;
         },
         .list => |l| for (l.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
+        .vlist => |l| for (l.children) |child| if (nodeReadonlyInTreeInto(child, id, out)) return true,
         else => return false,
     }
 
@@ -954,8 +1012,11 @@ pub fn syncUiAfterPatch(
     }
 
     for (state_widgets.items) |spec| {
-        if (spec.kind != .list) continue;
-        try syncListForId(allocator, log_sink, backend_in, widgets, root, rows, cols, spec.id);
+        switch (spec.kind) {
+            .list => try syncListForId(allocator, log_sink, backend_in, widgets, root, rows, cols, spec.id),
+            .vlist => try syncVListForId(allocator, widgets, root, rows, cols, spec.id),
+            else => {},
+        }
     }
 
     for (state_widgets.items) |spec| {
@@ -1042,7 +1103,27 @@ fn collectHoverListStates(allocator: std.mem.Allocator, widgets: []const WidgetE
     return out;
 }
 
+fn collectHoverVListStates(allocator: std.mem.Allocator, widgets: []const WidgetEntry) !std.ArrayList(render.VListState) {
+    var out: std.ArrayList(render.VListState) = .empty;
+    errdefer out.deinit(allocator);
+    for (widgets) |w| {
+        if (w.state != .vlist) continue;
+        const st = w.state.vlist;
+        try out.append(allocator, .{
+            .id = w.id.items,
+            .selected_index = st.selected_index,
+            .scroll = st.scroll,
+        });
+    }
+    return out;
+}
+
 fn listVisibleHeight(rect: render.Rect, l: protocol.ListNode) usize {
+    const desired = l.height orelse rect.h;
+    return @min(desired, rect.h);
+}
+
+fn vlistVisibleHeight(rect: render.Rect, l: protocol.VListNode) usize {
     const desired = l.height orelse rect.h;
     return @min(desired, rect.h);
 }
@@ -1346,6 +1427,64 @@ fn handleMouseDownLeft(
             st.scroll = state.clampListScroll(st.scroll, selected_index, visible_height, l.children.len);
             if (st.scroll != before_scroll) changed = true;
         },
+        .vlist => |*st| {
+            const l = node_util.findVListNodeById(root, id) orelse {
+                if (need_flush) try maybeFlushBackend(backend_in);
+                return changed;
+            };
+            if (l.total == 0) {
+                if (need_flush) try maybeFlushBackend(backend_in);
+                return changed;
+            }
+
+            const visible_height = vlistVisibleHeight(hit_rect, l);
+            if (visible_height == 0) {
+                if (need_flush) try maybeFlushBackend(backend_in);
+                return changed;
+            }
+            if (y < hit_rect.y) {
+                if (need_flush) try maybeFlushBackend(backend_in);
+                return changed;
+            }
+            const row_idx: usize = y - hit_rect.y;
+            if (row_idx >= visible_height) {
+                if (need_flush) try maybeFlushBackend(backend_in);
+                return changed;
+            }
+
+            st.scroll = state.clampListScroll(st.scroll, st.selected_index, visible_height, l.total);
+            const index = st.scroll + row_idx;
+            if (index >= l.total) {
+                if (need_flush) try maybeFlushBackend(backend_in);
+                return changed;
+            }
+
+            var item_buf: [128]u8 = undefined;
+            const item_id = vlistItemId(&item_buf, l.item_id_prefix, index) orelse {
+                if (need_flush) try maybeFlushBackend(backend_in);
+                return changed;
+            };
+
+            const selection_changed = st.selected_index == null or st.selected_index.? != index;
+            if (selection_changed) {
+                st.selected_index = index;
+                log.logPrint(
+                    log_sink,
+                    "VLIST_SELECT id={s} item={s} index={d} scroll={d}\n",
+                    .{ id, item_id, index, st.scroll },
+                );
+                log.logPrint(log_sink, "EVENT_TX name=select id={s} item={s} index={d}\n", .{ id, item_id, index });
+                try protocol.writeSelectEventJsonlWithIndex(backend_in, id, item_id, index);
+                _ = try maybeRequestVListRangeForId(allocator, backend_in, widgets, root, rows, cols, id, .selection);
+                need_flush = true;
+                changed = true;
+            } else {
+                log.logPrint(log_sink, "EVENT_TX name=activate id={s} item={s} index={d}\n", .{ id, item_id, index });
+                try protocol.writeActivateEventJsonlWithIndex(backend_in, id, item_id, index);
+                need_flush = true;
+                changed = true;
+            }
+        },
         .scroll => {},
         .action => {
             try activateActionForId(log_sink, backend_in, id);
@@ -1381,8 +1520,42 @@ fn handleMouseWheel(
     defer ids.deinit(allocator);
 
     // Wheel priority:
-    // 1) Topmost list under pointer (local scroll)
-    // 2) Topmost/deepest scroll viewport under pointer
+    // 1) Topmost vlist under pointer (local scroll)
+    // 2) Topmost list under pointer (local scroll)
+    // 3) Topmost/deepest scroll viewport under pointer
+    var vlist_hit: ?[]const u8 = null;
+    var vlist_hit_rect: render.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    for (ids.items) |id| {
+        const widx = findWidgetIndex(widgets.items, id) orelse continue;
+        if (widgets.items[widx].state != .vlist) continue;
+
+        const r = layout_cache.findRect(id) orelse continue;
+        if (!rectContains(r, x, y)) continue;
+        vlist_hit = id;
+        vlist_hit_rect = r;
+    }
+
+    if (vlist_hit) |list_id| {
+        const widx = findWidgetIndex(widgets.items, list_id) orelse return false;
+        const l = node_util.findVListNodeById(root, list_id) orelse return false;
+        const visible_height = vlistVisibleHeight(vlist_hit_rect, l);
+        if (visible_height == 0 or l.total == 0) return false;
+
+        const stw = &widgets.items[widx].state.vlist;
+        const max_scroll: usize = if (l.total > visible_height) l.total - visible_height else 0;
+        var next: usize = stw.scroll;
+        if (delta > 0) {
+            if (next < max_scroll) next += 1;
+        } else if (delta < 0) {
+            if (next > 0) next -= 1;
+        }
+        next = state.clampListScroll(next, stw.selected_index, visible_height, l.total);
+        if (next == stw.scroll) return false;
+        stw.scroll = next;
+        _ = try maybeRequestVListRangeForId(allocator, backend_in, widgets, root, rows, cols, list_id, .scroll);
+        return true;
+    }
+
     var list_hit: ?[]const u8 = null;
     var list_hit_rect: render.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     for (ids.items) |id| {
@@ -1468,6 +1641,10 @@ fn collectStateWidgetsInto(
             try out.append(allocator, .{ .id = l.id, .kind = .list });
             for (l.children) |child| try collectStateWidgetsInto(allocator, out, child);
         },
+        .vlist => |l| {
+            try out.append(allocator, .{ .id = l.id, .kind = .vlist });
+            for (l.children) |child| try collectStateWidgetsInto(allocator, out, child);
+        },
         .scroll => |s| {
             try out.append(allocator, .{ .id = s.id, .kind = .scroll });
             try collectStateWidgetsInto(allocator, out, s.child.*);
@@ -1517,6 +1694,7 @@ fn applyStateFromTree(
             .input => try applyInputStateFromNode(allocator, widgets, layout_cache, idx, root, rows, cols),
             .textarea => try applyTextareaStateFromNode(allocator, widgets, layout_cache, idx, root, rows, cols),
             .list => try applyListStateFromNode(allocator, widgets, layout_cache, idx, root, rows, cols),
+            .vlist => try applyVListStateFromNode(allocator, widgets, layout_cache, idx, root, rows, cols),
             .scroll => try applyScrollStateFromNode(widgets, idx, root.*),
             .action => {},
         }
@@ -1673,6 +1851,50 @@ fn applyListStateFromNode(
     st.selected_id.clearRetainingCapacity();
 }
 
+fn applyVListStateFromNode(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    layout_cache: *render.LayoutCache,
+    idx: usize,
+    root: *const protocol.Node,
+    rows: usize,
+    cols: usize,
+) !void {
+    _ = allocator;
+    const list_node = node_util.findVListNodeById(root.*, widgets.items[idx].id.items) orelse return;
+    var entry = &widgets.items[idx];
+    var st = &entry.state.vlist;
+    const apply_mode = shouldApplyState(list_node.state_mode, entry.state_initialized);
+
+    if (apply_mode) {
+        if (list_node.selected_index) |selected_index| st.selected_index = selected_index;
+        if (list_node.scroll) |scroll| st.scroll = scroll;
+        if (list_node.state_mode == .init) entry.state_initialized = true;
+    }
+
+    if (st.selected_index == null and list_node.total > 0 and !listModeSuppressesAutoSelect(list_node.state_mode)) {
+        st.selected_index = 0;
+    }
+    if (st.selected_index) |sel| {
+        if (list_node.total == 0) {
+            st.selected_index = null;
+        } else if (sel >= list_node.total) {
+            st.selected_index = list_node.total - 1;
+        }
+    }
+
+    const rect = findRectNoScrollCached(layout_cache, root, rows, cols, entry.id.items);
+    const visible_height = if (rect) |r| vlistVisibleHeight(r, list_node) else (list_node.height orelse rows);
+    const effective_height = if (visible_height == 0) list_node.total else visible_height;
+    const max_scroll = if (list_node.total > effective_height) list_node.total - effective_height else 0;
+    if (st.scroll > max_scroll) st.scroll = max_scroll;
+
+    st.last_satisfied_window = .{
+        .window_start = list_node.window_start,
+        .window_len = list_node.children.len,
+    };
+}
+
 fn applyScrollStateFromNode(
     widgets: *std.ArrayList(WidgetEntry),
     idx: usize,
@@ -1716,6 +1938,7 @@ fn deinitWidgetEntry(allocator: std.mem.Allocator, e: *WidgetEntry) void {
             deinitTextareaHistory(allocator, s);
         },
         .list => |*s| s.selected_id.deinit(allocator),
+        .vlist => {},
         .scroll => {},
         .action => {},
     }
@@ -1755,6 +1978,7 @@ fn ensureWidgetKind(
         switch (widgets.items[idx].state) {
             .input => if (kind == .input) return idx else {},
             .list => if (kind == .list) return idx else {},
+            .vlist => if (kind == .vlist) return idx else {},
             .scroll => if (kind == .scroll) return idx else {},
             .textarea => if (kind == .textarea) return idx else {},
             .action => if (kind == .action) return idx else {},
@@ -1783,6 +2007,7 @@ fn deinitWidgetEntryState(allocator: std.mem.Allocator, e: *WidgetEntry) void {
             deinitTextareaHistory(allocator, s);
         },
         .list => |*s| s.selected_id.deinit(allocator),
+        .vlist => {},
         .scroll => {},
         .action => {},
     }
@@ -1792,6 +2017,7 @@ fn initWidgetState(kind: FocusKind) WidgetState {
     return switch (kind) {
         .input => .{ .input = .{} },
         .list => .{ .list = .{} },
+        .vlist => .{ .vlist = .{} },
         .scroll => .{ .scroll = .{} },
         .textarea => .{ .textarea = .{} },
         .action => .{ .action = .{} },
@@ -1961,8 +2187,121 @@ fn findNearestScrollAncestorInto(node: protocol.Node, target_id: []const u8, out
             }
             return false;
         },
+        .vlist => |l| {
+            for (l.children) |child| {
+                if (findNearestScrollAncestorInto(child, target_id, out)) return true;
+            }
+            return false;
+        },
         else => return false,
     }
+}
+
+fn vlistItemId(buf: []u8, prefix: []const u8, index: usize) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "{s}{d}", .{ prefix, index }) catch null;
+}
+
+fn syncVListForId(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+) !void {
+    const l = node_util.findVListNodeById(root, list_id) orelse return;
+    const idx = try ensureWidgetKind(allocator, widgets, list_id, .vlist);
+    var st = &widgets.items[idx].state.vlist;
+
+    if (l.total == 0) {
+        st.selected_index = null;
+        st.scroll = 0;
+        st.last_satisfied_window = .{ .window_start = l.window_start, .window_len = l.children.len };
+        return;
+    }
+
+    if (st.selected_index) |selected| {
+        if (selected >= l.total) st.selected_index = l.total - 1;
+    } else if (!listModeSuppressesAutoSelect(l.state_mode)) {
+        st.selected_index = 0;
+    }
+
+    const rect = render.findRectForId(root, rows, cols, list_id);
+    const visible_height = if (rect) |r| vlistVisibleHeight(r, l) else (l.height orelse rows);
+    const effective_height = if (visible_height == 0) l.total else visible_height;
+    st.scroll = state.clampListScroll(st.scroll, st.selected_index, effective_height, l.total);
+    st.last_satisfied_window = .{ .window_start = l.window_start, .window_len = l.children.len };
+}
+
+fn maybeRequestVListRangeForId(
+    allocator: std.mem.Allocator,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+    reason: protocol.VListRangeReason,
+) !bool {
+    const l = node_util.findVListNodeById(root, list_id) orelse return false;
+    const idx = try ensureWidgetKind(allocator, widgets, list_id, .vlist);
+    var st = &widgets.items[idx].state.vlist;
+
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
+    const rect = render.findRectForIdWithScrolls(root, rows, cols, list_id, scroll_states.items) orelse return false;
+    const viewport_h = vlistVisibleHeight(rect, l);
+    if (viewport_h == 0) return false;
+
+    st.scroll = state.clampListScroll(st.scroll, st.selected_index, viewport_h, l.total);
+    const visible_start = st.scroll;
+    const visible_end = @min(l.total, visible_start + viewport_h);
+    const overscan = l.overscan orelse 10;
+    const start = visible_start -| overscan;
+    const end = @min(l.total, visible_end + overscan);
+    if (end <= start) return false;
+    const len = end - start;
+
+    const window_end = l.window_start + l.children.len;
+    const covered = l.window_start <= start and window_end >= end;
+    st.last_satisfied_window = .{ .window_start = l.window_start, .window_len = l.children.len };
+    if (covered) return false;
+
+    if (st.last_range_request) |last| {
+        if (last.start == start and last.len == len) return false;
+    }
+
+    const request_id = st.next_request_id;
+    st.next_request_id +%= 1;
+    st.last_range_request = .{ .start = start, .len = len, .request_id = request_id };
+    try protocol.writeVListRangeEventJsonl(backend_in, .{
+        .id = list_id,
+        .request_id = request_id,
+        .start = start,
+        .len = len,
+        .scroll = st.scroll,
+        .viewport_h = viewport_h,
+        .overscan = overscan,
+        .reason = reason,
+    });
+    return true;
+}
+
+pub fn maybeRequestVListRanges(
+    allocator: std.mem.Allocator,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    reason: protocol.VListRangeReason,
+) !bool {
+    var changed = false;
+    for (widgets.items) |w| {
+        if (w.state != .vlist) continue;
+        changed = (try maybeRequestVListRangeForId(allocator, backend_in, widgets, root, rows, cols, w.id.items, reason)) or changed;
+    }
+    return changed;
 }
 
 fn syncListForId(
@@ -2146,6 +2485,109 @@ pub fn applyListAction(
     const before_scroll = stw.scroll;
     stw.scroll = state.clampListScroll(stw.scroll, selected_index, visible_height, l.children.len);
     return changed or (stw.scroll != before_scroll);
+}
+
+pub fn moveVListSelectionForId(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+    delta: isize,
+) !bool {
+    const l = node_util.findVListNodeById(root, list_id) orelse return false;
+    if (l.total == 0) return false;
+
+    const idx = try ensureWidgetKind(allocator, widgets, list_id, .vlist);
+    var st = &widgets.items[idx].state.vlist;
+
+    const current_idx = st.selected_index orelse 0;
+    const len: isize = @as(isize, @intCast(l.total));
+    const next_idx_signed = @min(@max(@as(isize, @intCast(current_idx)) + delta, 0), len - 1);
+    const next_idx: usize = @as(usize, @intCast(next_idx_signed));
+    if (st.selected_index != null and st.selected_index.? == next_idx) return false;
+    st.selected_index = next_idx;
+
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
+    const rect = render.findRectForIdWithScrolls(root, rows, cols, list_id, scroll_states.items);
+    const visible_height = if (rect) |r| vlistVisibleHeight(r, l) else (l.height orelse rows);
+    const effective_height = if (visible_height == 0) l.total else visible_height;
+    st.scroll = state.clampListScroll(st.scroll, st.selected_index, effective_height, l.total);
+
+    var item_buf: [128]u8 = undefined;
+    const item_id = vlistItemId(&item_buf, l.item_id_prefix, next_idx) orelse return false;
+    log.logPrint(
+        log_sink,
+        "VLIST_SELECT id={s} item={s} index={d} scroll={d}\n",
+        .{ list_id, item_id, next_idx, st.scroll },
+    );
+    log.logPrint(log_sink, "EVENT_TX name=select id={s} item={s} index={d}\n", .{ list_id, item_id, next_idx });
+    try protocol.writeSelectEventJsonlWithIndex(backend_in, list_id, item_id, next_idx);
+    _ = try maybeRequestVListRangeForId(allocator, backend_in, widgets, root, rows, cols, list_id, .selection);
+    return true;
+}
+
+pub fn activateVListForId(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    list_id: []const u8,
+) !void {
+    const l = node_util.findVListNodeById(root, list_id) orelse return;
+    const idx = findWidgetIndex(widgets.items, list_id) orelse return;
+    if (widgets.items[idx].state != .vlist) return;
+    const st = widgets.items[idx].state.vlist;
+    const selected = st.selected_index orelse return;
+    var item_buf: [128]u8 = undefined;
+    const item_id = vlistItemId(&item_buf, l.item_id_prefix, selected) orelse return;
+    log.logPrint(log_sink, "EVENT_TX name=activate id={s} item={s} index={d}\n", .{ list_id, item_id, selected });
+    try protocol.writeActivateEventJsonlWithIndex(backend_in, list_id, item_id, selected);
+    _ = allocator;
+}
+
+pub fn applyVListAction(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+    action: protocol.KeyAction,
+) !bool {
+    switch (action) {
+        .list_activate => {
+            try activateVListForId(allocator, log_sink, backend_in, widgets, root, list_id);
+            return true;
+        },
+        .list_prev, .list_next => {},
+        else => return false,
+    }
+
+    const delta: isize = if (action == .list_prev) -1 else 1;
+    return moveVListSelectionForId(allocator, log_sink, backend_in, widgets, root, rows, cols, list_id, delta);
+}
+
+pub fn handleFocusedVListKey(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    list_id: []const u8,
+    ev: keys.KeyEvent,
+) !bool {
+    const action = mapListKeyToAction(ev) orelse return false;
+    return applyVListAction(allocator, log_sink, backend_in, widgets, root, rows, cols, list_id, action);
 }
 
 pub fn handleFocusedListKey(
