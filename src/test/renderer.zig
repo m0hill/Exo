@@ -167,6 +167,27 @@ test "renderer: dumb paint emits no escape bytes" {
     caps.ansi = false;
     caps.cursor_address = false;
 
-    try renderer.drawWithCaps(&term, caps, root, .{});
+    try renderer.drawWithCaps(&term, caps, root, .{}, null);
     try std.testing.expect(std.mem.indexOfScalar(u8, term.out.items, 0x1b) == null);
+}
+
+test "renderer: screen selection overlay sets inverse attr" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 6);
+    frame.putGraphemeStyled(1, 2, "x", 1, .{});
+    frame.putGraphemeStyled(1, 3, "y", 1, .{});
+
+    renderer_mod.applyScreenSelection(&frame, .{
+        .enabled = true,
+        .clip = .{ .x = 1, .y = 1, .w = 4, .h = 1 },
+        .a = .{ .x = 2, .y = 1 },
+        .b = .{ .x = 4, .y = 1 },
+    });
+
+    try std.testing.expect((frame.rowSlice(1)[1].style.attrs & style.ATTR_INVERSE) == 0);
+    try std.testing.expect((frame.rowSlice(1)[2].style.attrs & style.ATTR_INVERSE) != 0);
+    try std.testing.expect((frame.rowSlice(1)[3].style.attrs & style.ATTR_INVERSE) != 0);
+    try std.testing.expect((frame.rowSlice(1)[4].style.attrs & style.ATTR_INVERSE) != 0);
+    try std.testing.expect((frame.rowSlice(1)[5].style.attrs & style.ATTR_INVERSE) == 0);
 }

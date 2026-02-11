@@ -382,3 +382,228 @@ test "ui: controlled list does not auto-select on patch" {
     const list_widget = findWidget(widgets.items, "results") orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(usize, 0), list_widget.state.list.selected_id.items.len);
 }
+
+test "ui: mouse click in input places cursor by column" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(std.testing.allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(std.testing.allocator);
+    var hover_item: ?[]const u8 = null;
+    var auto_focus_done = true;
+    var edit_drag: runtime_ui.EditDragState = .{};
+    defer edit_drag.deinit(std.testing.allocator);
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    const root = protocol.Node{ .input = .{ .id = "in", .mouseable = true, .w = 12 } };
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        4,
+        20,
+    );
+    _ = try runtime_ui.handleFocusedInputPaste(std.testing.allocator, &widgets, "in", "hello", false, 10);
+
+    _ = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        4,
+        20,
+        "> ",
+        1,
+        .{ .kind = .down, .button = .left, .x = 4, .y = 0 },
+    );
+
+    const in_widget = findWidget(widgets.items, "in") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 2), in_widget.state.input.cursor);
+}
+
+test "ui: mouse drag in input updates selection anchor and cursor" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(std.testing.allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(std.testing.allocator);
+    var hover_item: ?[]const u8 = null;
+    var auto_focus_done = true;
+    var edit_drag: runtime_ui.EditDragState = .{};
+    defer edit_drag.deinit(std.testing.allocator);
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    const root = protocol.Node{ .input = .{ .id = "in", .mouseable = true, .w = 12 } };
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        4,
+        20,
+    );
+    _ = try runtime_ui.handleFocusedInputPaste(std.testing.allocator, &widgets, "in", "hello", false, 10);
+
+    _ = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        4,
+        20,
+        "> ",
+        1,
+        .{ .kind = .down, .button = .left, .x = 3, .y = 0 },
+    );
+    _ = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        4,
+        20,
+        "> ",
+        2,
+        .{ .kind = .move, .x = 6, .y = 0 },
+    );
+
+    const in_widget = findWidget(widgets.items, "in") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(in_widget.state.input.selection_anchor != null);
+    try std.testing.expectEqual(@as(usize, 1), in_widget.state.input.selection_anchor.?);
+    try std.testing.expect(in_widget.state.input.cursor > in_widget.state.input.selection_anchor.?);
+}
+
+test "ui: mouse click and drag in textarea updates wrapped cursor and selection" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(std.testing.allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(std.testing.allocator);
+    var hover_item: ?[]const u8 = null;
+    var auto_focus_done = true;
+    var edit_drag: runtime_ui.EditDragState = .{};
+    defer edit_drag.deinit(std.testing.allocator);
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    const root = protocol.Node{ .textarea = .{ .id = "ta", .mouseable = true, .w = 4, .h = 3 } };
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        6,
+        10,
+    );
+    _ = try runtime_ui.handleFocusedTextareaPaste(std.testing.allocator, &widgets, "ta", "abcdef", false, 3, 4);
+
+    _ = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        6,
+        10,
+        "> ",
+        1,
+        .{ .kind = .down, .button = .left, .x = 1, .y = 1 },
+    );
+    _ = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        6,
+        10,
+        "> ",
+        2,
+        .{ .kind = .move, .x = 0, .y = 0 },
+    );
+
+    const ta_widget = findWidget(widgets.items, "ta") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 0), ta_widget.state.textarea.cursor);
+    try std.testing.expect(ta_widget.state.textarea.selection_anchor != null);
+    try std.testing.expect(ta_widget.state.textarea.selection_anchor.? > 0);
+}

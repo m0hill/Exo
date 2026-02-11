@@ -776,6 +776,7 @@
         { "$ref": "#/$defs/EventScroll" },
         { "$ref": "#/$defs/EventResize" },
         { "$ref": "#/$defs/EventHover" },
+        { "$ref": "#/$defs/EventSelection" },
         { "$ref": "#/$defs/EventPointer" },
         { "$ref": "#/$defs/EventClipboard" },
         { "$ref": "#/$defs/EventPaste" },
@@ -997,6 +998,49 @@
         "scroll_dx",
         "scroll_dy",
         "captured"
+      ],
+      "additionalProperties": false
+    },
+
+    "EventSelection": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "event" },
+        "name": { "const": "selection" },
+        "id": { "$ref": "#/$defs/IdString" },
+        "kind": {
+          "type": "string",
+          "enum": ["document"]
+        },
+        "x0": { "type": "integer", "minimum": 0 },
+        "y0": { "type": "integer", "minimum": 0 },
+        "x1": { "type": "integer", "minimum": 0 },
+        "y1": { "type": "integer", "minimum": 0 },
+        "local_x0": { "type": "integer", "minimum": 0 },
+        "local_y0": { "type": "integer", "minimum": 0 },
+        "local_x1": { "type": "integer", "minimum": 0 },
+        "local_y1": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "v": { "$ref": "#/$defs/VersionField" }
+      },
+      "required": [
+        "type",
+        "name",
+        "id",
+        "kind",
+        "x0",
+        "y0",
+        "x1",
+        "y1",
+        "local_x0",
+        "local_y0",
+        "local_x1",
+        "local_y1",
+        "text",
+        "bytes",
+        "truncated"
       ],
       "additionalProperties": false
     },

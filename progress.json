@@ -1223,5 +1223,40 @@
       "Confirm `focus_group` no longer parsed (use `focus_scope` instead)",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 42,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Mouse-driven text interaction: editable cursor placement/drag-select, document-style read-only selection overlay, and commit-on-release selection events",
+    "deliverables": [
+      "src/bin/runtime/ui/text_selection.zig: runtime document selection engine with nearest scroll scoping, local overlay state, selection extraction, truncation, and commit dedupe",
+      "src/lib/renderer.zig: added screen-selection overlay support (`ScreenSelection`) applied post-render with inverse attribute",
+      "src/bin/runtime/ui/mod.zig: mouse cursor placement for input/textarea, drag selection capture state (`EditDragState`), shift-extend support, and wrapped textarea hit mapping",
+      "src/bin/runtime/app.zig: wired document selection consume path before pointer events, commit-on-mouse-up `event:selection`, Ctrl-C local copy preference for document selection, and renderer overlay integration",
+      "src/lib/protocol/types.zig: added `SelectionEvent` + `SelectionKind` and `EventMsg.selection` variant",
+      "src/lib/protocol/write.zig + src/lib/protocol/parse.zig + src/lib/protocol/mod.zig: selection event writer/parser/export",
+      "protocol.schema.json + docs/PROTOCOL.md: documented `event:selection` fields and truncation rules",
+      "src/test/protocol.zig + src/test/renderer.zig + src/test/ui.zig: added roundtrip, overlay, and mouse interaction tests",
+      "src/bin/demo/main.zig: handles `event:selection` and surfaces selected text metadata in demo status"
+    ],
+    "boundaries_hit": [
+      "Runtime-only high-frequency selection rendering during drag (no per-move protocol traffic)",
+      "Single backend notification on mouse-up with capped payload (`16384` bytes) and truncation flag",
+      "Document selection scoped to nearest scroll viewport when available",
+      "Ctrl-C copies document selection locally before backend key forwarding",
+      "Input/textarea mouse behavior aligns with existing local state and emits input updates through existing paths"
+    ],
+    "timestamp": "2026-02-11",
+    "manual_repro": [
+      "zig build test",
+      "zig build demo",
+      "Click in a mouseable input/textarea to place cursor at pointer location (not forced to end)",
+      "Drag in input/textarea to create local selection; release and continue typing to confirm state updates",
+      "Drag across mouseable text/styled_text inside a scroll viewport; confirm local inverse highlight during drag",
+      "Release mouse button; confirm demo logs/patches a single `event:selection` with text/bytes/truncated fields",
+      "Press Ctrl-C with an active document selection; confirm local clipboard copy behavior",
+      "Exit with 'x'"
+    ]
   }
 ]

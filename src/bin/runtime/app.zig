@@ -448,6 +448,10 @@ pub fn run() !void {
     var auto_focus_done: bool = false;
     var widgets: std.ArrayList(ui.WidgetEntry) = .empty;
     defer ui.deinitWidgetEntries(allocator, &widgets);
+    var edit_drag: ui.EditDragState = .{};
+    defer edit_drag.deinit(allocator);
+    var doc_selection: ui.text_selection.DocumentSelectionEngine = .{};
+    defer doc_selection.deinit(allocator);
     var render_inputs: std.ArrayList(render.InputState) = .empty;
     defer render_inputs.deinit(allocator);
     var render_textareas: std.ArrayList(render.TextareaState) = .empty;
@@ -977,34 +981,82 @@ pub fn run() !void {
                                 have_last_mouse_pos = true;
                                 const rows: usize = @as(usize, last_term_size.rows);
                                 const cols: usize = @as(usize, last_term_size.cols);
-                                const changed = try ui.handleMouseEvent(
-                                    allocator,
-                                    &log_sink,
-                                    child_in,
-                                    &widgets,
-                                    &focused_id_buf,
-                                    &focused_id,
-                                    &hover_id_buf,
-                                    &hover_id,
-                                    &hover_item_buf,
-                                    &hover_item,
-                                    current_root.?,
-                                    rows,
-                                    cols,
-                                    mev,
-                                );
-                                const wrote_pointer = try pointer_engine.handleMouseEvent(
-                                    allocator,
-                                    child_in,
-                                    widgets.items,
-                                    current_root.?,
-                                    rows,
-                                    cols,
-                                    mev,
-                                    timing.monotonicNowNs(),
-                                );
-                                if (wrote_pointer) need_backend_flush = true;
-                                if (changed) requested_reason = .input;
+                                var doc_consumed = false;
+                                var doc_changed = false;
+                                if (mev.kind == .down and mev.button == .left) {
+                                    var scroll_states = try ui.collectRenderScrollStates(allocator, widgets.items);
+                                    defer scroll_states.deinit(allocator);
+                                    const consumed = try doc_selection.beginFromMouseDown(
+                                        allocator,
+                                        current_root.?,
+                                        rows,
+                                        cols,
+                                        scroll_states.items,
+                                        mev.x,
+                                        mev.y,
+                                        timing.monotonicNowNs(),
+                                        &renderer.prev,
+                                    );
+                                    if (consumed) {
+                                        doc_consumed = true;
+                                        doc_changed = true;
+                                    } else if (doc_selection.has_selection) {
+                                        doc_selection.clear();
+                                        doc_changed = true;
+                                    }
+                                } else if (mev.kind == .move and doc_selection.active) {
+                                    if (doc_selection.updateFromMouseMove(mev.x, mev.y)) doc_changed = true;
+                                    doc_consumed = true;
+                                } else if (mev.kind == .up and mev.button == .left and doc_selection.active) {
+                                    if (doc_selection.updateFromMouseMove(mev.x, mev.y)) doc_changed = true;
+                                    const commit = try doc_selection.endOnMouseUpAndCommit(allocator, &renderer.prev);
+                                    if (commit.consumed) doc_consumed = true;
+                                    if (commit.text) |sel| {
+                                        defer allocator.free(sel.bytes);
+                                    }
+                                    if (commit.changed and commit.event != null) {
+                                        try protocol.writeSelectionEventJsonl(child_in, commit.event.?);
+                                        need_backend_flush = true;
+                                    }
+                                    doc_changed = true;
+                                }
+
+                                const changed = if (!doc_consumed)
+                                    try ui.handleMouseEvent(
+                                        allocator,
+                                        &log_sink,
+                                        child_in,
+                                        &widgets,
+                                        &edit_drag,
+                                        &focused_id_buf,
+                                        &focused_id,
+                                        &hover_id_buf,
+                                        &hover_id,
+                                        &hover_item_buf,
+                                        &hover_item,
+                                        current_root.?,
+                                        rows,
+                                        cols,
+                                        active_theme.chrome.input_prefix,
+                                        timing.monotonicNowNs(),
+                                        mev,
+                                    )
+                                else
+                                    false;
+                                if (!doc_consumed) {
+                                    const wrote_pointer = try pointer_engine.handleMouseEvent(
+                                        allocator,
+                                        child_in,
+                                        widgets.items,
+                                        current_root.?,
+                                        rows,
+                                        cols,
+                                        mev,
+                                        timing.monotonicNowNs(),
+                                    );
+                                    if (wrote_pointer) need_backend_flush = true;
+                                }
+                                if (changed or doc_changed) requested_reason = .input;
                                 handled_input_this_iter = true;
                                 continue;
                             } else {},
@@ -1079,6 +1131,12 @@ pub fn run() !void {
                                 }
 
                                 if (keyEventIsCtrlLetter(kev, 'c')) {
+                                    const doc_selected = doc_selection.selectedTextAllocFromFrame(allocator, &renderer.prev) catch null;
+                                    if (doc_selected) |sel| {
+                                        defer allocator.free(sel.bytes);
+                                        clipboard.writeText(&term, allocator, term.caps(), .{}, sel.bytes) catch {};
+                                        continue;
+                                    }
                                     var prefer_local_copy: bool = false;
                                     if (!handled_input_this_iter and focused_kind != null) {
                                         var fbuf_copy: [4]u8 = undefined;
@@ -1447,6 +1505,9 @@ pub fn run() !void {
                     rows,
                     cols,
                 );
+                if (doc_selection.has_selection and !tree.treeContainsId(current_root.?, doc_selection.clipId())) {
+                    doc_selection.clear();
+                }
 
                 // If the tree changes under the pointer (morph patches, modals, etc), refresh hover once.
                 const hover_x_opt: ?usize = if (have_last_mouse_pos) last_mouse_x else null;
@@ -1501,7 +1562,7 @@ pub fn run() !void {
                     pointer_engine.activeId(),
                 );
                 rs.theme = &active_theme;
-                try renderer.drawWithCaps(&term, term.caps(), current_root.?, rs);
+                try renderer.drawWithCaps(&term, term.caps(), current_root.?, rs, doc_selection.toScreenSelection());
                 last_render_ns = timing.monotonicNowNs();
 
                 log.logPrint(

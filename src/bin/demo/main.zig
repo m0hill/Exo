@@ -114,6 +114,13 @@ fn nodeId(node: protocol.Node) []const u8 {
     };
 }
 
+fn utf8SafePrefixLen(bytes: []const u8, limit: usize) usize {
+    if (limit >= bytes.len) return bytes.len;
+    var cut = limit;
+    while (cut > 0 and (bytes[cut] & 0b1100_0000) == 0b1000_0000) : (cut -= 1) {}
+    return cut;
+}
+
 fn popupsInfo(
     modal_open: bool,
     dropdown_open: bool,
@@ -876,6 +883,32 @@ pub fn main() !void {
                             );
                             std.debug.print("PATCH_TX target=status\n", .{});
                             try render.emitTextPatchByIdStyled(out, "status", status_text, "{\"fg\":\"#fbbf24\"}");
+                            try out.flush();
+                        },
+                        .selection => |s| {
+                            std.debug.print(
+                                "EVENT_RX name=selection id={s} kind={s} bytes={d} truncated={s}\n",
+                                .{
+                                    s.id,
+                                    @tagName(s.kind),
+                                    s.bytes,
+                                    if (s.truncated) "true" else "false",
+                                },
+                            );
+                            var sel_buf: [512]u8 = undefined;
+                            const preview_len = utf8SafePrefixLen(s.text, @min(@as(usize, 120), s.text.len));
+                            const status_line = try std.fmt.bufPrint(
+                                &sel_buf,
+                                "Selection: id={s} bytes={d} truncated={s} text={s}",
+                                .{
+                                    s.id,
+                                    s.bytes,
+                                    if (s.truncated) "true" else "false",
+                                    s.text[0..preview_len],
+                                },
+                            );
+                            std.debug.print("PATCH_TX target=status\n", .{});
+                            try render.emitTextPatchByIdStyled(out, "status", status_line, "{\"fg\":\"#fbbf24\"}");
                             try out.flush();
                         },
                         .pointer => |p| {

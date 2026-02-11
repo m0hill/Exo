@@ -4,10 +4,14 @@ const keybindings = @import("keybindings.zig");
 const app = @import("app.zig");
 
 pub const pointer = ui.pointer;
+pub const EditDragState = ui.EditDragState;
 pub const WidgetEntry = ui.WidgetEntry;
 pub const deinitWidgetEntries = ui.deinitWidgetEntries;
+pub const handleMouseEvent = ui.handleMouseEvent;
 pub const handleFocusedInputKey = ui.handleFocusedInputKey;
 pub const handleFocusedTextareaKey = ui.handleFocusedTextareaKey;
+pub const handleFocusedInputPaste = ui.handleFocusedInputPaste;
+pub const handleFocusedTextareaPaste = ui.handleFocusedTextareaPaste;
 pub const applyInputAction = ui.applyInputAction;
 pub const applyTextareaAction = ui.applyTextareaAction;
 pub const inputSelectedTextAlloc = ui.inputSelectedTextAlloc;

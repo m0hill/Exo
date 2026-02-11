@@ -201,6 +201,20 @@ Hover / pointer (emitted only for nodes that opt in; see `hoverable`/`mouseable`
 {"type":"event","name":"pointer","kind":"down","id":"btn-ok","x":10,"y":4,"local_x":1,"local_y":0,"button":"left","buttons":1,"mods":0,"clicks":1,"scroll_dx":0,"scroll_dy":0,"captured":false}
 ```
 
+Document selection commit (emitted on left mouse-up after local drag-selection over `text`/`styled_text`):
+
+```json
+{"type":"event","name":"selection","id":"viewport","kind":"document","x0":10,"y0":4,"x1":22,"y1":7,"local_x0":0,"local_y0":0,"local_x1":12,"local_y1":3,"text":"selected text","bytes":13,"truncated":false}
+```
+
+`selection` rules:
+
+- emitted only for document-style selection (read-only `text` / `styled_text`), not input/textarea
+- runtime sends one commit event on left mouse-up (no per-move streaming)
+- `id` is nearest scroll viewport id when present, otherwise the clicked text node id
+- `text` is extracted from rendered cells, line-joined with `\n`, trailing spaces trimmed per line
+- payload is capped at `16384` bytes; `truncated:true` indicates clipping
+
 Clipboard result + paste semantic:
 
 ```json

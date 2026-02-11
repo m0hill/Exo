@@ -17,6 +17,8 @@ const OverlayAlign = protocol.OverlayAlign;
 const OverlayLayer = protocol.OverlayLayer;
 const Span = protocol.Span;
 const GridTrack = protocol.GridTrack;
+const SelectionEvent = protocol.SelectionEvent;
+const SelectionKind = protocol.SelectionKind;
 const PointerEvent = protocol.PointerEvent;
 const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
@@ -228,6 +230,39 @@ pub fn writeHoverEventJsonlVersion(writer: anytype, id: []const u8, x: usize, y:
         try writer.writeAll(",\"item\":");
         try writeJsonString(writer, it);
     }
+    try writer.writeAll("}\n");
+}
+
+fn selectionKindString(kind: SelectionKind) []const u8 {
+    return switch (kind) {
+        .document => "document",
+    };
+}
+
+pub fn writeSelectionEventJsonl(writer: anytype, ev: SelectionEvent) !void {
+    return writeSelectionEventJsonlVersion(writer, ev, null);
+}
+
+pub fn writeSelectionEventJsonlVersion(writer: anytype, ev: SelectionEvent, v: ?u32) !void {
+    try writer.writeAll("{\"type\":\"event\"");
+    try writeVersionField(writer, v orelse ev.v);
+    try writer.writeAll(",\"name\":\"selection\",\"id\":");
+    try writeJsonString(writer, ev.id);
+    try writer.writeAll(",\"kind\":");
+    try writeJsonString(writer, selectionKindString(ev.kind));
+    try writer.print(
+        ",\"x0\":{d},\"y0\":{d},\"x1\":{d},\"y1\":{d}",
+        .{ ev.x0, ev.y0, ev.x1, ev.y1 },
+    );
+    try writer.print(
+        ",\"local_x0\":{d},\"local_y0\":{d},\"local_x1\":{d},\"local_y1\":{d}",
+        .{ ev.local_x0, ev.local_y0, ev.local_x1, ev.local_y1 },
+    );
+    try writer.writeAll(",\"text\":");
+    try writeJsonString(writer, ev.text);
+    try writer.print(",\"bytes\":{d}", .{ev.bytes});
+    try writer.writeAll(",\"truncated\":");
+    try writer.writeAll(if (ev.truncated) "true" else "false");
     try writer.writeAll("}\n");
 }
 

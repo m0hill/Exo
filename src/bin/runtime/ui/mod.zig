@@ -22,6 +22,7 @@ else
 const node_util = @import("node_util.zig");
 
 pub const pointer = @import("pointer.zig");
+pub const text_selection = @import("text_selection.zig");
 
 pub fn makeNoopLogSink() log.LogSink {
     return .{};
@@ -39,6 +40,21 @@ pub fn inputVisibleCols(cols: usize) usize {
     const prefix_len: usize = 2;
     if (cols <= prefix_len) return 0;
     return cols - prefix_len;
+}
+
+pub fn inputVisibleColsForPrefix(cols: usize, prefix_cols: usize) usize {
+    if (cols <= prefix_cols) return 0;
+    return cols - prefix_cols;
+}
+
+fn hAlignOffset(avail: usize, content: usize, align_mode: protocol.HorizontalAlign) usize {
+    if (content >= avail) return 0;
+    const spare = avail - content;
+    return switch (align_mode) {
+        .left => 0,
+        .center => spare / 2,
+        .right => spare,
+    };
 }
 
 fn textareaCursorVisualY(value: []const u8, cursor: usize, cols: usize) usize {
@@ -157,6 +173,55 @@ const widgets_mod = @import("widgets.zig");
 pub const FocusKind = widgets_mod.FocusKind;
 pub const WidgetEntry = widgets_mod.WidgetEntry;
 const WidgetState = widgets_mod.WidgetState;
+
+pub const EditDragState = struct {
+    pub const Kind = enum { input, textarea };
+
+    active: bool = false,
+    kind: Kind = .input,
+    id: std.ArrayList(u8) = .empty,
+    anchor_byte: usize = 0,
+    last_click_ns: u64 = 0,
+    last_click_x: usize = 0,
+    last_click_y: usize = 0,
+    last_click_count: u8 = 0,
+    last_click_id_hash: u64 = 0,
+
+    pub fn deinit(self: *EditDragState, allocator: std.mem.Allocator) void {
+        self.id.deinit(allocator);
+    }
+
+    fn setActive(self: *EditDragState, allocator: std.mem.Allocator, kind: Kind, id: []const u8, anchor: usize) !void {
+        self.active = true;
+        self.kind = kind;
+        self.anchor_byte = anchor;
+        self.id.clearRetainingCapacity();
+        try self.id.appendSlice(allocator, id);
+    }
+
+    fn clear(self: *EditDragState) void {
+        self.active = false;
+        self.id.clearRetainingCapacity();
+    }
+
+    fn clickCount(self: *EditDragState, now_ns: u64, x: usize, y: usize, id: []const u8) u8 {
+        const multi_window_ns: u64 = 500 * std.time.ns_per_ms;
+        const id_hash = std.hash.Wyhash.hash(0, id);
+        const same_id = self.last_click_id_hash == id_hash;
+        const same_spot = self.last_click_x == x and self.last_click_y == y;
+        const in_window = self.last_click_ns != 0 and now_ns <= self.last_click_ns + multi_window_ns;
+        if (same_id and same_spot and in_window) {
+            self.last_click_count = if (self.last_click_count >= 3) 3 else self.last_click_count + 1;
+        } else {
+            self.last_click_count = 1;
+        }
+        self.last_click_ns = now_ns;
+        self.last_click_x = x;
+        self.last_click_y = y;
+        self.last_click_id_hash = id_hash;
+        return self.last_click_count;
+    }
+};
 
 pub const HoverHit = hover.HoverHit;
 
@@ -601,6 +666,22 @@ fn setOptId(
     out.* = buf.items;
 }
 
+fn maybeFlushBackend(backend_in: anytype) !void {
+    const T = @TypeOf(backend_in);
+    switch (@typeInfo(T)) {
+        .pointer => |p| {
+            if (@hasDecl(p.child, "flush")) {
+                try backend_in.flush();
+            }
+        },
+        else => {
+            if (@hasDecl(T, "flush")) {
+                try backend_in.flush();
+            }
+        },
+    }
+}
+
 pub fn hoverHitTest(
     allocator: std.mem.Allocator,
     widgets: []const WidgetEntry,
@@ -930,7 +1011,7 @@ fn findRectWithScrollCached(
     return cache.findRect(id);
 }
 
-fn collectRenderScrollStates(allocator: std.mem.Allocator, widgets: []const WidgetEntry) !std.ArrayList(render.ScrollState) {
+pub fn collectRenderScrollStates(allocator: std.mem.Allocator, widgets: []const WidgetEntry) !std.ArrayList(render.ScrollState) {
     var out: std.ArrayList(render.ScrollState) = .empty;
     errdefer out.deinit(allocator);
     for (widgets) |w| {
@@ -979,6 +1060,7 @@ pub fn handleMouseEvent(
     log_sink: *log.LogSink,
     backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
+    edit_drag: *EditDragState,
     focused_id_buf: *std.ArrayList(u8),
     focused_id: *?[]const u8,
     hover_id_buf: *std.ArrayList(u8),
@@ -988,25 +1070,50 @@ pub fn handleMouseEvent(
     root: protocol.Node,
     rows: usize,
     cols: usize,
+    input_prefix: []const u8,
+    now_ns: u64,
     ev: mouse.MouseEvent,
 ) !bool {
     var changed: bool = false;
     switch (ev.kind) {
         .down => {
             if (ev.button == .left) {
+                edit_drag.clear();
                 changed = try handleMouseDownLeft(
                     allocator,
                     log_sink,
                     backend_in,
                     widgets,
+                    edit_drag,
                     focused_id_buf,
                     focused_id,
                     root,
                     rows,
                     cols,
+                    input_prefix,
                     ev.x,
                     ev.y,
+                    ev.mods,
+                    now_ns,
                 );
+            }
+        },
+        .move => {
+            changed = try handleMouseMoveDrag(
+                allocator,
+                widgets,
+                edit_drag,
+                root,
+                rows,
+                cols,
+                input_prefix,
+                ev.x,
+                ev.y,
+            );
+        },
+        .up => {
+            if (ev.button == .left) {
+                edit_drag.clear();
             }
         },
         .wheel => {
@@ -1026,7 +1133,6 @@ pub fn handleMouseEvent(
                 );
             }
         },
-        .move, .up => {},
     }
     if (treeHasHoverables(root)) {
         // Only flush on hover changes; motion tracking makes `.move` events frequent.
@@ -1044,14 +1150,14 @@ pub fn handleMouseEvent(
             cols,
             ev.x,
             ev.y,
-        )) try backend_in.flush();
+        )) try maybeFlushBackend(backend_in);
     } else {
         if (hover_id.* != null or hover_item.* != null) {
             try setOptId(allocator, hover_id_buf, hover_id, null);
             try setOptId(allocator, hover_item_buf, hover_item, null);
             log.logPrint(log_sink, "EVENT_TX name=hover id= x={d} y={d} item=\n", .{ ev.x, ev.y });
             try protocol.writeHoverEventJsonl(backend_in, "", ev.x, ev.y, null);
-            try backend_in.flush();
+            try maybeFlushBackend(backend_in);
         }
     }
     return changed;
@@ -1062,13 +1168,17 @@ fn handleMouseDownLeft(
     log_sink: *log.LogSink,
     backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
+    edit_drag: *EditDragState,
     focused_id_buf: *std.ArrayList(u8),
     focused_id: *?[]const u8,
     root: protocol.Node,
     rows: usize,
     cols: usize,
+    input_prefix: []const u8,
     x: usize,
     y: usize,
+    mods: u8,
+    now_ns: u64,
 ) !bool {
     var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
     defer scroll_states.deinit(allocator);
@@ -1093,6 +1203,7 @@ fn handleMouseDownLeft(
 
     const id = hit_id orelse return false;
     const idx = findWidgetIndex(widgets.items, id) orelse return false;
+    edit_drag.clear();
 
     var changed: bool = false;
     var need_flush: bool = false;
@@ -1107,52 +1218,104 @@ fn handleMouseDownLeft(
 
     switch (widgets.items[idx].state) {
         .input => |*st| {
-            const visible_cols = inputVisibleCols(hit_rect.w);
+            const prefix_cols = unicode.displayWidth(input_prefix);
+            const visible_cols = inputVisibleColsForPrefix(hit_rect.w, prefix_cols);
             const before_cursor = st.cursor;
             const before_scroll = st.scroll_x;
-            st.cursor = st.value.items.len;
+            const input_node = node_util.findInputNodeById(root, id) orelse {
+                return changed;
+            };
+            const click_byte = inputByteIndexForMouse(st.value.items, st.scroll_x, visible_cols, prefix_cols, x, hit_rect, input_node.content_align);
+            const clicks = edit_drag.clickCount(now_ns, x, y, id);
+            const shift = (mods & 1) != 0;
+
+            if (clicks >= 3) {
+                st.selection_anchor = 0;
+                st.cursor = st.value.items.len;
+            } else if (clicks == 2) {
+                const w0 = input.word_left(st.value.items, click_byte);
+                const w1 = input.word_right(st.value.items, click_byte);
+                st.selection_anchor = w0;
+                st.cursor = w1;
+            } else {
+                st.cursor = click_byte;
+                if (shift) {
+                    if (st.selection_anchor == null) st.selection_anchor = before_cursor;
+                    if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+                } else {
+                    st.selection_anchor = null;
+                }
+            }
+
             if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
             if (st.scroll_x > st.value.items.len) st.scroll_x = st.value.items.len;
             _ = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
+            try edit_drag.setActive(allocator, .input, id, click_byte);
             if (st.cursor != before_cursor or st.scroll_x != before_scroll) changed = true;
         },
         .textarea => |*st| {
             const before_cursor = st.cursor;
             const before_scroll_y = st.scroll_y;
-            st.cursor = st.value.items.len;
+            const local_x = if (x > hit_rect.x) x - hit_rect.x else 0;
+            const local_y = if (y > hit_rect.y) y - hit_rect.y else 0;
+            const target_y = st.scroll_y + local_y;
+            const click_byte = textareaByteIndexForVisualPos(st.value.items, target_y, local_x, hit_rect.w);
+            const clicks = edit_drag.clickCount(now_ns, x, y, id);
+            const shift = (mods & 1) != 0;
+
+            if (clicks >= 3) {
+                const line = textareaLineRangeAt(st.value.items, click_byte);
+                st.selection_anchor = line.start;
+                st.cursor = line.end;
+            } else if (clicks == 2) {
+                const w0 = input.word_left(st.value.items, click_byte);
+                const w1 = input.word_right(st.value.items, click_byte);
+                st.selection_anchor = w0;
+                st.cursor = w1;
+            } else {
+                st.cursor = click_byte;
+                if (shift) {
+                    if (st.selection_anchor == null) st.selection_anchor = before_cursor;
+                    if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+                } else {
+                    st.selection_anchor = null;
+                }
+            }
+
             if (st.cursor > st.value.items.len) st.cursor = st.value.items.len;
 
             const cursor_y = textareaCursorVisualY(st.value.items, st.cursor, hit_rect.w);
             const content_h = textareaVisualLines(st.value.items, hit_rect.w);
             st.scroll_y = state.scrollIntoView(st.scroll_y, hit_rect.h, cursor_y, cursor_y + 1, content_h);
+            try edit_drag.setActive(allocator, .textarea, id, click_byte);
             if (st.cursor != before_cursor or st.scroll_y != before_scroll_y) changed = true;
         },
         .list => |*st| {
             const l = node_util.findListNodeById(root, id) orelse {
-                if (need_flush) try backend_in.flush();
+                if (need_flush) try maybeFlushBackend(backend_in);
                 return changed;
             };
 
             const visible_height = listVisibleHeight(hit_rect, l);
             if (visible_height == 0) {
-                if (need_flush) try backend_in.flush();
+                if (need_flush) try maybeFlushBackend(backend_in);
                 return changed;
             }
 
             const start: usize = @min(st.scroll, l.children.len);
             if (y < hit_rect.y) {
-                if (need_flush) try backend_in.flush();
+                if (need_flush) try maybeFlushBackend(backend_in);
                 return changed;
             }
             const row_idx: usize = y - hit_rect.y;
             if (row_idx >= visible_height) {
-                if (need_flush) try backend_in.flush();
+                if (need_flush) try maybeFlushBackend(backend_in);
                 return changed;
             }
 
             const item_idx: usize = start + row_idx;
             if (item_idx >= l.children.len) {
-                if (need_flush) try backend_in.flush();
+                if (need_flush) try maybeFlushBackend(backend_in);
                 return changed;
             }
 
@@ -1191,7 +1354,7 @@ fn handleMouseDownLeft(
         },
     }
 
-    if (need_flush) try backend_in.flush();
+    if (need_flush) try maybeFlushBackend(backend_in);
     return changed;
 }
 
@@ -2391,6 +2554,100 @@ fn textareaCursorVisualPos(value: []const u8, cursor: usize, cols: usize) unicod
 
 fn textareaByteIndexForVisualPos(value: []const u8, target_y: usize, target_x: usize, cols: usize) usize {
     return unicode.defaultTextMetrics().byteForVisualPos(value, target_y, target_x, cols);
+}
+
+fn inputByteIndexForMouse(
+    value: []const u8,
+    scroll_x: usize,
+    visible_cols: usize,
+    prefix_cols: usize,
+    mouse_x: usize,
+    rect: render.Rect,
+    align_mode: protocol.HorizontalAlign,
+) usize {
+    var start: usize = unicode.clampGraphemeBoundary(value, @min(scroll_x, value.len));
+    const full_fits: bool = visible_cols != 0 and unicode.displayWidth(value) <= visible_cols;
+    if (visible_cols == 0 or full_fits) start = 0;
+    const end = unicode.sliceEndByWidth(value, start, visible_cols);
+    const visible = if (start < end) value[start..end] else "";
+    const pad_left: usize = if (scroll_x == 0 and start == 0 and full_fits)
+        hAlignOffset(visible_cols, unicode.displayWidth(visible), align_mode)
+    else
+        0;
+
+    const text_x0 = rect.x + prefix_cols + pad_left;
+    const rel_cols: usize = if (mouse_x <= text_x0) 0 else mouse_x - text_x0;
+    const max_cols: usize = if (visible_cols > pad_left) visible_cols - pad_left else 0;
+    const target_cols = @min(rel_cols, max_cols);
+    return unicode.sliceEndByWidth(value, start, target_cols);
+}
+
+fn textareaLineRangeAt(value: []const u8, at: usize) struct { start: usize, end: usize } {
+    var p = @min(at, value.len);
+    p = unicode.clampGraphemeBoundary(value, p);
+    var start = p;
+    while (start > 0 and value[start - 1] != '\n') : (start -= 1) {}
+    var end = p;
+    while (end < value.len and value[end] != '\n') {
+        end = unicode.nextGraphemeBoundary(value, end);
+        if (end <= p) break;
+    }
+    return .{ .start = start, .end = end };
+}
+
+fn handleMouseMoveDrag(
+    allocator: std.mem.Allocator,
+    widgets: *std.ArrayList(WidgetEntry),
+    edit_drag: *EditDragState,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    input_prefix: []const u8,
+    x: usize,
+    y: usize,
+) !bool {
+    if (!edit_drag.active) return false;
+    const id = edit_drag.id.items;
+    const idx = findWidgetIndex(widgets.items, id) orelse {
+        edit_drag.clear();
+        return false;
+    };
+
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
+    var layout_cache = render.LayoutCache.init(allocator);
+    defer layout_cache.deinit();
+    layout_cache.reset(&root, rows, cols, scroll_states.items);
+    const rect = layout_cache.findRect(id) orelse return false;
+    if (rect.w == 0 or rect.h == 0) return false;
+
+    switch (widgets.items[idx].state) {
+        .input => |*st| {
+            if (edit_drag.kind != .input) return false;
+            const input_node = node_util.findInputNodeById(root, id) orelse return false;
+            const prefix_cols = unicode.displayWidth(input_prefix);
+            const visible_cols = inputVisibleColsForPrefix(rect.w, prefix_cols);
+            const before_cursor = st.cursor;
+            const before_scroll = st.scroll_x;
+            const click = inputByteIndexForMouse(st.value.items, st.scroll_x, visible_cols, prefix_cols, x, rect, input_node.content_align);
+            st.cursor = click;
+            st.selection_anchor = edit_drag.anchor_byte;
+            if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+            _ = input.ensure_cursor_visible(&st.scroll_x, st.cursor, st.value.items, visible_cols);
+            return st.cursor != before_cursor or st.scroll_x != before_scroll;
+        },
+        .textarea => |*st| {
+            if (edit_drag.kind != .textarea) return false;
+            const before_cursor = st.cursor;
+            const local_x = if (x <= rect.x) 0 else if (x >= rect.x + rect.w) rect.w - 1 else x - rect.x;
+            const local_y = if (y <= rect.y) 0 else if (y >= rect.y + rect.h) rect.h - 1 else y - rect.y;
+            st.cursor = textareaByteIndexForVisualPos(st.value.items, st.scroll_y + local_y, local_x, rect.w);
+            st.selection_anchor = edit_drag.anchor_byte;
+            if (st.selection_anchor != null and st.selection_anchor.? == st.cursor) st.selection_anchor = null;
+            return st.cursor != before_cursor;
+        },
+        else => return false,
+    }
 }
 
 const textarea_max_history: usize = 50;

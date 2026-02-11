@@ -439,6 +439,54 @@ test "protocol: write+parse pointer event" {
     try std.testing.expect(!p.captured);
 }
 
+test "protocol: write+parse selection event" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeSelectionEventJsonl(buf.writer(std.testing.allocator), .{
+        .id = "viewport",
+        .kind = .document,
+        .x0 = 1,
+        .y0 = 2,
+        .x1 = 9,
+        .y1 = 4,
+        .local_x0 = 0,
+        .local_y0 = 0,
+        .local_x1 = 8,
+        .local_y1 = 2,
+        .text = "hello\nworld",
+        .bytes = 11,
+        .truncated = false,
+    });
+
+    const line = buf.items[0 .. buf.items.len - 1];
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    const ev = switch (msg) {
+        .event => |e| e,
+        else => return error.TestUnexpectedResult,
+    };
+    const sel = switch (ev) {
+        .selection => |s| s,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqualStrings("viewport", sel.id);
+    try std.testing.expectEqual(protocol.SelectionKind.document, sel.kind);
+    try std.testing.expectEqual(@as(usize, 1), sel.x0);
+    try std.testing.expectEqual(@as(usize, 2), sel.y0);
+    try std.testing.expectEqual(@as(usize, 9), sel.x1);
+    try std.testing.expectEqual(@as(usize, 4), sel.y1);
+    try std.testing.expectEqual(@as(usize, 0), sel.local_x0);
+    try std.testing.expectEqual(@as(usize, 0), sel.local_y0);
+    try std.testing.expectEqual(@as(usize, 8), sel.local_x1);
+    try std.testing.expectEqual(@as(usize, 2), sel.local_y1);
+    try std.testing.expectEqualStrings("hello\nworld", sel.text);
+    try std.testing.expectEqual(@as(usize, 11), sel.bytes);
+    try std.testing.expect(!sel.truncated);
+}
+
 test "protocol: parse overlay node" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

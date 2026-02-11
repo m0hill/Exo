@@ -12,6 +12,25 @@ const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
 const Cell = frame_mod.Cell;
 
+pub const Pos = struct {
+    x: usize,
+    y: usize,
+};
+
+pub const Rect = struct {
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+};
+
+pub const ScreenSelection = struct {
+    enabled: bool = false,
+    clip: Rect,
+    a: Pos,
+    b: Pos,
+};
+
 pub const DrawMetrics = struct {
     full: bool = false,
     bytes: usize = 0,
@@ -47,10 +66,10 @@ pub const Renderer = struct {
     }
 
     pub fn draw(self: *Renderer, term: anytype, root: protocol.Node, state: render.RenderState) !void {
-        return self.drawWithCaps(term, .{}, root, state);
+        return self.drawWithCaps(term, .{}, root, state, null);
     }
 
-    pub fn drawWithCaps(self: *Renderer, term: anytype, caps: termcaps.Caps, root: protocol.Node, state: render.RenderState) !void {
+    pub fn drawWithCaps(self: *Renderer, term: anytype, caps: termcaps.Caps, root: protocol.Node, state: render.RenderState, selection_opt: ?ScreenSelection) !void {
         const size = term.getSize() catch Size{ .rows = 0, .cols = 0 };
         const eff = effectiveSize(size);
 
@@ -63,6 +82,7 @@ pub const Renderer = struct {
         const render_start_ns = monotonicNowNs();
         self.next.clear(' ');
         render.renderToFrame(root, state, &self.next);
+        if (selection_opt) |sel| applyScreenSelection(&self.next, sel);
         self.next.recomputeRowMax();
         const render_end_ns = monotonicNowNs();
 
@@ -117,6 +137,36 @@ pub const Renderer = struct {
         std.mem.swap(Frame, &self.prev, &self.next);
     }
 };
+
+pub fn applyScreenSelection(frame: *Frame, selection: ScreenSelection) void {
+    if (!selection.enabled) return;
+    if (selection.clip.w == 0 or selection.clip.h == 0) return;
+    if (frame.rows == 0 or frame.cols == 0) return;
+
+    const frame_rows: usize = @as(usize, frame.rows);
+    const frame_cols: usize = @as(usize, frame.cols);
+    const clip_x0: usize = @min(selection.clip.x, frame_cols);
+    const clip_y0: usize = @min(selection.clip.y, frame_rows);
+    const clip_x1: usize = @min(selection.clip.x + selection.clip.w, frame_cols);
+    const clip_y1: usize = @min(selection.clip.y + selection.clip.h, frame_rows);
+    if (clip_x1 <= clip_x0 or clip_y1 <= clip_y0) return;
+
+    const a_i: usize = selection.a.y * frame_cols + selection.a.x;
+    const b_i: usize = selection.b.y * frame_cols + selection.b.x;
+    const lo_i = @min(a_i, b_i);
+    const hi_i = @max(a_i, b_i);
+
+    var y: usize = clip_y0;
+    while (y < clip_y1) : (y += 1) {
+        var row = frame.rowSliceMut(y);
+        var x: usize = clip_x0;
+        while (x < clip_x1) : (x += 1) {
+            const idx = y * frame_cols + x;
+            if (idx < lo_i or idx > hi_i) continue;
+            row[x].style.attrs |= style.ATTR_INVERSE;
+        }
+    }
+}
 
 fn effectiveSize(size: Size) Size {
     var rows = size.rows;

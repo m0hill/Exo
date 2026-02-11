@@ -20,6 +20,8 @@ const GridTrack = protocol.GridTrack;
 const PointerKind = protocol.PointerKind;
 const PointerButton = protocol.PointerButton;
 const PointerEvent = protocol.PointerEvent;
+const SelectionEvent = protocol.SelectionEvent;
+const SelectionKind = protocol.SelectionKind;
 const ClipboardMsg = protocol.ClipboardMsg;
 const ClipboardOp = protocol.ClipboardOp;
 const ClipboardTarget = protocol.ClipboardTarget;
@@ -150,6 +152,37 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .item = item,
                 .v = version,
             } } };
+        } else if (std.mem.eql(u8, name, "selection")) {
+            const id = try getRequiredString(obj, "id");
+            const kind = try parseSelectionKind(obj);
+            const x0 = try getRequiredUsize(obj, "x0");
+            const y0 = try getRequiredUsize(obj, "y0");
+            const x1 = try getRequiredUsize(obj, "x1");
+            const y1 = try getRequiredUsize(obj, "y1");
+            const local_x0 = try getRequiredUsize(obj, "local_x0");
+            const local_y0 = try getRequiredUsize(obj, "local_y0");
+            const local_x1 = try getRequiredUsize(obj, "local_x1");
+            const local_y1 = try getRequiredUsize(obj, "local_y1");
+            const text = try getRequiredString(obj, "text");
+            const bytes = try getRequiredUsize(obj, "bytes");
+            const truncated = try getOptionalBool(obj, "truncated") orelse false;
+            const ev: SelectionEvent = .{
+                .id = id,
+                .kind = kind,
+                .x0 = x0,
+                .y0 = y0,
+                .x1 = x1,
+                .y1 = y1,
+                .local_x0 = local_x0,
+                .local_y0 = local_y0,
+                .local_x1 = local_x1,
+                .local_y1 = local_y1,
+                .text = text,
+                .bytes = bytes,
+                .truncated = truncated,
+                .v = version,
+            };
+            return .{ .event = .{ .selection = ev } };
         } else if (std.mem.eql(u8, name, "pointer")) {
             const kind = try parsePointerKind(obj);
             const id = try getRequiredString(obj, "id");
@@ -760,6 +793,12 @@ fn parsePointerButton(obj: std.json.ObjectMap) ParseMsgError!PointerButton {
     if (std.mem.eql(u8, s, "right")) return .right;
     if (std.mem.eql(u8, s, "none")) return .none;
     return error.UnknownPointerButton;
+}
+
+fn parseSelectionKind(obj: std.json.ObjectMap) ParseMsgError!SelectionKind {
+    const s = try getRequiredString(obj, "kind");
+    if (std.mem.eql(u8, s, "document")) return .document;
+    return error.UnknownField;
 }
 
 fn parseMinimalTextNode(obj: std.json.ObjectMap) ParseMsgError!?Node {

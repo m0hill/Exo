@@ -28,6 +28,7 @@ pub const EventMsg = union(enum) {
     scroll: struct { id: []const u8, scroll_y: usize, v: ?u32 = null },
     resize: struct { rows: usize, cols: usize, v: ?u32 = null },
     hover: struct { id: []const u8, x: usize, y: usize, item: ?[]const u8 = null, v: ?u32 = null },
+    selection: SelectionEvent,
     pointer: PointerEvent,
     clipboard: ClipboardEvent,
     paste: PasteEvent,
@@ -36,6 +37,27 @@ pub const EventMsg = union(enum) {
     config_ack: ConfigAckEvent,
     rendered: struct { seq: u64, dropped: u64 = 0, bytes: usize = 0, changed_cells: usize = 0, v: ?u32 = null },
     dropped: struct { seq: u64, reason: []const u8, v: ?u32 = null },
+};
+
+pub const SelectionKind = enum {
+    document,
+};
+
+pub const SelectionEvent = struct {
+    id: []const u8,
+    kind: SelectionKind = .document,
+    x0: usize,
+    y0: usize,
+    x1: usize,
+    y1: usize,
+    local_x0: usize,
+    local_y0: usize,
+    local_x1: usize,
+    local_y1: usize,
+    text: []const u8,
+    bytes: usize,
+    truncated: bool = false,
+    v: ?u32 = null,
 };
 
 pub const HelloCaps = struct {
