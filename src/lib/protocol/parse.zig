@@ -40,6 +40,11 @@ const HelloLimits = protocol.HelloLimits;
 const HelloEvent = protocol.HelloEvent;
 const ConfigMsg = protocol.ConfigMsg;
 const ThemeName = protocol.ThemeName;
+const ThemeSpec = protocol.ThemeSpec;
+const ThemeVarEntry = protocol.ThemeVarEntry;
+const ThemeRule = protocol.ThemeRule;
+const ThemeChrome = protocol.ThemeChrome;
+const ThemeOverlays = protocol.ThemeOverlays;
 const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
@@ -47,6 +52,11 @@ const ValidationState = protocol.ValidationState;
 const StateMode = protocol.StateMode;
 const ListMarker = protocol.ListMarker;
 const ParseMsgError = protocol.ParseMsgError;
+
+const theme_spec_max_rules: usize = 2048;
+const theme_spec_max_vars: usize = 256;
+const theme_spec_max_selector_len: usize = 256;
+const theme_spec_max_var_name_len: usize = 64;
 
 pub fn parseMsgLeaky(allocator: std.mem.Allocator, line: []const u8) ParseMsgError!Msg {
     const json = std.json.parseFromSliceLeaky(std.json.Value, allocator, line, .{}) catch {
@@ -371,13 +381,21 @@ fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap, v: ?u32
         const keybindings_obj = try asObject(keybindings_val);
         break :blk try parseKeybindingsConfig(allocator, keybindings_obj);
     } else null;
-    const theme: ?ThemeName = if (try getOptionalString(obj, "theme")) |name| try parseThemeName(name) else null;
+    const theme_spec: ?ThemeSpec = if (obj.get("theme_spec")) |theme_spec_val| blk: {
+        const theme_spec_obj = try asObject(theme_spec_val);
+        break :blk try parseThemeSpec(allocator, theme_spec_obj);
+    } else null;
     const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
         try usizeToU64(seq_usize)
     else
         null;
-    if (keybindings == null and theme == null) return error.MissingField;
-    return .{ .keybindings = keybindings, .theme = theme, .seq = seq, .v = v };
+    if (keybindings == null and theme_spec == null) return error.MissingField;
+    return .{
+        .keybindings = keybindings,
+        .theme_spec = theme_spec,
+        .seq = seq,
+        .v = v,
+    };
 }
 
 fn parseConfigAckEvent(
@@ -436,11 +454,304 @@ fn parseHelloLimits(obj: std.json.ObjectMap) ParseMsgError!HelloLimits {
     };
 }
 
-fn parseThemeName(s: []const u8) ParseMsgError!ThemeName {
+fn parseThemeName(s: []const u8) error{UnknownThemeSpecBase}!ThemeName {
     if (std.mem.eql(u8, s, "default")) return .default;
     if (std.mem.eql(u8, s, "light")) return .light;
     if (std.mem.eql(u8, s, "ocean")) return .ocean;
-    return error.UnknownThemeName;
+    return error.UnknownThemeSpecBase;
+}
+
+fn parseThemeSpec(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!ThemeSpec {
+    const base: ?ThemeName = if (try getOptionalString(obj, "base")) |base_name|
+        try parseThemeName(base_name)
+    else
+        null;
+
+    const vars: []ThemeVarEntry = if (obj.get("vars")) |vars_val| blk: {
+        const vars_obj = try asObject(vars_val);
+        if (vars_obj.count() > theme_spec_max_vars) return error.ThemeSpecTooLarge;
+        const out = try allocator.alloc(ThemeVarEntry, vars_obj.count());
+        var idx: usize = 0;
+        var it = vars_obj.iterator();
+        while (it.next()) |entry| : (idx += 1) {
+            const name = entry.key_ptr.*;
+            if (!isValidThemeVarName(name) or name.len > theme_spec_max_var_name_len) {
+                return error.WrongType;
+            }
+            out[idx] = .{
+                .name = name,
+                .value = switch (entry.value_ptr.*) {
+                    .string => |s| style.parseColorSpec(s) catch return error.InvalidColor,
+                    else => return error.WrongType,
+                },
+            };
+        }
+        break :blk out;
+    } else &.{};
+
+    const chrome = if (obj.get("chrome")) |chrome_val|
+        try parseThemeChrome(try asObject(chrome_val))
+    else
+        ThemeChrome{};
+
+    const overlays = if (obj.get("overlays")) |overlays_val|
+        try parseThemeOverlays(try asObject(overlays_val))
+    else
+        ThemeOverlays{};
+
+    const rules: []ThemeRule = if (obj.get("rules")) |rules_val| blk: {
+        const arr = try asArray(rules_val);
+        if (arr.items.len > theme_spec_max_rules) return error.ThemeSpecTooLarge;
+        const out = try allocator.alloc(ThemeRule, arr.items.len);
+        for (arr.items, 0..) |item, idx| {
+            const rule_obj = try asObject(item);
+            if (rule_obj.count() != 2) return error.UnknownField;
+            const selector = try getRequiredString(rule_obj, "selector");
+            if (selector.len > theme_spec_max_selector_len) return error.ThemeSpecTooLarge;
+            try validateSelectorV1(selector);
+            const st = switch (try getRequired(rule_obj, "style")) {
+                .object => |st_obj| try parseStyleOverride(st_obj),
+                else => return error.WrongType,
+            };
+            out[idx] = .{
+                .selector = selector,
+                .style = st,
+            };
+        }
+        break :blk out;
+    } else &.{};
+
+    if (!hasOnlyThemeSpecFields(obj)) return error.UnknownField;
+
+    return .{
+        .base = base,
+        .vars = vars,
+        .chrome = chrome,
+        .overlays = overlays,
+        .rules = rules,
+    };
+}
+
+fn hasOnlyThemeSpecFields(obj: std.json.ObjectMap) bool {
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        const k = entry.key_ptr.*;
+        if (std.mem.eql(u8, k, "base")) continue;
+        if (std.mem.eql(u8, k, "vars")) continue;
+        if (std.mem.eql(u8, k, "chrome")) continue;
+        if (std.mem.eql(u8, k, "overlays")) continue;
+        if (std.mem.eql(u8, k, "rules")) continue;
+        return false;
+    }
+    return true;
+}
+
+fn parseThemeChrome(obj: std.json.ObjectMap) ParseMsgError!ThemeChrome {
+    var out: ThemeChrome = .{};
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value = entry.value_ptr.*;
+        if (std.mem.eql(u8, key, "input_prefix")) {
+            out.input_prefix = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "input_placeholder_left")) {
+            out.input_placeholder_left = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "input_placeholder_right")) {
+            out.input_placeholder_right = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "list_selected_focused_marker")) {
+            out.list_selected_focused_marker = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "list_selected_marker")) {
+            out.list_selected_marker = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "list_unselected_marker")) {
+            out.list_unselected_marker = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "list_selected_inverse")) {
+            out.list_selected_inverse = switch (value) {
+                .bool => |b| b,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "box_top_left")) {
+            out.box_top_left = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "box_top_right")) {
+            out.box_top_right = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "box_bottom_left")) {
+            out.box_bottom_left = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "box_bottom_right")) {
+            out.box_bottom_right = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "box_horizontal")) {
+            out.box_horizontal = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "box_vertical")) {
+            out.box_vertical = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else {
+            return error.UnknownField;
+        }
+    }
+    return out;
+}
+
+fn parseThemeOverlays(obj: std.json.ObjectMap) ParseMsgError!ThemeOverlays {
+    var out: ThemeOverlays = .{};
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value_obj = switch (entry.value_ptr.*) {
+            .object => |o| o,
+            else => return error.WrongType,
+        };
+        const st = try parseStyleOverride(value_obj);
+        if (std.mem.eql(u8, key, "disabled")) {
+            out.disabled = st;
+        } else if (std.mem.eql(u8, key, "readonly")) {
+            out.readonly = st;
+        } else if (std.mem.eql(u8, key, "focused")) {
+            out.focused = st;
+        } else if (std.mem.eql(u8, key, "hovered")) {
+            out.hovered = st;
+        } else if (std.mem.eql(u8, key, "active")) {
+            out.active = st;
+        } else if (std.mem.eql(u8, key, "validation_error")) {
+            out.validation_error = st;
+        } else if (std.mem.eql(u8, key, "validation_warning")) {
+            out.validation_warning = st;
+        } else if (std.mem.eql(u8, key, "validation_success")) {
+            out.validation_success = st;
+        } else {
+            return error.UnknownField;
+        }
+    }
+    return out;
+}
+
+fn isValidThemeVarName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    if (!((name[0] >= 'A' and name[0] <= 'Z') or (name[0] >= 'a' and name[0] <= 'z'))) return false;
+    for (name[1..]) |b| {
+        if (!isThemeVarChar(b)) return false;
+    }
+    return true;
+}
+
+fn isThemeVarChar(b: u8) bool {
+    return (b >= 'A' and b <= 'Z') or
+        (b >= 'a' and b <= 'z') or
+        (b >= '0' and b <= '9') or
+        b == '_';
+}
+
+fn validateSelectorV1(selector: []const u8) ParseMsgError!void {
+    if (selector.len == 0) return error.InvalidSelector;
+    if (selector.len > theme_spec_max_selector_len) return error.ThemeSpecTooLarge;
+
+    var i: usize = 0;
+    if (selector[i] == '*') {
+        i += 1;
+    } else if (isIdentStart(selector[i])) {
+        const start = i;
+        i += 1;
+        while (i < selector.len and isIdentChar(selector[i])) : (i += 1) {}
+        _ = parseSelectorNodeKind(selector[start..i]) catch return error.InvalidSelector;
+    }
+
+    if (i < selector.len and selector[i] == '#') {
+        i += 1;
+        if (i >= selector.len or !isIdentStart(selector[i])) return error.InvalidSelector;
+        i += 1;
+        while (i < selector.len and isIdentChar(selector[i])) : (i += 1) {}
+    }
+
+    while (i < selector.len and selector[i] == '.') {
+        i += 1;
+        if (i >= selector.len or !isClassChar(selector[i])) return error.InvalidSelector;
+        i += 1;
+        while (i < selector.len and selector[i] != ':' and selector[i] != '#') : (i += 1) {
+            if (!isClassChar(selector[i])) return error.InvalidSelector;
+        }
+    }
+
+    while (i < selector.len and selector[i] == ':') {
+        i += 1;
+        const start = i;
+        if (start >= selector.len or !isIdentStart(selector[start])) return error.InvalidSelector;
+        i += 1;
+        while (i < selector.len and isIdentChar(selector[i])) : (i += 1) {}
+        _ = parseSelectorState(selector[start..i]) catch return error.InvalidSelector;
+    }
+
+    if (i != selector.len) return error.InvalidSelector;
+}
+
+fn parseSelectorNodeKind(s: []const u8) error{InvalidSelector}!void {
+    if (std.mem.eql(u8, s, "vbox")) return;
+    if (std.mem.eql(u8, s, "hbox")) return;
+    if (std.mem.eql(u8, s, "grid")) return;
+    if (std.mem.eql(u8, s, "box")) return;
+    if (std.mem.eql(u8, s, "scroll")) return;
+    if (std.mem.eql(u8, s, "overlay")) return;
+    if (std.mem.eql(u8, s, "text")) return;
+    if (std.mem.eql(u8, s, "styled_text")) return;
+    if (std.mem.eql(u8, s, "input")) return;
+    if (std.mem.eql(u8, s, "textarea")) return;
+    if (std.mem.eql(u8, s, "list")) return;
+    return error.InvalidSelector;
+}
+
+fn parseSelectorState(s: []const u8) error{InvalidSelector}!void {
+    if (std.mem.eql(u8, s, "hover")) return;
+    if (std.mem.eql(u8, s, "focus")) return;
+    if (std.mem.eql(u8, s, "active")) return;
+    if (std.mem.eql(u8, s, "disabled")) return;
+    if (std.mem.eql(u8, s, "readonly")) return;
+    if (std.mem.eql(u8, s, "validation_error")) return;
+    if (std.mem.eql(u8, s, "validation_warning")) return;
+    if (std.mem.eql(u8, s, "validation_success")) return;
+    return error.InvalidSelector;
+}
+
+fn isIdentStart(b: u8) bool {
+    return (b >= 'A' and b <= 'Z') or (b >= 'a' and b <= 'z') or b == '_';
+}
+
+fn isIdentChar(b: u8) bool {
+    return isIdentStart(b) or (b >= '0' and b <= '9') or b == '-';
+}
+
+fn isClassChar(b: u8) bool {
+    return isIdentChar(b) or b == '.';
 }
 
 fn parseKeybindingsConfig(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMsgError!KeybindingsConfig {
@@ -1625,7 +1936,14 @@ fn parseStyleOverride(obj: std.json.ObjectMap) ParseMsgError!style.StyleOverride
     if (obj.get("fg")) |v| {
         out.fg = switch (v) {
             .null => .clear,
-            .string => |s| .{ .rgb = style.parseColorSpec(s) catch return error.InvalidColor },
+            .string => |s| blk: {
+                if (s.len >= 2 and s[0] == '$') {
+                    const name = s[1..];
+                    if (!isValidThemeVarName(name) or name.len > theme_spec_max_var_name_len) return error.WrongType;
+                    break :blk .{ .@"var" = name };
+                }
+                break :blk .{ .rgb = style.parseColorSpec(s) catch return error.InvalidColor };
+            },
             else => return error.WrongType,
         };
     }
@@ -1633,7 +1951,14 @@ fn parseStyleOverride(obj: std.json.ObjectMap) ParseMsgError!style.StyleOverride
     if (obj.get("bg")) |v| {
         out.bg = switch (v) {
             .null => .clear,
-            .string => |s| .{ .rgb = style.parseColorSpec(s) catch return error.InvalidColor },
+            .string => |s| blk: {
+                if (s.len >= 2 and s[0] == '$') {
+                    const name = s[1..];
+                    if (!isValidThemeVarName(name) or name.len > theme_spec_max_var_name_len) return error.WrongType;
+                    break :blk .{ .@"var" = name };
+                }
+                break :blk .{ .rgb = style.parseColorSpec(s) catch return error.InvalidColor };
+            },
             else => return error.WrongType,
         };
     }

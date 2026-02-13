@@ -167,13 +167,13 @@
       "properties": {
         "fg": {
           "oneOf": [
-            { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|[A-Za-z][A-Za-z0-9]*)$" },
+            { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|\\$[A-Za-z][A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*)$" },
             { "type": "null" }
           ]
         },
         "bg": {
           "oneOf": [
-            { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|[A-Za-z][A-Za-z0-9]*)$" },
+            { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|\\$[A-Za-z][A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*)$" },
             { "type": "null" }
           ]
         },
@@ -788,19 +788,98 @@
       "additionalProperties": false
     },
 
+    "ThemeVarName": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+      "maxLength": 64
+    },
+
+    "ThemeColorValue": {
+      "type": "string",
+      "pattern": "^(#[0-9a-fA-F]{6}|[A-Za-z][A-Za-z0-9]*)$"
+    },
+
+    "ThemeSpecVars": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/ThemeVarName" },
+      "additionalProperties": { "$ref": "#/$defs/ThemeColorValue" },
+      "maxProperties": 256
+    },
+
+    "ThemeSpecChrome": {
+      "type": "object",
+      "properties": {
+        "input_prefix": { "type": "string" },
+        "input_placeholder_left": { "type": "string" },
+        "input_placeholder_right": { "type": "string" },
+        "list_selected_focused_marker": { "type": "string" },
+        "list_selected_marker": { "type": "string" },
+        "list_unselected_marker": { "type": "string" },
+        "list_selected_inverse": { "type": "boolean" },
+        "box_top_left": { "type": "string" },
+        "box_top_right": { "type": "string" },
+        "box_bottom_left": { "type": "string" },
+        "box_bottom_right": { "type": "string" },
+        "box_horizontal": { "type": "string" },
+        "box_vertical": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "ThemeSpecOverlays": {
+      "type": "object",
+      "properties": {
+        "disabled": { "$ref": "#/$defs/StyleOverride" },
+        "readonly": { "$ref": "#/$defs/StyleOverride" },
+        "focused": { "$ref": "#/$defs/StyleOverride" },
+        "hovered": { "$ref": "#/$defs/StyleOverride" },
+        "active": { "$ref": "#/$defs/StyleOverride" },
+        "validation_error": { "$ref": "#/$defs/StyleOverride" },
+        "validation_warning": { "$ref": "#/$defs/StyleOverride" },
+        "validation_success": { "$ref": "#/$defs/StyleOverride" }
+      },
+      "additionalProperties": false
+    },
+
+    "ThemeSpecRule": {
+      "type": "object",
+      "properties": {
+        "selector": { "type": "string", "maxLength": 256 },
+        "style": { "$ref": "#/$defs/StyleOverride" }
+      },
+      "required": ["selector", "style"],
+      "additionalProperties": false
+    },
+
+    "ThemeSpec": {
+      "type": "object",
+      "properties": {
+        "base": { "$ref": "#/$defs/ThemeName" },
+        "vars": { "$ref": "#/$defs/ThemeSpecVars" },
+        "chrome": { "$ref": "#/$defs/ThemeSpecChrome" },
+        "overlays": { "$ref": "#/$defs/ThemeSpecOverlays" },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ThemeSpecRule" },
+          "maxItems": 2048
+        }
+      },
+      "additionalProperties": false
+    },
+
     "ConfigMsg": {
       "type": "object",
       "properties": {
         "type": { "const": "config" },
         "keybindings": { "$ref": "#/$defs/KeybindingsConfig" },
-        "theme": { "$ref": "#/$defs/ThemeName" },
+        "theme_spec": { "$ref": "#/$defs/ThemeSpec" },
         "seq": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
       "required": ["type"],
       "anyOf": [
         { "required": ["keybindings"] },
-        { "required": ["theme"] }
+        { "required": ["theme_spec"] }
       ],
       "additionalProperties": false
     },

@@ -783,6 +783,13 @@ fn updateHoverForCoords(
     y: usize,
 ) !bool {
     const hit = try hoverHitTest(allocator, widgets, root, rows, cols, x, y);
+    var free_hit_item: bool = false;
+    defer if (free_hit_item and hit.item != null) allocator.free(hit.item.?);
+    if (hit.id != null and hit.item != null and node_util.findVListNodeById(root, hit.id.?) != null) {
+        // vlist hover hit creates a temporary duplicated item id; copy into hover_item_buf
+        // then free here to avoid leaks on frequent hover updates.
+        free_hit_item = true;
+    }
     if (optEql(hover_id.*, hit.id) and optEql(hover_item.*, hit.item)) return false;
 
     try setOptId(allocator, hover_id_buf, hover_id, hit.id);

@@ -92,3 +92,14 @@ python3 scripts/check_protocol_schema.py --jsonl tui_backend.jsonl --jsonl tui_e
 - Messages: `patch` (backend→runtime), `event` (runtime→backend), `clipboard`, `config`
 - Canonical schema artifact: `protocol.schema.json`
 - Run `scripts/check_protocol_schema.py` when protocol types/docs/schema change
+
+## Compatibility Policy (Active Development)
+- **No backwards compatibility guarantees.** This project is in active development; breaking changes are acceptable.
+- **Prefer deletion over legacy support.** If you build a new approach that overlaps an older one, remove the legacy code paths/APIs/fields instead of keeping both.
+- **Keep the repo “single-truth.”** Don’t add shims, adapters, feature flags, or dual implementations solely to preserve older behavior.
+- **Demo must use the latest.** `zig build demo` should showcase the newest APIs/protocol shapes and should not rely on deprecated/legacy paths.
+- **Breaking changes must be complete.** If you change behavior or protocol shapes, update in the same change:
+  - Zig types + runtime/backend handling
+  - `protocol.schema.json`
+  - `docs/PROTOCOL.md` examples
+  - tests (`zig build test`) and any JSONL fixtures used for validation

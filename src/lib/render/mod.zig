@@ -5,6 +5,7 @@ const style = @import("../style.zig");
 const unicode = @import("../unicode.zig");
 const render_text = @import("text.zig");
 const theme_mod = @import("theme.zig");
+pub const theme_engine = @import("theme_engine.zig");
 
 const Frame = frame_mod.Frame;
 const CursorPos = frame_mod.CursorPos;
@@ -13,6 +14,8 @@ pub const default_theme = theme_mod.default_theme;
 pub const light_theme = theme_mod.light_theme;
 pub const ocean_theme = theme_mod.ocean_theme;
 pub const themeFromName = theme_mod.themeFromName;
+pub const OwnedTheme = theme_mod.OwnedTheme;
+pub const buildThemeFromSpec = theme_mod.buildThemeFromSpec;
 
 pub const RenderState = struct {
     theme: *const Theme = &theme_mod.default_theme,
@@ -1178,11 +1181,31 @@ fn packedEq(a: style.PackedStyle, b: style.PackedStyle) bool {
     return @as(u64, @bitCast(a)) == @as(u64, @bitCast(b));
 }
 
-fn applyOverlay(base: style.Style, overlay: theme_mod.Overlay) style.Style {
-    var out = base;
-    if (overlay.fg) |c| out.fg = c;
-    if (overlay.bg) |c| out.bg = c;
-    return style.overlayAttrs(out, overlay.attrs_set, overlay.attrs_values);
+fn stateFlagsForNode(
+    node: protocol.Node,
+    state: RenderState,
+    id: []const u8,
+    suppress_list_hover: bool,
+    force_hovered: bool,
+    allow_hovered_id_match: bool,
+) theme_mod.StateFlags {
+    var flags: theme_mod.StateFlags = .{};
+    if (nodeDisabled(node)) flags.bits |= theme_mod.StateFlags.disabled;
+    if (nodeReadonly(node)) flags.bits |= theme_mod.StateFlags.readonly;
+    switch (nodeValidation(node)) {
+        .none => {},
+        .@"error" => flags.bits |= theme_mod.StateFlags.validation_error,
+        .warning => flags.bits |= theme_mod.StateFlags.validation_warning,
+        .success => flags.bits |= theme_mod.StateFlags.validation_success,
+    }
+    if (force_hovered) {
+        flags.bits |= theme_mod.StateFlags.hovered;
+    } else if (allow_hovered_id_match and state.hovered_id != null and std.mem.eql(u8, state.hovered_id.?, id) and !suppress_list_hover) {
+        flags.bits |= theme_mod.StateFlags.hovered;
+    }
+    if (state.focused_id != null and std.mem.eql(u8, state.focused_id.?, id)) flags.bits |= theme_mod.StateFlags.focused;
+    if (state.active_id != null and std.mem.eql(u8, state.active_id.?, id)) flags.bits |= theme_mod.StateFlags.active;
+    return flags;
 }
 
 fn nodeDisabled(node: protocol.Node) bool {
@@ -1236,41 +1259,17 @@ fn nodeValidation(node: protocol.Node) protocol.ValidationState {
     };
 }
 
-fn applyStateOverlays(base: style.Style, node: protocol.Node, state: RenderState) style.Style {
-    var out = base;
+fn resolveThemedOverride(
+    node: protocol.Node,
+    state: RenderState,
+    id: []const u8,
+    suppress_list_hover: bool,
+    force_hovered: bool,
+    allow_hovered_id_match: bool,
+) ?style.StyleOverride {
     const theme = state.theme.*;
-
-    const v = nodeValidation(node);
-    out = switch (v) {
-        .none => out,
-        .@"error" => applyOverlay(out, theme.validation_error_overlay),
-        .warning => applyOverlay(out, theme.validation_warning_overlay),
-        .success => applyOverlay(out, theme.validation_success_overlay),
-    };
-
-    if (nodeDisabled(node)) out = applyOverlay(out, theme.disabled_overlay);
-    if (nodeReadonly(node)) out = applyOverlay(out, theme.readonly_overlay);
-
-    const id = nodeId(node);
-    if (state.hovered_id != null and std.mem.eql(u8, state.hovered_id.?, id)) {
-        // For lists, prefer highlighting the hovered row (via `hovered_item`) rather than
-        // painting the whole list rect.
-        const is_list = switch (node) {
-            .list, .vlist => true,
-            else => false,
-        };
-        if (!is_list) {
-            out = applyOverlay(out, theme.hovered_overlay);
-        }
-    }
-    if (state.focused_id != null and std.mem.eql(u8, state.focused_id.?, id)) {
-        out = applyOverlay(out, theme.focused_overlay);
-    }
-    if (state.active_id != null and std.mem.eql(u8, state.active_id.?, id)) {
-        out = applyOverlay(out, theme.active_overlay);
-    }
-
-    return out;
+    const flags = stateFlagsForNode(node, state, id, suppress_list_hover, force_hovered, allow_hovered_id_match);
+    return theme.resolveEngineOverride(nodeKind(node), id, nodeClass(node), flags);
 }
 
 fn nodeStyleOverride(node: protocol.Node) ?style.StyleOverride {
@@ -1664,8 +1663,8 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
             .none => "",
             .default => if (is_selected) (if (focused) chrome.list_selected_focused_marker else chrome.list_selected_marker) else chrome.list_unselected_marker,
         };
-        var item_style = style.merge(list_style, nodeStyleOverride(item));
-        if (is_hovered and !is_selected) item_style = applyOverlay(item_style, state.theme.hovered_overlay);
+        var item_style = style.merge(list_style, resolveThemedOverride(item, state, item_id, true, is_hovered and !is_selected, false));
+        item_style = style.merge(item_style, state.theme.resolveStyleOverrideVars(nodeStyleOverride(item)));
         var row_packed = style.pack(item_style);
         if (is_selected and chrome.list_selected_inverse) row_packed.attrs |= style.ATTR_INVERSE;
 
@@ -1729,8 +1728,10 @@ fn paintVList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pr
             .none => "",
             .default => if (is_selected) (if (focused) chrome.list_selected_focused_marker else chrome.list_selected_marker) else chrome.list_unselected_marker,
         };
-        var row_style = list_style;
-        if (is_hovered and !is_selected) row_style = applyOverlay(row_style, state.theme.hovered_overlay);
+        const row_style = style.merge(
+            list_style,
+            resolveThemedOverride(.{ .text = .{ .id = item_id, .text = "" } }, state, item_id, true, is_hovered and !is_selected, false),
+        );
         var row_packed = style.pack(row_style);
         if (is_selected and chrome.list_selected_inverse) row_packed.attrs |= style.ATTR_INVERSE;
 
@@ -1749,7 +1750,8 @@ fn paintVList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pr
         }
 
         const item = l.children[local_idx_opt.?];
-        const item_style = style.merge(row_style, nodeStyleOverride(item));
+        var item_style = style.merge(row_style, resolveThemedOverride(item, state, nodeId(item), true, is_hovered and !is_selected, false));
+        item_style = style.merge(item_style, state.theme.resolveStyleOverrideVars(nodeStyleOverride(item)));
         switch (item) {
             .text => |t| renderLinePiecesInRectStyled(frame, row, row_rect, clip, &.{ prefix, t.text }, &.{ style.pack(item_style), style.pack(item_style) }),
             .styled_text => |t| {
@@ -1994,11 +1996,14 @@ fn paintNode(
     const node_clip = rectIntersect(clip, rect);
     if (node_clip.w == 0 or node_clip.h == 0) return;
 
-    const themed_override = state.theme.resolveBaseStyleOverride(nodeKind(node), nodeClass(node));
-    const own_override = nodeStyleOverride(node);
+    const own_override = state.theme.resolveStyleOverrideVars(nodeStyleOverride(node));
+    const suppress_list_hover = switch (node) {
+        .list, .vlist => true,
+        else => false,
+    };
+    const themed_override = resolveThemedOverride(node, state, nodeId(node), suppress_list_hover, false, true);
     const base_resolved = style.merge(inherited, themed_override);
-    const state_resolved = applyStateOverlays(base_resolved, node, state);
-    const resolved = style.merge(state_resolved, own_override);
+    const resolved = style.merge(base_resolved, own_override);
     const inherited_packed = style.pack(inherited);
     const resolved_packed = style.pack(resolved);
     if (!packedEq(resolved_packed, inherited_packed) and resolved_packed.affectsBlank()) {

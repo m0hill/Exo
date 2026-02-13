@@ -107,16 +107,22 @@ Runtime keybindings can be replaced at runtime with a strict, replace-style mess
 }
 ```
 
-Config can also switch the active runtime theme:
+Config can also switch the active runtime theme by setting a `theme_spec.base`:
 
 ```json
-{"type":"config","theme":"light"}
+{"type":"config","theme_spec":{"base":"light"}}
 ```
 
 Optional sequencing:
 
 ```json
-{"type":"config","theme":"light","seq":42}
+{"type":"config","theme_spec":{"base":"light"},"seq":42}
+```
+
+Config can also install a dynamic selector-based theme spec:
+
+```json
+{"type":"config","theme_spec":{"base":"default","vars":{"accent":"#38bdf8"},"rules":[{"selector":"box.button.primary:hover","style":{"bg":"$accent","bold":true}}]}}
 ```
 
 Rules:
@@ -134,6 +140,21 @@ Theme names:
 - `default`
 - `light`
 - `ocean`
+
+`theme_spec`:
+
+- `base` (optional): `default|light|ocean`; defaults to the currently active theme
+- `vars` (optional): object map `name -> color`, where name matches `^[A-Za-z][A-Za-z0-9_]*$`
+- `chrome` (optional): partial component chrome override (`input_prefix`, list markers, box glyphs, etc.)
+- `overlays` (optional): optional style overrides for `disabled`, `readonly`, `focused`, `hovered`, `active`, `validation_error`, `validation_warning`, `validation_success`
+- `rules` (optional): array of `{ "selector": string, "style": StyleOverride }`
+
+Limits:
+
+- `vars` max entries: `256`
+- `rules` max entries: `2048`
+- selector max length: `256`
+- var name max length: `64`
 
 Action names:
 
@@ -246,16 +267,16 @@ Runtime error event (machine-readable runtime-side rejection):
 Config acknowledgement event (runtime config negotiation result):
 
 ```json
-{"type":"event","name":"config_ack","applied":["keybindings"],"rejected":[{"key":"theme","reason":"UnknownThemeName"}]}
+{"type":"event","name":"config_ack","applied":["keybindings"],"rejected":[{"key":"theme_spec","reason":"UnknownThemeSpecBase"}]}
 ```
 
 `config_ack` rules:
 
 - runtime emits one `config_ack` for every backend `config` message attempt
-- `applied` is an array of top-level keys that were accepted (`keybindings`, `theme`)
+- `applied` is an array of top-level keys that were accepted (`keybindings`, `theme_spec`)
 - `rejected` is an array of `{ "key": string, "reason": string }`
 - malformed config that cannot be mapped to a specific top-level key uses `key:"config"`
-- keybindings are evaluated first; if keybindings fail, runtime rejects `theme` in the same message with reason `keybindings_rejected`
+- keybindings are evaluated first; if keybindings fail, runtime rejects `theme_spec` in the same message with reason `keybindings_rejected`
 
 Sequencing acknowledgement event:
 
@@ -311,7 +332,7 @@ Node types (current):
 ### Common fields (most nodes)
 
 - `id` (string, required)
-- `class` (string, optional): theme class hook (exact string match; no selector language)
+- `class` (string, optional): theme class hook string; selector matching tokenizes by ASCII whitespace
 - layout: `w`/`h` (int?), `flex` (int), `pad` (int), `clip` (bool)
 - interaction/state: `hoverable` (bool), `mouseable` (bool), `focusable` (bool), `disabled` (bool), `readonly` (bool)
 - focus scoping: `focus_scope` (string, optional)
@@ -388,6 +409,28 @@ Range contract:
 ```
 
 `input`/`textarea` also accept `placeholder_style` and `selection_style`.
+
+`fg` / `bg` accept:
+
+- `#RRGGBB`
+- named color
+- `$var_name` (theme variable reference)
+
+### Theme Selectors (v1)
+
+Selector grammar (single compound selector, no combinators):
+
+`[kind|*][#id]{.class_token}{:state}`
+
+- kind: `vbox|hbox|grid|box|scroll|overlay|text|styled_text|input|textarea|list`
+- states: `hover`, `focus`, `active`, `disabled`, `readonly`, `validation_error`, `validation_warning`, `validation_success`
+
+Class matching:
+
+- node `class` is split on ASCII whitespace into tokens
+- selector class token matching uses dot-boundary prefix semantics
+- `.button` matches token `button`, `button.primary`, `button.primary.large`
+- `.button.primary` matches token `button.primary`, `button.primary.large`
 
 ### Grid (`type:"grid"`)
 

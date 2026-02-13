@@ -30,6 +30,7 @@ pub const ColorOverride = union(enum) {
     inherit,
     clear,
     rgb: Rgb,
+    @"var": []const u8,
 };
 
 /// Node-provided style (tri-state fields allow inheritance and clearing).
@@ -115,11 +116,13 @@ pub fn merge(parent: Style, override: ?StyleOverride) Style {
         .inherit => out.fg,
         .clear => null,
         .rgb => |c| c,
+        .@"var" => out.fg,
     };
     out.bg = switch (o.bg) {
         .inherit => out.bg,
         .clear => null,
         .rgb => |c| c,
+        .@"var" => out.bg,
     };
 
     const set_mask = o.attrs_set;

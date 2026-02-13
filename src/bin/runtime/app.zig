@@ -163,7 +163,7 @@ fn emitRuntimeErrorEvent(
 
 fn configRejectedKeyForParseError(parse_err: anyerror) []const u8 {
     return switch (parse_err) {
-        error.UnknownThemeName => "theme",
+        error.UnknownThemeSpecBase, error.InvalidSelector, error.ThemeSpecTooLarge => "theme_spec",
         error.UnknownKeyAction, error.InvalidKeybindingRule => "keybindings",
         else => "config",
     };
@@ -175,7 +175,7 @@ fn parseErrIsKeybindingsReject(parse_err: anyerror) bool {
 
 fn buildConfigRejectEntries(
     parse_err: anyerror,
-    has_theme_key: bool,
+    has_theme_spec_key: bool,
     storage: *[2]protocol.ConfigAckRejected,
 ) []const protocol.ConfigAckRejected {
     storage[0] = .{
@@ -183,9 +183,9 @@ fn buildConfigRejectEntries(
         .reason = @errorName(parse_err),
     };
     var len: usize = 1;
-    if (has_theme_key and parseErrIsKeybindingsReject(parse_err)) {
+    if (has_theme_spec_key and parseErrIsKeybindingsReject(parse_err)) {
         storage[len] = .{
-            .key = "theme",
+            .key = "theme_spec",
             .reason = "keybindings_rejected",
         };
         len += 1;
@@ -203,7 +203,7 @@ const BackendMsgKind = enum {
 const BackendLineHint = struct {
     kind: BackendMsgKind = .other,
     seq: ?u64 = null,
-    has_theme_key: bool = false,
+    has_theme_spec_key: bool = false,
 };
 
 fn parseBackendLineHint(allocator: std.mem.Allocator, line: []const u8) BackendLineHint {
@@ -233,7 +233,7 @@ fn parseBackendLineHint(allocator: std.mem.Allocator, line: []const u8) BackendL
     return .{
         .kind = .config,
         .seq = seq,
-        .has_theme_key = obj.get("theme") != null,
+        .has_theme_spec_key = obj.get("theme_spec") != null,
     };
 }
 
@@ -270,10 +270,10 @@ fn emitAckEvent(
 pub fn writeConfigRejectAckAndErrorEvents(
     writer: anytype,
     parse_err: anyerror,
-    has_theme_key: bool,
+    has_theme_spec_key: bool,
 ) !void {
     var rejected_storage: [2]protocol.ConfigAckRejected = undefined;
-    const rejected = buildConfigRejectEntries(parse_err, has_theme_key, &rejected_storage);
+    const rejected = buildConfigRejectEntries(parse_err, has_theme_spec_key, &rejected_storage);
     try protocol.writeConfigAckEventJsonl(writer, .{
         .applied = &.{},
         .rejected = rejected,
@@ -305,10 +305,10 @@ fn emitConfigRejectAckEvent(
     log_sink: *log.LogSink,
     backend_in: anytype,
     parse_err: anyerror,
-    has_theme_key: bool,
+    has_theme_spec_key: bool,
 ) !void {
     var rejected_storage: [2]protocol.ConfigAckRejected = undefined;
-    const rejected = buildConfigRejectEntries(parse_err, has_theme_key, &rejected_storage);
+    const rejected = buildConfigRejectEntries(parse_err, has_theme_spec_key, &rejected_storage);
     try emitConfigAckEvent(log_sink, backend_in, &.{}, rejected);
 }
 
@@ -475,6 +475,8 @@ pub fn run() !void {
     var keymap = try keybindings.KeymapState.initDefaults(allocator);
     defer keymap.deinit();
     var active_theme: render.Theme = render.default_theme;
+    var active_theme_owned: ?render.OwnedTheme = null;
+    defer if (active_theme_owned) |*owned| owned.deinit();
     var error_event_limiter: ErrorEventLimiter = .{};
     var emergency_last_ns: u64 = 0;
     const emergency_window_ns: u64 = 900 * std.time.ns_per_ms;
@@ -601,12 +603,15 @@ pub fn run() !void {
                         } else if (line_hint.kind == .config and
                             (e == error.UnknownKeyAction or
                                 e == error.InvalidKeybindingRule or
-                                e == error.UnknownThemeName or
+                                e == error.UnknownThemeSpecBase or
+                                e == error.InvalidSelector or
+                                e == error.ThemeSpecTooLarge or
                                 e == error.MissingField or
-                                e == error.WrongType))
+                                e == error.WrongType or
+                                e == error.UnknownField))
                         {
                             log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
-                            try emitConfigRejectAckEvent(&log_sink, child_in, e, line_hint.has_theme_key);
+                            try emitConfigRejectAckEvent(&log_sink, child_in, e, line_hint.has_theme_spec_key);
                             try emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
@@ -897,9 +902,9 @@ pub fn run() !void {
                                         .reason = @errorName(e),
                                     };
                                     rejected_len += 1;
-                                    if (cfg.theme != null) {
+                                    if (cfg.theme_spec != null) {
                                         rejected_keys[rejected_len] = .{
-                                            .key = "theme",
+                                            .key = "theme_spec",
                                             .reason = "keybindings_rejected",
                                         };
                                         rejected_len += 1;
@@ -928,10 +933,43 @@ pub fn run() !void {
                                 applied_keys[applied_len] = "keybindings";
                                 applied_len += 1;
                             }
-                            if (cfg.theme) |theme_name| {
-                                active_theme = render.themeFromName(theme_name);
-                                log.logPrint(&log_sink, "CONFIG_APPLY kind=theme name={s}\n", .{@tagName(theme_name)});
-                                applied_keys[applied_len] = "theme";
+                            if (cfg.theme_spec) |theme_spec| {
+                                var base_theme = active_theme;
+                                if (theme_spec.base) |base_name| {
+                                    base_theme = render.themeFromName(base_name);
+                                }
+                                const built = render.buildThemeFromSpec(allocator, base_theme, theme_spec) catch |e| {
+                                    log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
+                                    rejected_keys[rejected_len] = .{
+                                        .key = "theme_spec",
+                                        .reason = @errorName(e),
+                                    };
+                                    rejected_len += 1;
+                                    try emitConfigAckEvent(
+                                        &log_sink,
+                                        child_in,
+                                        applied_keys[0..applied_len],
+                                        rejected_keys[0..rejected_len],
+                                    );
+                                    try emitRuntimeErrorEvent(
+                                        &log_sink,
+                                        child_in,
+                                        &error_event_limiter,
+                                        "config_rejected",
+                                        "backend config rejected",
+                                        null,
+                                        @errorName(e),
+                                    );
+                                    if (cfg.seq) |seq| {
+                                        try emitAckEvent(&log_sink, child_in, &backend_flush_pending, seq, .ignored_invalid, @errorName(e));
+                                    }
+                                    break;
+                                };
+                                if (active_theme_owned != null) active_theme_owned.?.deinit();
+                                active_theme_owned = built;
+                                active_theme = active_theme_owned.?.theme;
+                                log.logPrint(&log_sink, "CONFIG_APPLY kind=theme_spec rules={d} vars={d}\n", .{ theme_spec.rules.len, theme_spec.vars.len });
+                                applied_keys[applied_len] = "theme_spec";
                                 applied_len += 1;
                             }
                             if (applied_len != 0 or rejected_len != 0) {

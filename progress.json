@@ -667,8 +667,7 @@
       "Wheel-scroll the list under the cursor; confirm the hovered `item` updates under the same cursor position (opt-in behavior)",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 25,
     "name": "tracer-slice",
@@ -699,8 +698,7 @@
       "Remove mouseable/hoverable from the tree (if experimenting in a custom backend) and confirm terminal text selection works normally",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 26,
     "name": "tracer-slice",
@@ -729,8 +727,7 @@
       "Exit with 'x' or Ctrl-C; confirm terminal is restored (cursor visible, normal input behavior)",
       "Emergency exit chord remains: Ctrl-G then Ctrl-G"
     ]
-  }
-  ,
+  },
   {
     "slice": 27,
     "name": "tracer-slice",
@@ -789,8 +786,7 @@
       "Clipboard: send `{\"type\":\"clipboard\",\"op\":\"read\",\"request_id\":1}` and confirm runtime returns clipboard read event + paste semantic event",
       "Windows cross-compile: `zig build -Dtarget=x86_64-windows` succeeds"
     ]
-  }
-  ,
+  },
   {
     "slice": 29,
     "name": "tracer-slice",
@@ -820,8 +816,7 @@
       "Confirm all local keybindings still work via the new keymap system",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 30,
     "name": "tracer-slice",
@@ -854,8 +849,7 @@
       "Confirm focus events continue to emit the resolved focused id after both scoped cycles and scope jumps",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 31,
     "name": "tracer-slice",
@@ -900,8 +894,7 @@
       "Ctrl+A to select all in input, confirm entire text selected",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 32,
     "name": "tracer-slice",
@@ -930,8 +923,7 @@
       "Try interacting locally with those widgets; backend patches continue to re-assert controlled state on subsequent ticks",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 33,
     "name": "tracer-slice",
@@ -963,8 +955,7 @@
       "zig build test",
       "Exit demo with x"
     ]
-  }
-  ,
+  },
   {
     "slice": 34,
     "name": "tracer-slice",
@@ -994,8 +985,7 @@
       "Run runtime with sequencing telemetry enabled: `TUI_EMIT_RENDER_EVENTS=1 zig build demo` and confirm backend log shows `EVENT_RX name=rendered ...`",
       "Optionally set backpressure knobs and verify startup `RUNTIME_CFG` log reflects values (e.g. `TUI_MAX_FPS=60 TUI_MAX_PENDING_TARGETS=64 TUI_QUEUE_OVERFLOW=drop_oldest`)"
     ]
-  }
-  ,
+  },
   {
     "slice": 35,
     "name": "tracer-slice",
@@ -1030,8 +1020,7 @@
       "Test with TUI_UNICODE_AMBIGUOUS_WIDTH=wide zig build demo; confirm ambiguous chars (e.g., some CJK punctuation) render as 2 cells",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 36,
     "name": "tracer-slice",
@@ -1062,8 +1051,7 @@
       "Verify docs/PROTOCOL.md describes version compatibility policy",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 37,
     "name": "tracer-slice",
@@ -1090,8 +1078,7 @@
       "Confirm backend can branch on `hello.caps` and `hello.limits` without reading env vars",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 38,
     "name": "tracer-slice",
@@ -1117,8 +1104,7 @@
       "Send invalid config keybinding/theme; confirm runtime emits `event:error code=config_rejected` with context",
       "Send repeated invalid lines quickly; confirm error events are rate-limited (logs show `EVENT_DROP name=error ... reason=rate_limit`)"
     ]
-  }
-  ,
+  },
   {
     "slice": 39,
     "name": "tracer-slice",
@@ -1151,8 +1137,7 @@
       "Send config with both keybindings and theme where keybindings are invalid; confirm both are rejected with theme reason='keybindings_rejected'",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 40,
     "name": "tracer-slice",
@@ -1187,8 +1172,7 @@
       "Send config with seq; confirm ack status=applied after processing",
       "Exit with 'x'"
     ]
-  }
-  ,
+  },
   {
     "slice": 41,
     "name": "tracer-slice",
@@ -1287,6 +1271,35 @@
       "In demo, focus panel \"Virtual List (1e6 rows)\" and scroll/select; confirm `EVENT_RX name=vlist_range ...` and targeted vlist window patches",
       "Inspect emitted select/activate events for vlist and confirm `item` + `index` are present",
       "Exit with 'x'"
+    ]
+  },
+  {
+    "slice": 44,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Rich selector-based theming with pseudo-states, theme variables, and runtime config.theme_spec",
+    "deliverables": [
+      "src/lib/render/theme_engine.zig: selector parser/matcher, state flags, compiled-rule cascade with specificity+order, and rule buckets",
+      "src/lib/render/theme.zig + src/lib/render/mod.zig: theme vars, dynamic OwnedTheme builder from ThemeSpec, selector-engine integration in paint pipeline, and legacy fallback behavior",
+      "src/lib/protocol/{types,parse,write,mod}.zig + protocol.schema.json: StyleOverride supports $vars, ConfigMsg.theme_spec types/parse/write, strict theme_spec validation + limits, and new parse errors",
+      "src/bin/runtime/app.zig: config.theme_spec apply/swap with owned theme lifecycle, config_ack handling for theme_spec, and parse-error rejection mapping",
+      "src/bin/demo/main.zig: demo keybinding (y) to send runtime theme_spec updates",
+      "src/test/{protocol,style,render,keybindings}.zig: coverage for $var parse/write, theme_spec parse/write, selector matching/cascade, pseudo-state rendering, missing var fallback, and config reject behavior",
+      "docs/PROTOCOL.md: documented selector grammar, class token semantics, $var colors, and config.theme_spec"
+    ],
+    "boundaries_hit": [
+      "Selector v1 constrained to a single compound selector (no combinators/grouping)",
+      "Theme vars resolve at render-time; missing vars degrade to inherit with rate-limited THEME_VAR_MISS logging",
+      "theme_spec size protections enforced (rules/vars/name/selector limits)"
+    ],
+    "timestamp": "2026-02-11",
+    "manual_repro": [
+      "zig build test",
+      "python3 scripts/check_protocol_schema.py --docs docs/PROTOCOL.md",
+      "zig build demo",
+      "In demo: press t to cycle base theme; press y to toggle dynamic theme_spec and observe hover/focus styling changes",
+      "Send backend config with theme_spec vars/rules and confirm runtime emits config_ack applied includes theme_spec",
+      "Verify $missing var in styles does not crash; runtime logs THEME_VAR_MISS and style inherits"
     ]
   }
 ]

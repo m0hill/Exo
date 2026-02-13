@@ -86,6 +86,126 @@ test "render: theme chrome changes input prefix" {
     try std.testing.expectEqualStrings("»", cellText(&frame, 0, 0));
 }
 
+test "render: theme_spec focus rule resolves vars" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 12);
+    frame.clear(' ');
+
+    var vars = [_]protocol.ThemeVarEntry{
+        .{ .name = "accent", .value = .{ .r = 0x12, .g = 0x34, .b = 0x56 } },
+    };
+    var rules = [_]protocol.ThemeRule{
+        .{ .selector = "input:focus", .style = .{ .bg = .{ .@"var" = "accent" } } },
+    };
+    var owned = try render.buildThemeFromSpec(std.testing.allocator, render.default_theme, .{
+        .vars = vars[0..],
+        .rules = rules[0..],
+    });
+    defer owned.deinit();
+
+    const root = protocol.Node{ .input = .{ .id = "i", .placeholder = "name" } };
+    const st: render.InputState = .{ .id = "i", .value = "", .cursor = 0, .scroll_x = 0 };
+    render.renderToFrame(root, .{ .theme = &owned.theme, .focused_id = "i", .inputs = &.{st} }, &frame);
+    try std.testing.expectEqual(@as(u1, 1), frame.rowSlice(0)[0].style.has_bg);
+    try std.testing.expectEqual(@as(u24, 0x123456), frame.rowSlice(0)[0].style.bg);
+}
+
+test "render: missing theme var behaves as inherit" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 4);
+    frame.clear(' ');
+
+    var rules = [_]protocol.ThemeRule{
+        .{ .selector = "text", .style = .{ .fg = .{ .@"var" = "missing" } } },
+    };
+    var owned = try render.buildThemeFromSpec(std.testing.allocator, render.default_theme, .{
+        .rules = rules[0..],
+    });
+    defer owned.deinit();
+
+    const root = protocol.Node{ .text = .{ .id = "t", .text = "X" } };
+    render.renderToFrame(root, .{ .theme = &owned.theme }, &frame);
+    try std.testing.expectEqual(@as(u1, 0), frame.rowSlice(0)[0].style.has_fg);
+}
+
+test "render: theme_spec disabled selector applies" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 4);
+    frame.clear(' ');
+
+    var rules = [_]protocol.ThemeRule{
+        .{ .selector = "text:disabled", .style = .{ .fg = .{ .rgb = .{ .r = 0xaa, .g = 0x00, .b = 0x00 } } } },
+    };
+    var owned = try render.buildThemeFromSpec(std.testing.allocator, render.default_theme, .{
+        .rules = rules[0..],
+    });
+    defer owned.deinit();
+
+    const root = protocol.Node{ .text = .{ .id = "t", .disabled = true, .text = "X" } };
+    render.renderToFrame(root, .{ .theme = &owned.theme }, &frame);
+    try std.testing.expectEqual(@as(u1, 1), frame.rowSlice(0)[0].style.has_fg);
+    try std.testing.expectEqual(@as(u24, 0xaa0000), frame.rowSlice(0)[0].style.fg);
+}
+
+test "render: non-list hover selector applies under theme engine" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 4);
+    frame.clear(' ');
+
+    var rules = [_]protocol.ThemeRule{
+        .{ .selector = "text:hover", .style = .{ .fg = .{ .rgb = .{ .r = 0x12, .g = 0xab, .b = 0x34 } } } },
+    };
+    var owned = try render.buildThemeFromSpec(std.testing.allocator, render.default_theme, .{
+        .rules = rules[0..],
+    });
+    defer owned.deinit();
+
+    const root = protocol.Node{ .text = .{ .id = "t", .hoverable = true, .text = "X" } };
+    render.renderToFrame(root, .{ .theme = &owned.theme, .hovered_id = "t" }, &frame);
+    try std.testing.expectEqual(@as(u1, 1), frame.rowSlice(0)[0].style.has_fg);
+    try std.testing.expectEqual(@as(u24, 0x12ab34), frame.rowSlice(0)[0].style.fg);
+}
+
+test "render: selected list row does not pick up hovered selector" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 2, 12);
+    frame.clear(' ');
+
+    var items = [_]protocol.Node{
+        .{ .text = .{ .id = "row-a", .text = "A" } },
+        .{ .text = .{ .id = "row-b", .text = "B" } },
+    };
+    const root = protocol.Node{ .list = .{
+        .id = "l",
+        .children = items[0..],
+    } };
+    const st: render.ListState = .{ .id = "l", .selected_id = "row-a", .scroll = 0 };
+    var rules = [_]protocol.ThemeRule{
+        .{ .selector = "text:hover", .style = .{ .fg = .{ .rgb = .{ .r = 0xff, .g = 0x00, .b = 0x00 } } } },
+    };
+    var owned = try render.buildThemeFromSpec(std.testing.allocator, render.default_theme, .{
+        .rules = rules[0..],
+    });
+    defer owned.deinit();
+
+    render.renderToFrame(root, .{
+        .theme = &owned.theme,
+        .focused_id = "l",
+        .hovered_id = "l",
+        .hovered_item = "row-a",
+        .lists = &.{st},
+    }, &frame);
+
+    // Selected row remains inverse-highlighted and should not receive hover fg override.
+    try std.testing.expectEqual(@as(u1, 0), frame.rowSlice(0)[2].style.has_fg);
+    try std.testing.expect((frame.rowSlice(0)[2].style.attrs & style.ATTR_INVERSE) != 0);
+}
+
 test "render: box draws border" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);

@@ -178,7 +178,7 @@ pub const ConfigAckEvent = struct {
 
 pub const ConfigMsg = struct {
     keybindings: ?KeybindingsConfig = null,
-    theme: ?ThemeName = null,
+    theme_spec: ?ThemeSpec = null,
     seq: ?u64 = null,
     v: ?u32 = null,
 };
@@ -187,6 +187,51 @@ pub const ThemeName = enum {
     default,
     light,
     ocean,
+};
+
+pub const ThemeVarEntry = struct {
+    name: []const u8,
+    value: style.Rgb,
+};
+
+pub const ThemeRule = struct {
+    selector: []const u8,
+    style: style.StyleOverride,
+};
+
+pub const ThemeChrome = struct {
+    input_prefix: ?[]const u8 = null,
+    input_placeholder_left: ?[]const u8 = null,
+    input_placeholder_right: ?[]const u8 = null,
+    list_selected_focused_marker: ?[]const u8 = null,
+    list_selected_marker: ?[]const u8 = null,
+    list_unselected_marker: ?[]const u8 = null,
+    list_selected_inverse: ?bool = null,
+    box_top_left: ?[]const u8 = null,
+    box_top_right: ?[]const u8 = null,
+    box_bottom_left: ?[]const u8 = null,
+    box_bottom_right: ?[]const u8 = null,
+    box_horizontal: ?[]const u8 = null,
+    box_vertical: ?[]const u8 = null,
+};
+
+pub const ThemeOverlays = struct {
+    disabled: ?style.StyleOverride = null,
+    readonly: ?style.StyleOverride = null,
+    focused: ?style.StyleOverride = null,
+    hovered: ?style.StyleOverride = null,
+    active: ?style.StyleOverride = null,
+    validation_error: ?style.StyleOverride = null,
+    validation_warning: ?style.StyleOverride = null,
+    validation_success: ?style.StyleOverride = null,
+};
+
+pub const ThemeSpec = struct {
+    base: ?ThemeName = null,
+    vars: []ThemeVarEntry = &.{},
+    chrome: ThemeChrome = .{},
+    overlays: ThemeOverlays = .{},
+    rules: []ThemeRule = &.{},
 };
 
 pub const KeybindingsConfig = struct {
@@ -771,8 +816,10 @@ pub const ParseMsgError = error{
     UnknownClipboardTarget,
     UnknownPasteSource,
     UnknownAckStatus,
-    UnknownThemeName,
+    UnknownThemeSpecBase,
     UnknownKeyAction,
     InvalidKeybindingRule,
+    InvalidSelector,
+    ThemeSpecTooLarge,
     UnknownField,
 } || std.mem.Allocator.Error;

@@ -226,6 +226,7 @@ pub fn main() !void {
     };
     const theme_cycle = [_]protocol.ThemeName{ .default, .light, .ocean };
     var theme_idx: usize = 0;
+    var theme_spec_enabled: bool = false;
 
     var md_blocks: ?tui.markdown.StreamBlocks = null;
     defer if (md_blocks) |*s| s.deinit();
@@ -735,11 +736,51 @@ pub fn main() !void {
                             } else if (std.mem.eql(u8, k.key, "t") and k.mods == 0) {
                                 theme_idx = (theme_idx + 1) % theme_cycle.len;
                                 const next_theme = theme_cycle[theme_idx];
-                                std.debug.print("CONFIG_TX kind=theme name={s}\n", .{@tagName(next_theme)});
+                                std.debug.print("CONFIG_TX kind=theme_spec base={s}\n", .{@tagName(next_theme)});
                                 try protocol.writeConfigJsonlVersion(out, .{
-                                    .theme = next_theme,
+                                    .theme_spec = .{
+                                        .base = next_theme,
+                                    },
                                     .v = DEMO_PROTOCOL_VERSION,
                                 }, null);
+                                try out.flush();
+                            } else if ((std.mem.eql(u8, k.key, "y") and k.mods == 0) or
+                                (std.mem.eql(u8, k.key, "y") and k.mods == 2) or
+                                std.mem.eql(u8, k.key, "ctrl-y"))
+                            {
+                                theme_spec_enabled = !theme_spec_enabled;
+                                if (theme_spec_enabled) {
+                                    var vars = [_]protocol.ThemeVarEntry{
+                                        .{ .name = "accent", .value = .{ .r = 0xf9, .g = 0x73, .b = 0x16 } },
+                                    };
+                                    var rules = [_]protocol.ThemeRule{
+                                        .{ .selector = "box.button:hover", .style = .{ .bg = .{ .@"var" = "accent" }, .attrs_set = tui.style.ATTR_BOLD, .attrs_values = tui.style.ATTR_BOLD } },
+                                        .{ .selector = "*:focus", .style = .{ .attrs_set = tui.style.ATTR_UNDERLINE, .attrs_values = tui.style.ATTR_UNDERLINE } },
+                                    };
+                                    std.debug.print("CONFIG_TX kind=theme_spec enabled=true\n", .{});
+                                    try protocol.writeConfigJsonlVersion(out, .{
+                                        .theme_spec = .{
+                                            .base = theme_cycle[theme_idx],
+                                            .vars = vars[0..],
+                                            .chrome = .{
+                                                .input_prefix = "Y ",
+                                            },
+                                            .overlays = .{
+                                                .hovered = .{ .bg = .{ .@"var" = "accent" } },
+                                            },
+                                            .rules = rules[0..],
+                                        },
+                                        .v = DEMO_PROTOCOL_VERSION,
+                                    }, null);
+                                } else {
+                                    std.debug.print("CONFIG_TX kind=theme_spec enabled=false\n", .{});
+                                    try protocol.writeConfigJsonlVersion(out, .{
+                                        .theme_spec = .{
+                                            .base = theme_cycle[theme_idx],
+                                        },
+                                        .v = DEMO_PROTOCOL_VERSION,
+                                    }, null);
+                                }
                                 try out.flush();
                             } else if ((std.mem.eql(u8, k.key, "x") and k.mods == 0) or
                                 std.mem.eql(u8, k.key, "ctrl-c") or

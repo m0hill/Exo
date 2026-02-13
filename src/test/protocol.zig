@@ -718,15 +718,16 @@ test "protocol: reject malformed keybinding rule" {
     try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), missing_key));
 }
 
-test "protocol: parse config theme-only message" {
+test "protocol: parse config theme_spec-only message" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme\":\"ocean\"}");
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme_spec\":{\"base\":\"ocean\"}}");
     switch (msg) {
         .config => |cfg| {
             try std.testing.expect(cfg.keybindings == null);
-            try std.testing.expectEqual(protocol.ThemeName.ocean, cfg.theme orelse return error.TestUnexpectedResult);
+            const spec = cfg.theme_spec orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(protocol.ThemeName.ocean, spec.base orelse return error.TestUnexpectedResult);
             try std.testing.expectEqual(@as(?u64, null), cfg.seq);
         },
         else => return error.TestUnexpectedResult,
@@ -737,7 +738,7 @@ test "protocol: parse config seq field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme\":\"ocean\",\"seq\":41}");
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme_spec\":{\"base\":\"ocean\"},\"seq\":41}");
     switch (msg) {
         .config => |cfg| try std.testing.expectEqual(@as(?u64, 41), cfg.seq),
         else => return error.TestUnexpectedResult,
@@ -752,12 +753,126 @@ test "protocol: write+parse config seq field" {
     defer buf.deinit(std.testing.allocator);
 
     try protocol.writeConfigJsonl(buf.writer(std.testing.allocator), .{
-        .theme = .light,
+        .theme_spec = .{ .base = .light },
         .seq = 77,
     });
     const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
     switch (msg) {
         .config => |cfg| try std.testing.expectEqual(@as(?u64, 77), cfg.seq),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: parse style override color var" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const msg = try protocol.parseMsgLeaky(
+        arena.allocator(),
+        "{\"type\":\"patch\",\"root\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"x\",\"style\":{\"fg\":\"$accent\",\"bg\":\"$surface\"}}}",
+    );
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+    const t = switch (root) {
+        .text => |tx| tx,
+        else => return error.TestUnexpectedResult,
+    };
+    const st = t.style orelse return error.TestUnexpectedResult;
+    try std.testing.expect(st.fg == .@"var");
+    try std.testing.expect(st.bg == .@"var");
+    try std.testing.expectEqualStrings("accent", st.fg.@"var");
+    try std.testing.expectEqualStrings("surface", st.bg.@"var");
+}
+
+test "protocol: write style override color var" {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeStyleOverrideJson(buf.writer(std.testing.allocator), .{
+        .fg = .{ .@"var" = "accent" },
+        .bg = .{ .@"var" = "surface" },
+    });
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"fg\":\"$accent\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"bg\":\"$surface\"") != null);
+}
+
+test "protocol: parse config theme_spec message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"config\",\"theme_spec\":{" ++
+        "\"base\":\"light\"," ++
+        "\"vars\":{\"accent\":\"#38bdf8\"}," ++
+        "\"chrome\":{\"input_prefix\":\"# \"}," ++
+        "\"overlays\":{\"focused\":{\"underline\":true}}," ++
+        "\"rules\":[{\"selector\":\"box.button.primary:hover\",\"style\":{\"bg\":\"$accent\",\"bold\":true}}]" ++
+        "}}";
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
+    switch (msg) {
+        .config => |cfg| {
+            const spec = cfg.theme_spec orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(protocol.ThemeName.light, spec.base orelse return error.TestUnexpectedResult);
+            try std.testing.expectEqual(@as(usize, 1), spec.vars.len);
+            try std.testing.expectEqualStrings("accent", spec.vars[0].name);
+            try std.testing.expectEqual(@as(usize, 1), spec.rules.len);
+            try std.testing.expectEqualStrings("box.button.primary:hover", spec.rules[0].selector);
+            try std.testing.expect(spec.rules[0].style.bg == .@"var");
+            try std.testing.expectEqualStrings("accent", spec.rules[0].style.bg.@"var");
+            try std.testing.expect(spec.chrome.input_prefix != null);
+            try std.testing.expect(spec.overlays.focused != null);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: reject theme_spec var names with hyphen" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const line =
+        "{\"type\":\"config\",\"theme_spec\":{" ++
+        "\"vars\":{\"accent-primary\":\"#38bdf8\"}" ++
+        "}}";
+    try std.testing.expectError(error.WrongType, protocol.parseMsgLeaky(arena.allocator(), line));
+}
+
+test "protocol: write+parse config theme_spec message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var rules = [_]protocol.ThemeRule{
+        .{
+            .selector = "box.button.primary:hover",
+            .style = .{ .bg = .{ .@"var" = "accent" }, .attrs_set = style.ATTR_BOLD, .attrs_values = style.ATTR_BOLD },
+        },
+    };
+    var vars = [_]protocol.ThemeVarEntry{
+        .{ .name = "accent", .value = .{ .r = 0x38, .g = 0xbd, .b = 0xf8 } },
+    };
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeConfigJsonl(buf.writer(std.testing.allocator), .{
+        .theme_spec = .{
+            .base = .default,
+            .vars = vars[0..],
+            .rules = rules[0..],
+        },
+    });
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (msg) {
+        .config => |cfg| {
+            const spec = cfg.theme_spec orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(@as(usize, 1), spec.rules.len);
+            try std.testing.expect(spec.rules[0].style.bg == .@"var");
+            try std.testing.expectEqualStrings("accent", spec.rules[0].style.bg.@"var");
+        },
         else => return error.TestUnexpectedResult,
     }
 }
@@ -1005,7 +1120,7 @@ test "protocol: parse config_ack event" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"event\",\"name\":\"config_ack\",\"applied\":[\"keybindings\"],\"rejected\":[{\"key\":\"theme\",\"reason\":\"UnknownThemeName\"}]}";
+        "{\"type\":\"event\",\"name\":\"config_ack\",\"applied\":[\"keybindings\"],\"rejected\":[{\"key\":\"theme_spec\",\"reason\":\"UnknownThemeSpecBase\"}]}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     switch (msg) {
         .event => |ev| switch (ev) {
@@ -1013,8 +1128,8 @@ test "protocol: parse config_ack event" {
                 try std.testing.expectEqual(@as(usize, 1), ack.applied.len);
                 try std.testing.expectEqualStrings("keybindings", ack.applied[0]);
                 try std.testing.expectEqual(@as(usize, 1), ack.rejected.len);
-                try std.testing.expectEqualStrings("theme", ack.rejected[0].key);
-                try std.testing.expectEqualStrings("UnknownThemeName", ack.rejected[0].reason);
+                try std.testing.expectEqualStrings("theme_spec", ack.rejected[0].key);
+                try std.testing.expectEqualStrings("UnknownThemeSpecBase", ack.rejected[0].reason);
             },
             else => return error.TestUnexpectedResult,
         },
@@ -1029,9 +1144,9 @@ test "protocol: write+parse config_ack event" {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
 
-    const applied = [_][]const u8{ "keybindings", "theme" };
+    const applied = [_][]const u8{ "keybindings", "theme_spec" };
     const rejected = [_]protocol.ConfigAckRejected{
-        .{ .key = "theme", .reason = "keybindings_rejected" },
+        .{ .key = "theme_spec", .reason = "keybindings_rejected" },
     };
     try protocol.writeConfigAckEventJsonl(buf.writer(std.testing.allocator), .{
         .applied = applied[0..],
@@ -1044,9 +1159,9 @@ test "protocol: write+parse config_ack event" {
             .config_ack => |ack| {
                 try std.testing.expectEqual(@as(usize, 2), ack.applied.len);
                 try std.testing.expectEqualStrings("keybindings", ack.applied[0]);
-                try std.testing.expectEqualStrings("theme", ack.applied[1]);
+                try std.testing.expectEqualStrings("theme_spec", ack.applied[1]);
                 try std.testing.expectEqual(@as(usize, 1), ack.rejected.len);
-                try std.testing.expectEqualStrings("theme", ack.rejected[0].key);
+                try std.testing.expectEqualStrings("theme_spec", ack.rejected[0].key);
                 try std.testing.expectEqualStrings("keybindings_rejected", ack.rejected[0].reason);
             },
             else => return error.TestUnexpectedResult,
@@ -1202,7 +1317,7 @@ test "protocol: parse top-level version field across message types" {
 
     const config_msg = try protocol.parseMsgLeaky(
         arena.allocator(),
-        "{\"type\":\"config\",\"v\":1,\"theme\":\"default\"}",
+        "{\"type\":\"config\",\"v\":1,\"theme_spec\":{\"base\":\"default\"}}",
     );
     switch (config_msg) {
         .config => |cfg| try std.testing.expectEqual(@as(?u32, 1), cfg.v),

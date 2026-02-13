@@ -115,3 +115,53 @@ test "style: wide styled_text span applies to both cells" {
     try std.testing.expectEqual(@as(u24, 0x00ff00), left.style.fg);
     try std.testing.expectEqual(@as(u24, 0x00ff00), right.style.fg);
 }
+
+test "theme_engine: selector parse and class prefix match" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const parsed = try render.theme_engine.parseSelectorLeaky(arena.allocator(), "box.button.primary:hover", 256, 8);
+    try std.testing.expectEqual(render.theme_engine.NodeKind.box, parsed.kind orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqual(@as(usize, 1), parsed.classes.len);
+    try std.testing.expectEqualStrings("button.primary", parsed.classes[0]);
+    try std.testing.expect((parsed.states_required.bits & render.theme_engine.StateFlags.hovered) != 0);
+
+    try std.testing.expect(render.theme_engine.matchSelectorClassToken("button", "button.primary large"));
+    try std.testing.expect(render.theme_engine.matchSelectorClassToken("button.primary", "button.primary.large"));
+    try std.testing.expect(!render.theme_engine.matchSelectorClassToken("button.primary", "button secondary"));
+}
+
+test "theme_engine: specificity and order cascade" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const cls_button = try a.alloc([]const u8, 1);
+    cls_button[0] = "button";
+    const cls_button_primary = try a.alloc([]const u8, 1);
+    cls_button_primary[0] = "button.primary";
+
+    const rules = [_]render.theme_engine.CompiledRule{
+        .{
+            .kind = .box,
+            .classes = cls_button,
+            .style = .{ .fg = .{ .rgb = .{ .r = 0x11, .g = 0x11, .b = 0x11 } } },
+            .specificity = 11,
+            .order = 0,
+        },
+        .{
+            .kind = .box,
+            .classes = cls_button_primary,
+            .style = .{ .fg = .{ .rgb = .{ .r = 0x22, .g = 0x22, .b = 0x22 } } },
+            .specificity = 11,
+            .order = 1,
+        },
+    };
+    const engine = try render.theme_engine.buildEngineLeaky(a, rules[0..]);
+    const out = engine.resolveOverride(.box, "b", "button.primary.large", .{}) orelse return error.TestUnexpectedResult;
+    const fg = switch (out.fg) {
+        .rgb => |c| c,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(u8, 0x22), fg.r);
+}

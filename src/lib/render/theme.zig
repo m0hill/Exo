@@ -1,12 +1,7 @@
+const std = @import("std");
 const style = @import("../style.zig");
 const protocol = @import("../protocol/mod.zig");
-
-pub const Overlay = struct {
-    fg: ?style.Rgb = null,
-    bg: ?style.Rgb = null,
-    attrs_set: u8 = 0,
-    attrs_values: u8 = 0,
-};
+const theme_engine = @import("theme_engine.zig");
 
 pub const SemanticTokens = struct {
     surface: style.Rgb,
@@ -35,57 +30,83 @@ pub const ComponentChrome = struct {
     box_vertical: []const u8 = "│",
 };
 
-pub const NodeKind = enum {
-    vbox,
-    hbox,
-    grid,
-    box,
-    scroll,
-    overlay,
-    text,
-    styled_text,
-    input,
-    textarea,
-    list,
-};
+pub const NodeKind = theme_engine.NodeKind;
+pub const StateFlags = theme_engine.StateFlags;
+pub const CompiledRule = theme_engine.CompiledRule;
+pub const ThemeEngine = theme_engine.ThemeEngine;
 
-pub const ClassRule = struct {
-    kind: NodeKind,
-    class: ?[]const u8 = null,
-    style: style.StyleOverride = .{},
+pub const VarEntry = struct {
+    name: []const u8,
+    value: style.Rgb,
 };
 
 pub const Theme = struct {
     tokens: SemanticTokens,
     chrome: ComponentChrome = .{},
-    disabled_overlay: Overlay,
-    readonly_overlay: Overlay,
-    validation_error_overlay: Overlay,
-    validation_warning_overlay: Overlay,
-    validation_success_overlay: Overlay,
-    focused_overlay: Overlay,
-    hovered_overlay: Overlay,
-    active_overlay: Overlay,
-    rules: []const ClassRule,
+    vars: []const VarEntry = &.{},
+    engine: ThemeEngine,
 
-    pub fn resolveBaseStyleOverride(self: Theme, kind: NodeKind, class: ?[]const u8) ?style.StyleOverride {
-        if (class) |cls| {
-            for (self.rules) |rule| {
-                if (rule.kind != kind) continue;
-                if (rule.class) |rcls| {
-                    if (std.mem.eql(u8, rcls, cls)) return rule.style;
-                }
-            }
-        }
-        for (self.rules) |rule| {
-            if (rule.kind != kind) continue;
-            if (rule.class == null) return rule.style;
+    pub fn lookupVar(self: Theme, name: []const u8) ?style.Rgb {
+        for (self.vars) |entry| {
+            if (std.mem.eql(u8, entry.name, name)) return entry.value;
         }
         return null;
     }
+
+    pub fn resolveStyleOverrideVars(self: Theme, ov: ?style.StyleOverride) ?style.StyleOverride {
+        var out = ov orelse return null;
+
+        out.fg = switch (out.fg) {
+            .@"var" => |name| blk: {
+                const c = self.lookupVar(name) orelse {
+                    logThemeVarMiss(name);
+                    break :blk style.ColorOverride.inherit;
+                };
+                break :blk .{ .rgb = c };
+            },
+            else => out.fg,
+        };
+        out.bg = switch (out.bg) {
+            .@"var" => |name| blk: {
+                const c = self.lookupVar(name) orelse {
+                    logThemeVarMiss(name);
+                    break :blk style.ColorOverride.inherit;
+                };
+                break :blk .{ .rgb = c };
+            },
+            else => out.bg,
+        };
+        return out;
+    }
+
+    pub fn resolveEngineOverride(
+        self: Theme,
+        kind: NodeKind,
+        id: []const u8,
+        class: ?[]const u8,
+        state_flags: StateFlags,
+    ) ?style.StyleOverride {
+        return self.resolveStyleOverrideVars(self.engine.resolveOverride(kind, id, class, state_flags));
+    }
 };
 
-const std = @import("std");
+pub const OwnedTheme = struct {
+    arena: std.heap.ArenaAllocator,
+    theme: Theme,
+
+    pub fn deinit(self: *OwnedTheme) void {
+        self.arena.deinit();
+    }
+};
+
+var theme_var_miss_count: usize = 0;
+const theme_var_miss_limit: usize = 64;
+
+fn logThemeVarMiss(name: []const u8) void {
+    if (theme_var_miss_count >= theme_var_miss_limit) return;
+    theme_var_miss_count += 1;
+    std.debug.print("THEME_VAR_MISS name={s}\n", .{name});
+}
 
 fn rgb(r: u8, g: u8, b: u8) style.Rgb {
     return .{ .r = r, .g = g, .b = b };
@@ -107,6 +128,55 @@ fn attrs(set: u8, values: u8) style.StyleOverride {
     return .{ .attrs_set = set, .attrs_values = values };
 }
 
+const BaseRule = struct {
+    kind: NodeKind,
+    class: ?[]const u8 = null,
+    style: style.StyleOverride = .{},
+};
+
+const OverlayRule = struct {
+    state_mask: u16,
+    style: style.StyleOverride,
+};
+
+fn buildBuiltinRules(
+    comptime base_rules: []const BaseRule,
+    comptime overlay_rules: []const OverlayRule,
+) [base_rules.len + overlay_rules.len]CompiledRule {
+    var out: [base_rules.len + overlay_rules.len]CompiledRule = undefined;
+    var order: u16 = 0;
+
+    for (base_rules, 0..) |rule, idx| {
+        const classes: []const []const u8 = if (rule.class) |cls| &.{cls} else &.{};
+        out[idx] = .{
+            .kind = rule.kind,
+            .id = null,
+            .classes = classes,
+            .states_required = .{},
+            .style = rule.style,
+            .specificity = if (rule.class != null) 11 else 1,
+            .order = order,
+        };
+        order +%= 1;
+    }
+
+    const offset: usize = base_rules.len;
+    for (overlay_rules, 0..) |ov, idx| {
+        out[offset + idx] = .{
+            .kind = null,
+            .id = null,
+            .classes = &.{},
+            .states_required = .{ .bits = ov.state_mask },
+            .style = ov.style,
+            .specificity = 11,
+            .order = order,
+        };
+        order +%= 1;
+    }
+
+    return out;
+}
+
 const tokens_default: SemanticTokens = .{
     .surface = rgb(0x0f, 0x17, 0x2a),
     .text = rgb(0xe5, 0xe7, 0xeb),
@@ -118,7 +188,20 @@ const tokens_default: SemanticTokens = .{
     .@"error" = rgb(0xef, 0x44, 0x44),
 };
 
-const rules_default = [_]ClassRule{
+const vars_default = [_]VarEntry{
+    .{ .name = "surface", .value = tokens_default.surface },
+    .{ .name = "surface_2", .value = rgb(0x11, 0x1b, 0x34) },
+    .{ .name = "surface_alt", .value = rgb(0x1e, 0x29, 0x47) },
+    .{ .name = "text", .value = tokens_default.text },
+    .{ .name = "muted", .value = tokens_default.muted },
+    .{ .name = "border", .value = tokens_default.border },
+    .{ .name = "accent", .value = tokens_default.accent },
+    .{ .name = "success", .value = tokens_default.success },
+    .{ .name = "warn", .value = tokens_default.warn },
+    .{ .name = "error", .value = tokens_default.@"error" },
+};
+
+const base_rules_default = [_]BaseRule{
     .{ .kind = .vbox, .class = "surface", .style = bg(tokens_default.surface) },
     .{ .kind = .hbox, .class = "surface", .style = bg(tokens_default.surface) },
     .{ .kind = .box, .class = "panel", .style = fgbg(tokens_default.border, tokens_default.surface) },
@@ -148,30 +231,32 @@ const rules_default = [_]ClassRule{
     .{ .kind = .text, .class = "status.error", .style = fg(tokens_default.@"error") },
 };
 
+const overlay_rules_default = [_]OverlayRule{
+    .{ .state_mask = StateFlags.disabled, .style = attrs(style.ATTR_DIM, style.ATTR_DIM) },
+    .{ .state_mask = StateFlags.readonly, .style = attrs(style.ATTR_ITALIC, style.ATTR_ITALIC) },
+    .{ .state_mask = StateFlags.validation_error, .style = fg(tokens_default.@"error") },
+    .{ .state_mask = StateFlags.validation_warning, .style = fg(tokens_default.warn) },
+    .{ .state_mask = StateFlags.validation_success, .style = fg(tokens_default.success) },
+    .{ .state_mask = StateFlags.focused, .style = attrs(style.ATTR_BOLD, style.ATTR_BOLD) },
+    .{ .state_mask = StateFlags.hovered, .style = bg(rgb(0x1e, 0x29, 0x47)) },
+    .{
+        .state_mask = StateFlags.active,
+        .style = .{
+            .bg = .{ .rgb = rgb(0x31, 0x41, 0x64) },
+            .attrs_set = style.ATTR_BOLD,
+            .attrs_values = style.ATTR_BOLD,
+        },
+    },
+};
+
+const compiled_rules_default = buildBuiltinRules(base_rules_default[0..], overlay_rules_default[0..]);
+const engine_indices_default = theme_engine.buildConstIndexData(compiled_rules_default[0..]);
+const engine_default: ThemeEngine = theme_engine.buildEngineFromConstIndices(compiled_rules_default[0..], &engine_indices_default);
+
 pub const default_theme: Theme = .{
     .tokens = tokens_default,
-    .disabled_overlay = .{
-        .attrs_set = style.ATTR_DIM,
-        .attrs_values = style.ATTR_DIM,
-    },
-    .readonly_overlay = .{
-        .attrs_set = style.ATTR_ITALIC,
-        .attrs_values = style.ATTR_ITALIC,
-    },
-    .validation_error_overlay = .{ .fg = tokens_default.@"error" },
-    .validation_warning_overlay = .{ .fg = tokens_default.warn },
-    .validation_success_overlay = .{ .fg = tokens_default.success },
-    .focused_overlay = .{
-        .attrs_set = style.ATTR_BOLD,
-        .attrs_values = style.ATTR_BOLD,
-    },
-    .hovered_overlay = .{ .bg = rgb(0x1e, 0x29, 0x47) },
-    .active_overlay = .{
-        .bg = rgb(0x31, 0x41, 0x64),
-        .attrs_set = style.ATTR_BOLD,
-        .attrs_values = style.ATTR_BOLD,
-    },
-    .rules = rules_default[0..],
+    .vars = vars_default[0..],
+    .engine = engine_default,
 };
 
 const tokens_light: SemanticTokens = .{
@@ -185,7 +270,20 @@ const tokens_light: SemanticTokens = .{
     .@"error" = rgb(0xdc, 0x26, 0x26),
 };
 
-const rules_light = [_]ClassRule{
+const vars_light = [_]VarEntry{
+    .{ .name = "surface", .value = tokens_light.surface },
+    .{ .name = "surface_2", .value = rgb(0xef, 0xf6, 0xff) },
+    .{ .name = "surface_alt", .value = rgb(0xe2, 0xe8, 0xf0) },
+    .{ .name = "text", .value = tokens_light.text },
+    .{ .name = "muted", .value = tokens_light.muted },
+    .{ .name = "border", .value = tokens_light.border },
+    .{ .name = "accent", .value = tokens_light.accent },
+    .{ .name = "success", .value = tokens_light.success },
+    .{ .name = "warn", .value = tokens_light.warn },
+    .{ .name = "error", .value = tokens_light.@"error" },
+};
+
+const base_rules_light = [_]BaseRule{
     .{ .kind = .vbox, .class = "surface", .style = bg(tokens_light.surface) },
     .{ .kind = .hbox, .class = "surface", .style = bg(tokens_light.surface) },
     .{ .kind = .box, .class = "panel", .style = fgbg(tokens_light.border, tokens_light.surface) },
@@ -215,6 +313,28 @@ const rules_light = [_]ClassRule{
     .{ .kind = .text, .class = "status.error", .style = fg(tokens_light.@"error") },
 };
 
+const overlay_rules_light = [_]OverlayRule{
+    .{ .state_mask = StateFlags.disabled, .style = attrs(style.ATTR_DIM, style.ATTR_DIM) },
+    .{ .state_mask = StateFlags.readonly, .style = attrs(style.ATTR_ITALIC, style.ATTR_ITALIC) },
+    .{ .state_mask = StateFlags.validation_error, .style = fg(tokens_light.@"error") },
+    .{ .state_mask = StateFlags.validation_warning, .style = fg(tokens_light.warn) },
+    .{ .state_mask = StateFlags.validation_success, .style = fg(tokens_light.success) },
+    .{ .state_mask = StateFlags.focused, .style = attrs(style.ATTR_UNDERLINE, style.ATTR_UNDERLINE) },
+    .{ .state_mask = StateFlags.hovered, .style = bg(rgb(0xe2, 0xe8, 0xf0)) },
+    .{
+        .state_mask = StateFlags.active,
+        .style = .{
+            .bg = .{ .rgb = rgb(0xcb, 0xd5, 0xe1) },
+            .attrs_set = style.ATTR_BOLD,
+            .attrs_values = style.ATTR_BOLD,
+        },
+    },
+};
+
+const compiled_rules_light = buildBuiltinRules(base_rules_light[0..], overlay_rules_light[0..]);
+const engine_indices_light = theme_engine.buildConstIndexData(compiled_rules_light[0..]);
+const engine_light: ThemeEngine = theme_engine.buildEngineFromConstIndices(compiled_rules_light[0..], &engine_indices_light);
+
 pub const light_theme: Theme = .{
     .tokens = tokens_light,
     .chrome = .{
@@ -224,28 +344,8 @@ pub const light_theme: Theme = .{
         .list_unselected_marker = "  ",
         .list_selected_inverse = false,
     },
-    .disabled_overlay = .{
-        .attrs_set = style.ATTR_DIM,
-        .attrs_values = style.ATTR_DIM,
-    },
-    .readonly_overlay = .{
-        .attrs_set = style.ATTR_ITALIC,
-        .attrs_values = style.ATTR_ITALIC,
-    },
-    .validation_error_overlay = .{ .fg = tokens_light.@"error" },
-    .validation_warning_overlay = .{ .fg = tokens_light.warn },
-    .validation_success_overlay = .{ .fg = tokens_light.success },
-    .focused_overlay = .{
-        .attrs_set = style.ATTR_UNDERLINE,
-        .attrs_values = style.ATTR_UNDERLINE,
-    },
-    .hovered_overlay = .{ .bg = rgb(0xe2, 0xe8, 0xf0) },
-    .active_overlay = .{
-        .bg = rgb(0xcb, 0xd5, 0xe1),
-        .attrs_set = style.ATTR_BOLD,
-        .attrs_values = style.ATTR_BOLD,
-    },
-    .rules = rules_light[0..],
+    .vars = vars_light[0..],
+    .engine = engine_light,
 };
 
 const tokens_ocean: SemanticTokens = .{
@@ -259,7 +359,20 @@ const tokens_ocean: SemanticTokens = .{
     .@"error" = rgb(0xfb, 0x71, 0x71),
 };
 
-const rules_ocean = [_]ClassRule{
+const vars_ocean = [_]VarEntry{
+    .{ .name = "surface", .value = tokens_ocean.surface },
+    .{ .name = "surface_2", .value = rgb(0x08, 0x2f, 0x49) },
+    .{ .name = "surface_alt", .value = rgb(0x08, 0x3e, 0x5a) },
+    .{ .name = "text", .value = tokens_ocean.text },
+    .{ .name = "muted", .value = tokens_ocean.muted },
+    .{ .name = "border", .value = tokens_ocean.border },
+    .{ .name = "accent", .value = tokens_ocean.accent },
+    .{ .name = "success", .value = tokens_ocean.success },
+    .{ .name = "warn", .value = tokens_ocean.warn },
+    .{ .name = "error", .value = tokens_ocean.@"error" },
+};
+
+const base_rules_ocean = [_]BaseRule{
     .{ .kind = .vbox, .class = "surface", .style = bg(tokens_ocean.surface) },
     .{ .kind = .hbox, .class = "surface", .style = bg(tokens_ocean.surface) },
     .{ .kind = .box, .class = "panel", .style = fgbg(tokens_ocean.border, tokens_ocean.surface) },
@@ -289,6 +402,28 @@ const rules_ocean = [_]ClassRule{
     .{ .kind = .text, .class = "status.error", .style = fg(tokens_ocean.@"error") },
 };
 
+const overlay_rules_ocean = [_]OverlayRule{
+    .{ .state_mask = StateFlags.disabled, .style = attrs(style.ATTR_DIM, style.ATTR_DIM) },
+    .{ .state_mask = StateFlags.readonly, .style = attrs(style.ATTR_ITALIC, style.ATTR_ITALIC) },
+    .{ .state_mask = StateFlags.validation_error, .style = fg(tokens_ocean.@"error") },
+    .{ .state_mask = StateFlags.validation_warning, .style = fg(tokens_ocean.warn) },
+    .{ .state_mask = StateFlags.validation_success, .style = fg(tokens_ocean.success) },
+    .{ .state_mask = StateFlags.focused, .style = attrs(style.ATTR_BOLD | style.ATTR_UNDERLINE, style.ATTR_BOLD | style.ATTR_UNDERLINE) },
+    .{ .state_mask = StateFlags.hovered, .style = bg(rgb(0x08, 0x3e, 0x5a)) },
+    .{
+        .state_mask = StateFlags.active,
+        .style = .{
+            .bg = .{ .rgb = rgb(0x0e, 0x5c, 0x82) },
+            .attrs_set = style.ATTR_BOLD,
+            .attrs_values = style.ATTR_BOLD,
+        },
+    },
+};
+
+const compiled_rules_ocean = buildBuiltinRules(base_rules_ocean[0..], overlay_rules_ocean[0..]);
+const engine_indices_ocean = theme_engine.buildConstIndexData(compiled_rules_ocean[0..]);
+const engine_ocean: ThemeEngine = theme_engine.buildEngineFromConstIndices(compiled_rules_ocean[0..], &engine_indices_ocean);
+
 pub const ocean_theme: Theme = .{
     .tokens = tokens_ocean,
     .chrome = .{
@@ -305,28 +440,8 @@ pub const ocean_theme: Theme = .{
         .box_horizontal = "─",
         .box_vertical = "│",
     },
-    .disabled_overlay = .{
-        .attrs_set = style.ATTR_DIM,
-        .attrs_values = style.ATTR_DIM,
-    },
-    .readonly_overlay = .{
-        .attrs_set = style.ATTR_ITALIC,
-        .attrs_values = style.ATTR_ITALIC,
-    },
-    .validation_error_overlay = .{ .fg = tokens_ocean.@"error" },
-    .validation_warning_overlay = .{ .fg = tokens_ocean.warn },
-    .validation_success_overlay = .{ .fg = tokens_ocean.success },
-    .focused_overlay = .{
-        .attrs_set = style.ATTR_BOLD | style.ATTR_UNDERLINE,
-        .attrs_values = style.ATTR_BOLD | style.ATTR_UNDERLINE,
-    },
-    .hovered_overlay = .{ .bg = rgb(0x08, 0x3e, 0x5a) },
-    .active_overlay = .{
-        .bg = rgb(0x0e, 0x5c, 0x82),
-        .attrs_set = style.ATTR_BOLD,
-        .attrs_values = style.ATTR_BOLD,
-    },
-    .rules = rules_ocean[0..],
+    .vars = vars_ocean[0..],
+    .engine = engine_ocean,
 };
 
 pub fn themeFromName(name: protocol.ThemeName) Theme {
@@ -334,5 +449,186 @@ pub fn themeFromName(name: protocol.ThemeName) Theme {
         .default => default_theme,
         .light => light_theme,
         .ocean => ocean_theme,
+    };
+}
+
+fn cloneColorOverride(a: std.mem.Allocator, ov: style.ColorOverride) !style.ColorOverride {
+    return switch (ov) {
+        .inherit => .inherit,
+        .clear => .clear,
+        .rgb => |c| .{ .rgb = c },
+        .@"var" => |name| .{ .@"var" = try a.dupe(u8, name) },
+    };
+}
+
+fn cloneStyleOverride(a: std.mem.Allocator, ov: style.StyleOverride) !style.StyleOverride {
+    return .{
+        .fg = try cloneColorOverride(a, ov.fg),
+        .bg = try cloneColorOverride(a, ov.bg),
+        .attrs_set = ov.attrs_set,
+        .attrs_values = ov.attrs_values,
+    };
+}
+
+fn appendOverlayRule(
+    rules: *std.ArrayList(CompiledRule),
+    a: std.mem.Allocator,
+    state_mask: u16,
+    st: style.StyleOverride,
+    order: *u16,
+) !void {
+    if (st.fg == .inherit and st.bg == .inherit and st.attrs_set == 0) return;
+    try rules.append(a, .{
+        .kind = null,
+        .id = null,
+        .classes = &.{},
+        .states_required = .{ .bits = state_mask },
+        .style = try cloneStyleOverride(a, st),
+        .specificity = 11,
+        .order = order.*,
+    });
+    order.* +%= 1;
+}
+
+fn appendExistingEngineRules(
+    rules: *std.ArrayList(CompiledRule),
+    a: std.mem.Allocator,
+    existing: ThemeEngine,
+    order: *u16,
+) !void {
+    for (existing.all_rules) |rule| {
+        const classes = try a.alloc([]const u8, rule.classes.len);
+        for (rule.classes, 0..) |cls, idx| {
+            classes[idx] = try a.dupe(u8, cls);
+        }
+        try rules.append(a, .{
+            .kind = rule.kind,
+            .id = if (rule.id) |id| try a.dupe(u8, id) else null,
+            .classes = classes,
+            .states_required = rule.states_required,
+            .style = try cloneStyleOverride(a, rule.style),
+            .specificity = rule.specificity,
+            .order = order.*,
+        });
+        order.* +%= 1;
+    }
+}
+
+fn mergeVars(a: std.mem.Allocator, base: []const VarEntry, spec: []const protocol.ThemeVarEntry) ![]VarEntry {
+    var out = std.ArrayList(VarEntry).empty;
+    for (base) |entry| {
+        try out.append(a, .{
+            .name = try a.dupe(u8, entry.name),
+            .value = entry.value,
+        });
+    }
+
+    for (spec) |entry| {
+        var replaced = false;
+        for (out.items) |*existing| {
+            if (!std.mem.eql(u8, existing.name, entry.name)) continue;
+            existing.value = entry.value;
+            replaced = true;
+            break;
+        }
+        if (!replaced) {
+            try out.append(a, .{
+                .name = try a.dupe(u8, entry.name),
+                .value = entry.value,
+            });
+        }
+    }
+    return try out.toOwnedSlice(a);
+}
+
+fn cloneChrome(a: std.mem.Allocator, chrome: ComponentChrome) !ComponentChrome {
+    return .{
+        .input_prefix = try a.dupe(u8, chrome.input_prefix),
+        .input_placeholder_left = try a.dupe(u8, chrome.input_placeholder_left),
+        .input_placeholder_right = try a.dupe(u8, chrome.input_placeholder_right),
+        .list_selected_focused_marker = try a.dupe(u8, chrome.list_selected_focused_marker),
+        .list_selected_marker = try a.dupe(u8, chrome.list_selected_marker),
+        .list_unselected_marker = try a.dupe(u8, chrome.list_unselected_marker),
+        .list_selected_inverse = chrome.list_selected_inverse,
+        .box_top_left = try a.dupe(u8, chrome.box_top_left),
+        .box_top_right = try a.dupe(u8, chrome.box_top_right),
+        .box_bottom_left = try a.dupe(u8, chrome.box_bottom_left),
+        .box_bottom_right = try a.dupe(u8, chrome.box_bottom_right),
+        .box_horizontal = try a.dupe(u8, chrome.box_horizontal),
+        .box_vertical = try a.dupe(u8, chrome.box_vertical),
+    };
+}
+
+pub fn buildThemeFromSpec(
+    allocator: std.mem.Allocator,
+    current_base: Theme,
+    spec: protocol.ThemeSpec,
+) !OwnedTheme {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const a = arena.allocator();
+
+    var base = current_base;
+    if (spec.base) |name| {
+        base = themeFromName(name);
+    }
+
+    var out_theme = base;
+    out_theme.chrome = try cloneChrome(a, base.chrome);
+
+    out_theme.vars = try mergeVars(a, base.vars, spec.vars);
+
+    if (spec.chrome.input_prefix) |v| out_theme.chrome.input_prefix = try a.dupe(u8, v);
+    if (spec.chrome.input_placeholder_left) |v| out_theme.chrome.input_placeholder_left = try a.dupe(u8, v);
+    if (spec.chrome.input_placeholder_right) |v| out_theme.chrome.input_placeholder_right = try a.dupe(u8, v);
+    if (spec.chrome.list_selected_focused_marker) |v| out_theme.chrome.list_selected_focused_marker = try a.dupe(u8, v);
+    if (spec.chrome.list_selected_marker) |v| out_theme.chrome.list_selected_marker = try a.dupe(u8, v);
+    if (spec.chrome.list_unselected_marker) |v| out_theme.chrome.list_unselected_marker = try a.dupe(u8, v);
+    if (spec.chrome.list_selected_inverse) |v| out_theme.chrome.list_selected_inverse = v;
+    if (spec.chrome.box_top_left) |v| out_theme.chrome.box_top_left = try a.dupe(u8, v);
+    if (spec.chrome.box_top_right) |v| out_theme.chrome.box_top_right = try a.dupe(u8, v);
+    if (spec.chrome.box_bottom_left) |v| out_theme.chrome.box_bottom_left = try a.dupe(u8, v);
+    if (spec.chrome.box_bottom_right) |v| out_theme.chrome.box_bottom_right = try a.dupe(u8, v);
+    if (spec.chrome.box_horizontal) |v| out_theme.chrome.box_horizontal = try a.dupe(u8, v);
+    if (spec.chrome.box_vertical) |v| out_theme.chrome.box_vertical = try a.dupe(u8, v);
+
+    var compiled = std.ArrayList(CompiledRule).empty;
+    var order: u16 = 0;
+
+    try appendExistingEngineRules(&compiled, a, base.engine, &order);
+
+    if (spec.overlays.disabled) |st| try appendOverlayRule(&compiled, a, StateFlags.disabled, st, &order);
+    if (spec.overlays.readonly) |st| try appendOverlayRule(&compiled, a, StateFlags.readonly, st, &order);
+    if (spec.overlays.focused) |st| try appendOverlayRule(&compiled, a, StateFlags.focused, st, &order);
+    if (spec.overlays.hovered) |st| try appendOverlayRule(&compiled, a, StateFlags.hovered, st, &order);
+    if (spec.overlays.active) |st| try appendOverlayRule(&compiled, a, StateFlags.active, st, &order);
+    if (spec.overlays.validation_error) |st| try appendOverlayRule(&compiled, a, StateFlags.validation_error, st, &order);
+    if (spec.overlays.validation_warning) |st| try appendOverlayRule(&compiled, a, StateFlags.validation_warning, st, &order);
+    if (spec.overlays.validation_success) |st| try appendOverlayRule(&compiled, a, StateFlags.validation_success, st, &order);
+
+    for (spec.rules) |rule| {
+        const parsed = try theme_engine.parseSelectorLeaky(a, rule.selector, 256, 8);
+        const cloned_classes = try a.alloc([]const u8, parsed.classes.len);
+        for (parsed.classes, 0..) |cls, idx| {
+            cloned_classes[idx] = try a.dupe(u8, cls);
+        }
+        try compiled.append(a, .{
+            .kind = parsed.kind,
+            .id = if (parsed.id) |id| try a.dupe(u8, id) else null,
+            .classes = cloned_classes,
+            .states_required = parsed.states_required,
+            .style = try cloneStyleOverride(a, rule.style),
+            .specificity = parsed.specificity,
+            .order = order,
+        });
+        order +%= 1;
+    }
+
+    const all_rules = try compiled.toOwnedSlice(a);
+    out_theme.engine = try theme_engine.buildEngineLeaky(a, all_rules);
+
+    return .{
+        .arena = arena,
+        .theme = out_theme,
     };
 }

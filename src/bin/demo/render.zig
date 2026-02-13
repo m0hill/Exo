@@ -941,7 +941,7 @@ fn writeRootNode(
     try writeTextNodeLayoutStyled(
         writer,
         "hint",
-        "Unicode demo: e\u{0301} 漢 🇯🇵 👩‍👩‍👧‍👦 🧑‍💻\nTabs expand to configured stops (TUI_TAB_WIDTH, default 4). Ambiguous-width policy: TUI_UNICODE_AMBIGUOUS_WIDTH=narrow|wide.\nTab/Shift-Tab cycle within the current focus scope. '[' and ']' jump across scopes.\nMouse: click input/list to focus; click list row to select; wheel over list scrolls.\nArrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. x or Ctrl-C exits.\nEmergency exit chord: Ctrl-G then Ctrl-G (restores terminal and exits immediately).\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
+        "Unicode demo: e\u{0301} 漢 🇯🇵 👩‍👩‍👧‍👦 🧑‍💻\nTabs expand to configured stops (TUI_TAB_WIDTH, default 4). Ambiguous-width policy: TUI_UNICODE_AMBIGUOUS_WIDTH=narrow|wide.\nTab/Shift-Tab cycle within the current focus scope. '[' and ']' jump across scopes.\nMouse: click input/list to focus; click list row to select; wheel over list scrolls.\nArrows/Home/End edit inputs. Alt-b/Alt-f word jump. j/k moves list. Enter activates. q toggles. t cycles theme. y toggles theme_spec. x or Ctrl-C exits.\nEmergency exit chord: Ctrl-G then Ctrl-G (restores terminal and exits immediately).\nMake the terminal narrow to see this line soft-wrap on typical widths without any backend changes.",
         null,
         3,
         0,

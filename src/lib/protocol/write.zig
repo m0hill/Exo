@@ -33,6 +33,11 @@ const KeybindingsConfig = protocol.KeybindingsConfig;
 const KeybindingRule = protocol.KeybindingRule;
 const KeyAction = protocol.KeyAction;
 const ThemeName = protocol.ThemeName;
+const ThemeSpec = protocol.ThemeSpec;
+const ThemeRule = protocol.ThemeRule;
+const ThemeVarEntry = protocol.ThemeVarEntry;
+const ThemeChrome = protocol.ThemeChrome;
+const ThemeOverlays = protocol.ThemeOverlays;
 const HelloCaps = protocol.HelloCaps;
 const HelloLimits = protocol.HelloLimits;
 const StateMode = protocol.StateMode;
@@ -672,7 +677,7 @@ pub fn writeConfigJsonl(writer: anytype, cfg: protocol.ConfigMsg) !void {
 }
 
 pub fn writeConfigJsonlVersion(writer: anytype, cfg: protocol.ConfigMsg, v: ?u32) !void {
-    if (cfg.keybindings == null and cfg.theme == null) return ParseMsgError.MissingField;
+    if (cfg.keybindings == null and cfg.theme_spec == null) return ParseMsgError.MissingField;
     try writer.writeAll("{\"type\":\"config\"");
     try writeVersionField(writer, v orelse cfg.v);
     if (cfg.keybindings) |kb| {
@@ -686,18 +691,155 @@ pub fn writeConfigJsonlVersion(writer: anytype, cfg: protocol.ConfigMsg, v: ?u32
         try writeKeybindingContext(writer, "action", kb.action, &wrote_context);
         try writer.writeByte('}');
     }
-    if (cfg.theme) |theme| {
-        try writer.writeAll(",\"theme\":");
-        try writeJsonString(writer, switch (theme) {
-            .default => "default",
-            .light => "light",
-            .ocean => "ocean",
-        });
+    if (cfg.theme_spec) |theme_spec| {
+        try writer.writeAll(",\"theme_spec\":");
+        try writeThemeSpecJson(writer, theme_spec);
     }
     if (cfg.seq) |seq| {
         try writer.print(",\"seq\":{d}", .{seq});
     }
     try writer.writeAll("}\n");
+}
+
+fn writeThemeSpecJson(writer: anytype, spec: ThemeSpec) !void {
+    try writer.writeByte('{');
+    var first: bool = true;
+
+    if (spec.base) |base| {
+        try writeJsonFieldName(writer, "base", &first);
+        try writeJsonString(writer, switch (base) {
+            .default => "default",
+            .light => "light",
+            .ocean => "ocean",
+        });
+    }
+    if (spec.vars.len != 0) {
+        try writeJsonFieldName(writer, "vars", &first);
+        try writeThemeVarsJson(writer, spec.vars);
+    }
+
+    const has_chrome =
+        spec.chrome.input_prefix != null or
+        spec.chrome.input_placeholder_left != null or
+        spec.chrome.input_placeholder_right != null or
+        spec.chrome.list_selected_focused_marker != null or
+        spec.chrome.list_selected_marker != null or
+        spec.chrome.list_unselected_marker != null or
+        spec.chrome.list_selected_inverse != null or
+        spec.chrome.box_top_left != null or
+        spec.chrome.box_top_right != null or
+        spec.chrome.box_bottom_left != null or
+        spec.chrome.box_bottom_right != null or
+        spec.chrome.box_horizontal != null or
+        spec.chrome.box_vertical != null;
+    if (has_chrome) {
+        try writeJsonFieldName(writer, "chrome", &first);
+        try writeThemeChromeJson(writer, spec.chrome);
+    }
+
+    const has_overlays =
+        spec.overlays.disabled != null or
+        spec.overlays.readonly != null or
+        spec.overlays.focused != null or
+        spec.overlays.hovered != null or
+        spec.overlays.active != null or
+        spec.overlays.validation_error != null or
+        spec.overlays.validation_warning != null or
+        spec.overlays.validation_success != null;
+    if (has_overlays) {
+        try writeJsonFieldName(writer, "overlays", &first);
+        try writeThemeOverlaysJson(writer, spec.overlays);
+    }
+
+    if (spec.rules.len != 0) {
+        try writeJsonFieldName(writer, "rules", &first);
+        try writeThemeRulesJson(writer, spec.rules);
+    }
+
+    try writer.writeByte('}');
+}
+
+fn writeJsonFieldName(writer: anytype, name: []const u8, first: *bool) !void {
+    if (!first.*) try writer.writeByte(',');
+    first.* = false;
+    try writeJsonString(writer, name);
+    try writer.writeByte(':');
+}
+
+fn writeThemeVarsJson(writer: anytype, vars: []const ThemeVarEntry) !void {
+    try writer.writeByte('{');
+    for (vars, 0..) |entry, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        try writeJsonString(writer, entry.name);
+        try writer.writeByte(':');
+        try writeRgbHexJsonString(writer, entry.value);
+    }
+    try writer.writeByte('}');
+}
+
+fn writeThemeChromeJson(writer: anytype, chrome: ThemeChrome) !void {
+    try writer.writeByte('{');
+    var first: bool = true;
+    try writeOptionalStringField(writer, "input_prefix", chrome.input_prefix, &first);
+    try writeOptionalStringField(writer, "input_placeholder_left", chrome.input_placeholder_left, &first);
+    try writeOptionalStringField(writer, "input_placeholder_right", chrome.input_placeholder_right, &first);
+    try writeOptionalStringField(writer, "list_selected_focused_marker", chrome.list_selected_focused_marker, &first);
+    try writeOptionalStringField(writer, "list_selected_marker", chrome.list_selected_marker, &first);
+    try writeOptionalStringField(writer, "list_unselected_marker", chrome.list_unselected_marker, &first);
+    try writeOptionalBoolField(writer, "list_selected_inverse", chrome.list_selected_inverse, &first);
+    try writeOptionalStringField(writer, "box_top_left", chrome.box_top_left, &first);
+    try writeOptionalStringField(writer, "box_top_right", chrome.box_top_right, &first);
+    try writeOptionalStringField(writer, "box_bottom_left", chrome.box_bottom_left, &first);
+    try writeOptionalStringField(writer, "box_bottom_right", chrome.box_bottom_right, &first);
+    try writeOptionalStringField(writer, "box_horizontal", chrome.box_horizontal, &first);
+    try writeOptionalStringField(writer, "box_vertical", chrome.box_vertical, &first);
+    try writer.writeByte('}');
+}
+
+fn writeThemeOverlaysJson(writer: anytype, overlays: ThemeOverlays) !void {
+    try writer.writeByte('{');
+    var first: bool = true;
+    try writeOptionalStyleField(writer, "disabled", overlays.disabled, &first);
+    try writeOptionalStyleField(writer, "readonly", overlays.readonly, &first);
+    try writeOptionalStyleField(writer, "focused", overlays.focused, &first);
+    try writeOptionalStyleField(writer, "hovered", overlays.hovered, &first);
+    try writeOptionalStyleField(writer, "active", overlays.active, &first);
+    try writeOptionalStyleField(writer, "validation_error", overlays.validation_error, &first);
+    try writeOptionalStyleField(writer, "validation_warning", overlays.validation_warning, &first);
+    try writeOptionalStyleField(writer, "validation_success", overlays.validation_success, &first);
+    try writer.writeByte('}');
+}
+
+fn writeThemeRulesJson(writer: anytype, rules: []const ThemeRule) !void {
+    try writer.writeByte('[');
+    for (rules, 0..) |rule, idx| {
+        if (idx != 0) try writer.writeByte(',');
+        try writer.writeByte('{');
+        try writer.writeAll("\"selector\":");
+        try writeJsonString(writer, rule.selector);
+        try writer.writeAll(",\"style\":");
+        try writeStyleOverrideJson(writer, rule.style);
+        try writer.writeByte('}');
+    }
+    try writer.writeByte(']');
+}
+
+fn writeOptionalStringField(writer: anytype, key: []const u8, value: ?[]const u8, first: *bool) !void {
+    const v = value orelse return;
+    try writeJsonFieldName(writer, key, first);
+    try writeJsonString(writer, v);
+}
+
+fn writeOptionalBoolField(writer: anytype, key: []const u8, value: ?bool, first: *bool) !void {
+    const v = value orelse return;
+    try writeJsonFieldName(writer, key, first);
+    try writer.writeAll(if (v) "true" else "false");
+}
+
+fn writeOptionalStyleField(writer: anytype, key: []const u8, value: ?style.StyleOverride, first: *bool) !void {
+    const st = value orelse return;
+    try writeJsonFieldName(writer, key, first);
+    try writeStyleOverrideJson(writer, st);
 }
 
 fn writeKeybindingContext(
@@ -1479,6 +1621,13 @@ pub fn writeStyleOverrideJson(writer: anytype, st: style.StyleOverride) !void {
             try writer.writeAll("\"fg\":");
             try writeRgbHexJsonString(writer, c);
         },
+        .@"var" => |name| {
+            if (!first) try writer.writeByte(',');
+            first = false;
+            try writer.writeAll("\"fg\":\"$");
+            try writer.writeAll(name);
+            try writer.writeByte('"');
+        },
     }
 
     switch (st.bg) {
@@ -1493,6 +1642,13 @@ pub fn writeStyleOverrideJson(writer: anytype, st: style.StyleOverride) !void {
             first = false;
             try writer.writeAll("\"bg\":");
             try writeRgbHexJsonString(writer, c);
+        },
+        .@"var" => |name| {
+            if (!first) try writer.writeByte(',');
+            first = false;
+            try writer.writeAll("\"bg\":\"$");
+            try writer.writeAll(name);
+            try writer.writeByte('"');
         },
     }
 

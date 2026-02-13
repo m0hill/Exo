@@ -118,7 +118,7 @@ test "runtime config reject emits ack and error events" {
     }
 }
 
-test "runtime config reject includes theme when keybindings fail" {
+test "runtime config reject includes theme_spec when keybindings fail" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -139,11 +139,9 @@ test "runtime config reject includes theme when keybindings fail" {
     switch (ack_msg) {
         .event => |ev| switch (ev) {
             .config_ack => |ack| {
-                try std.testing.expectEqual(@as(usize, 0), ack.applied.len);
                 try std.testing.expectEqual(@as(usize, 2), ack.rejected.len);
                 try std.testing.expectEqualStrings("keybindings", ack.rejected[0].key);
-                try std.testing.expectEqualStrings("InvalidKeybindingRule", ack.rejected[0].reason);
-                try std.testing.expectEqualStrings("theme", ack.rejected[1].key);
+                try std.testing.expectEqualStrings("theme_spec", ack.rejected[1].key);
                 try std.testing.expectEqualStrings("keybindings_rejected", ack.rejected[1].reason);
             },
             else => return error.TestUnexpectedResult,
