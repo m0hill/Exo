@@ -84,6 +84,7 @@ test "runtime config reject emits ack and error events" {
         out.writer(std.testing.allocator),
         error.InvalidKeybindingRule,
         false,
+        false,
     );
 
     var lines = std.mem.tokenizeScalar(u8, out.items, '\n');
@@ -129,6 +130,7 @@ test "runtime config reject includes theme_spec when keybindings fail" {
         out.writer(std.testing.allocator),
         error.InvalidKeybindingRule,
         true,
+        false,
     );
 
     var lines = std.mem.tokenizeScalar(u8, out.items, '\n');

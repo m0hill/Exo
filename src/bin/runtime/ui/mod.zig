@@ -20,9 +20,21 @@ const log = if (builtin.is_test)
 else
     @import("../log.zig");
 const node_util = @import("node_util.zig");
+const scrollbar = @import("scrollbar.zig");
 
 pub const pointer = @import("pointer.zig");
 pub const text_selection = @import("text_selection.zig");
+pub const ScrollbarDrag = scrollbar.ScrollbarDrag;
+pub const ScrollbarTargetKind = scrollbar.ScrollbarTargetKind;
+pub const MouseInteractionResult = scrollbar.InteractionResult;
+
+pub const ScrollingConfig = struct {
+    scrollbars_enabled: bool = true,
+    scrollbar_min_thumb: usize = 1,
+    wheel_scroll_lines: usize = 3,
+    wheel_list_lines: usize = 1,
+    wheel_textarea_lines: usize = 3,
+};
 
 pub fn makeNoopLogSink() log.LogSink {
     return .{};
@@ -81,7 +93,12 @@ fn inputSelectionRange(value: []const u8, cursor: usize, anchor: ?usize) ?struct
     return if (a < c) .{ .start = a, .end = c } else .{ .start = c, .end = a };
 }
 
-pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, size: terminal.Size) void {
+pub fn clampLocalStateForResizeWithConfig(
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    size: terminal.Size,
+    scrolling_cfg: ScrollingConfig,
+) void {
     const eff = effectiveTermSize(size);
     const rows: usize = @as(usize, eff.rows);
     const cols: usize = @as(usize, eff.cols);
@@ -113,6 +130,9 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 if (findRectNoScrollCached(&layout_cache, &root, rows, cols, e.id.items)) |r| {
                     visible_rows = r.h;
                     visible_cols = r.w;
+                    if (textareaScrollbarShown(scrolling_cfg, r.w, visible_rows, s.value.items) and r.w >= 1) {
+                        visible_cols = r.w - 1;
+                    }
                 }
 
                 const cursor_y = textareaCursorVisualY(s.value.items, s.cursor, visible_cols);
@@ -159,11 +179,15 @@ pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: prot
                 clampVListScrollForNode(widgets, l, visible_height);
             },
             .scroll => {
-                syncScrollForId(widgets, root, rows, cols, e.id.items);
+                syncScrollForIdWithConfig(widgets, root, rows, cols, e.id.items, scrolling_cfg);
             },
             else => {},
         }
     }
+}
+
+pub fn clampLocalStateForResize(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, size: terminal.Size) void {
+    return clampLocalStateForResizeWithConfig(widgets, root, size, .{});
 }
 
 fn clampListScrollForNode(widgets: *std.ArrayList(WidgetEntry), l: protocol.ListNode, visible_height: usize) void {
@@ -1135,6 +1159,41 @@ fn vlistVisibleHeight(rect: render.Rect, l: protocol.VListNode) usize {
     return @min(desired, rect.h);
 }
 
+fn scrollbarMinThumb(cfg: ScrollingConfig, viewport_h: usize) usize {
+    if (viewport_h == 0) return 1;
+    return @max(@as(usize, 1), @min(cfg.scrollbar_min_thumb, viewport_h));
+}
+
+fn listScrollbarShown(cfg: ScrollingConfig, width: usize, visible_rows: usize, total_items: usize) bool {
+    return scrollbar.shouldShow(cfg.scrollbars_enabled, width, visible_rows, total_items);
+}
+
+fn textareaScrollbarShown(cfg: ScrollingConfig, width: usize, visible_rows: usize, value: []const u8) bool {
+    if (!cfg.scrollbars_enabled or width < 2 or visible_rows == 0) return false;
+    const content_h_no_bar = textareaVisualLines(value, width);
+    if (content_h_no_bar <= visible_rows) return false;
+    const cols_with_bar = width - 1;
+    const content_h_with_bar = textareaVisualLines(value, cols_with_bar);
+    return content_h_with_bar > visible_rows;
+}
+
+fn scrollContentMetrics(cfg: ScrollingConfig, s: protocol.ScrollNode, width: usize, viewport_h: usize) struct {
+    show_bar: bool,
+    content_w: usize,
+    content_h: usize,
+} {
+    const content_h_no_bar = render.measureContentHeight(s.child.*, width);
+    var show_bar = scrollbar.shouldShow(cfg.scrollbars_enabled, width, viewport_h, content_h_no_bar);
+    var content_w = if (show_bar) width - 1 else width;
+    var content_h = if (show_bar) render.measureContentHeight(s.child.*, content_w) else content_h_no_bar;
+    if (show_bar and content_h <= viewport_h) {
+        show_bar = false;
+        content_w = width;
+        content_h = content_h_no_bar;
+    }
+    return .{ .show_bar = show_bar, .content_w = content_w, .content_h = content_h };
+}
+
 fn findSelectedIndexInList(l: protocol.ListNode, selected_id: []const u8) ?usize {
     if (selected_id.len == 0) return null;
     for (l.children, 0..) |child, idx| {
@@ -1149,6 +1208,7 @@ pub fn handleMouseEvent(
     backend_in: anytype,
     widgets: *std.ArrayList(WidgetEntry),
     edit_drag: *EditDragState,
+    scroll_drag: *ScrollbarDrag,
     focused_id_buf: *std.ArrayList(u8),
     focused_id: *?[]const u8,
     hover_id_buf: *std.ArrayList(u8),
@@ -1159,55 +1219,94 @@ pub fn handleMouseEvent(
     rows: usize,
     cols: usize,
     input_prefix: []const u8,
+    scrolling_cfg: ScrollingConfig,
     now_ns: u64,
     ev: mouse.MouseEvent,
-) !bool {
-    var changed: bool = false;
+) !MouseInteractionResult {
+    var result: MouseInteractionResult = .{};
     switch (ev.kind) {
         .down => {
             if (ev.button == .left) {
                 edit_drag.clear();
-                changed = try handleMouseDownLeft(
+                const scroll_result = try handleScrollbarMouseDown(
                     allocator,
                     log_sink,
                     backend_in,
                     widgets,
+                    scroll_drag,
+                    root,
+                    rows,
+                    cols,
+                    ev.x,
+                    ev.y,
+                    scrolling_cfg,
+                );
+                if (scroll_result.suppress_pointer) {
+                    result = scroll_result;
+                } else {
+                    scroll_drag.clear();
+                    result.changed = try handleMouseDownLeft(
+                        allocator,
+                        log_sink,
+                        backend_in,
+                        widgets,
+                        edit_drag,
+                        focused_id_buf,
+                        focused_id,
+                        root,
+                        rows,
+                        cols,
+                        input_prefix,
+                        ev.x,
+                        ev.y,
+                        ev.mods,
+                        now_ns,
+                    );
+                }
+            }
+        },
+        .move => {
+            if (scroll_drag.active) {
+                result = try handleScrollbarDragMove(
+                    allocator,
+                    log_sink,
+                    backend_in,
+                    widgets,
+                    scroll_drag,
+                    root,
+                    rows,
+                    cols,
+                    ev.x,
+                    ev.y,
+                    scrolling_cfg,
+                );
+            } else {
+                result.changed = try handleMouseMoveDrag(
+                    allocator,
+                    widgets,
                     edit_drag,
-                    focused_id_buf,
-                    focused_id,
                     root,
                     rows,
                     cols,
                     input_prefix,
                     ev.x,
                     ev.y,
-                    ev.mods,
-                    now_ns,
                 );
             }
-        },
-        .move => {
-            changed = try handleMouseMoveDrag(
-                allocator,
-                widgets,
-                edit_drag,
-                root,
-                rows,
-                cols,
-                input_prefix,
-                ev.x,
-                ev.y,
-            );
         },
         .up => {
             if (ev.button == .left) {
                 edit_drag.clear();
+                if (scroll_drag.active) {
+                    scroll_drag.clear();
+                    result.suppress_pointer = true;
+                }
             }
         },
         .wheel => {
             // Local wheel scrolling is strict opt-in via `mouseable:true`.
             if (ev.wheel_dy != 0) {
-                changed = try handleMouseWheel(
+                result = try handleMouseWheel(
                     allocator,
                     log_sink,
                     backend_in,
@@ -1218,6 +1317,8 @@ pub fn handleMouseEvent(
                     ev.x,
                     ev.y,
                     ev.wheel_dy,
+                    ev.mods,
+                    scrolling_cfg,
                 );
             }
         },
@@ -1248,7 +1349,214 @@ pub fn handleMouseEvent(
             try maybeFlushBackend(backend_in);
         }
     }
-    return changed;
+    return result;
+}
+
+fn clampTrackThumbTop(track_h: usize, thumb_h: usize, desired: isize) usize {
+    if (track_h == 0 or thumb_h >= track_h) return 0;
+    const max_top: usize = track_h - thumb_h;
+    if (desired <= 0) return 0;
+    const d: usize = @as(usize, @intCast(desired));
+    return @min(max_top, d);
+}
+
+fn handleScrollbarMouseDown(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    drag: *ScrollbarDrag,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    x: usize,
+    y: usize,
+    cfg: ScrollingConfig,
+) !MouseInteractionResult {
+    var result: MouseInteractionResult = .{};
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
+    var layout_cache = render.LayoutCache.init(allocator);
+    defer layout_cache.deinit();
+    layout_cache.reset(&root, rows, cols, scroll_states.items);
+    const hit_root: protocol.Node = if (findTopmostModalLayer(root)) |modal_ptr| modal_ptr.* else root;
+    var ids = try collectHitTestables(allocator, hit_root);
+    defer ids.deinit(allocator);
+
+    for (ids.items) |id| {
+        const r = layout_cache.findRect(id) orelse continue;
+        if (!rectContains(r, x, y)) continue;
+        const widx = findWidgetIndex(widgets.items, id) orelse continue;
+
+        switch (widgets.items[widx].state) {
+            .scroll => {
+                const s = node_util.findScrollNodeById(root, id) orelse continue;
+                const inner_w = if (r.w > s.pad * 2) r.w - s.pad * 2 else 0;
+                const inner_h = if (r.h > s.pad * 2) r.h - s.pad * 2 else 0;
+                const inner_x = r.x + s.pad;
+                const inner_y = r.y + s.pad;
+                if (x < inner_x or y < inner_y or y >= inner_y + inner_h) continue;
+                const metrics = scrollContentMetrics(cfg, s, inner_w, inner_h);
+                if (!metrics.show_bar) continue;
+                const bar_x = inner_x + metrics.content_w;
+                if (x != bar_x) continue;
+                syncScrollForIdWithConfig(widgets, root, rows, cols, id, cfg);
+                const st = &widgets.items[widx].state.scroll;
+                const min_thumb = scrollbarMinThumb(cfg, inner_h);
+                const geom = scrollbar.computeThumb(inner_h, metrics.content_h, inner_h, st.scroll_y, min_thumb);
+                const row = y - inner_y;
+                if (row >= geom.thumb_top and row < geom.thumb_top + geom.thumb_h) {
+                    try drag.setActive(allocator, .scroll, id, row - geom.thumb_top);
+                } else {
+                    const desired_top = clampTrackThumbTop(inner_h, geom.thumb_h, @as(isize, @intCast(row)) - @as(isize, @intCast(geom.thumb_h / 2)));
+                    const next_scroll = scrollbar.scrollFromThumbTop(inner_h, metrics.content_h, inner_h, desired_top, min_thumb);
+                    result.changed = try setScrollViewportYByIdWithConfig(
+                        allocator,
+                        log_sink,
+                        backend_in,
+                        widgets,
+                        root,
+                        rows,
+                        cols,
+                        id,
+                        next_scroll,
+                        cfg,
+                    );
+                }
+                result.suppress_pointer = true;
+                return result;
+            },
+            .list => {
+                const l = node_util.findListNodeById(root, id) orelse continue;
+                const visible_rows = listVisibleHeight(r, l);
+                if (visible_rows == 0) continue;
+                if (!listScrollbarShown(cfg, r.w, visible_rows, l.children.len)) continue;
+                const bar_x = r.x + (r.w - 1);
+                if (x != bar_x or y < r.y or y >= r.y + visible_rows) continue;
+                const st = &widgets.items[widx].state.list;
+                const min_thumb = scrollbarMinThumb(cfg, visible_rows);
+                const geom = scrollbar.computeThumb(visible_rows, l.children.len, visible_rows, st.scroll, min_thumb);
+                const row = y - r.y;
+                if (row >= geom.thumb_top and row < geom.thumb_top + geom.thumb_h) {
+                    try drag.setActive(allocator, .list, id, row - geom.thumb_top);
+                } else {
+                    const desired_top = clampTrackThumbTop(visible_rows, geom.thumb_h, @as(isize, @intCast(row)) - @as(isize, @intCast(geom.thumb_h / 2)));
+                    st.scroll = scrollbar.scrollFromThumbTop(visible_rows, l.children.len, visible_rows, desired_top, min_thumb);
+                    result.changed = true;
+                }
+                result.suppress_pointer = true;
+                return result;
+            },
+            .textarea => {
+                const st = &widgets.items[widx].state.textarea;
+                const visible_rows = r.h;
+                if (!textareaScrollbarShown(cfg, r.w, visible_rows, st.value.items)) continue;
+                const cols_with_bar = r.w - 1;
+                const content_h = textareaVisualLines(st.value.items, cols_with_bar);
+                const bar_x = r.x + cols_with_bar;
+                if (x != bar_x or y < r.y or y >= r.y + visible_rows) continue;
+                const min_thumb = scrollbarMinThumb(cfg, visible_rows);
+                const geom = scrollbar.computeThumb(visible_rows, content_h, visible_rows, st.scroll_y, min_thumb);
+                const row = y - r.y;
+                if (row >= geom.thumb_top and row < geom.thumb_top + geom.thumb_h) {
+                    try drag.setActive(allocator, .textarea, id, row - geom.thumb_top);
+                } else {
+                    const desired_top = clampTrackThumbTop(visible_rows, geom.thumb_h, @as(isize, @intCast(row)) - @as(isize, @intCast(geom.thumb_h / 2)));
+                    st.scroll_y = scrollbar.scrollFromThumbTop(visible_rows, content_h, visible_rows, desired_top, min_thumb);
+                    result.changed = true;
+                }
+                result.suppress_pointer = true;
+                return result;
+            },
+            else => {},
+        }
+    }
+    return result;
+}
+
+fn handleScrollbarDragMove(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    drag: *ScrollbarDrag,
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    x: usize,
+    y: usize,
+    cfg: ScrollingConfig,
+) !MouseInteractionResult {
+    _ = x;
+    var result: MouseInteractionResult = .{ .suppress_pointer = true };
+    if (!drag.active) return result;
+    const id = drag.id;
+    const widx = findWidgetIndex(widgets.items, id) orelse return result;
+    var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
+    defer scroll_states.deinit(allocator);
+    const r = render.findRectForIdWithScrolls(root, rows, cols, id, scroll_states.items) orelse return result;
+
+    switch (drag.kind) {
+        .scroll => {
+            const s = node_util.findScrollNodeById(root, id) orelse return result;
+            const inner_w = if (r.w > s.pad * 2) r.w - s.pad * 2 else 0;
+            const inner_h = if (r.h > s.pad * 2) r.h - s.pad * 2 else 0;
+            const inner_y = r.y + s.pad;
+            const metrics = scrollContentMetrics(cfg, s, inner_w, inner_h);
+            if (!metrics.show_bar or inner_h == 0) return result;
+            syncScrollForIdWithConfig(widgets, root, rows, cols, id, cfg);
+            const st = &widgets.items[widx].state.scroll;
+            const min_thumb = scrollbarMinThumb(cfg, inner_h);
+            const geom = scrollbar.computeThumb(inner_h, metrics.content_h, inner_h, st.scroll_y, min_thumb);
+            const row = if (y > inner_y) y - inner_y else 0;
+            const desired_top = clampTrackThumbTop(inner_h, geom.thumb_h, @as(isize, @intCast(row)) - @as(isize, @intCast(drag.drag_offset_y)));
+            const next_scroll = scrollbar.scrollFromThumbTop(inner_h, metrics.content_h, inner_h, desired_top, min_thumb);
+            result.changed = try setScrollViewportYByIdWithConfig(
+                allocator,
+                log_sink,
+                backend_in,
+                widgets,
+                root,
+                rows,
+                cols,
+                id,
+                next_scroll,
+                cfg,
+            );
+        },
+        .list => {
+            const l = node_util.findListNodeById(root, id) orelse return result;
+            const visible_rows = listVisibleHeight(r, l);
+            if (!listScrollbarShown(cfg, r.w, visible_rows, l.children.len)) return result;
+            const st = &widgets.items[widx].state.list;
+            const min_thumb = scrollbarMinThumb(cfg, visible_rows);
+            const geom = scrollbar.computeThumb(visible_rows, l.children.len, visible_rows, st.scroll, min_thumb);
+            const row = if (y > r.y) y - r.y else 0;
+            const desired_top = clampTrackThumbTop(visible_rows, geom.thumb_h, @as(isize, @intCast(row)) - @as(isize, @intCast(drag.drag_offset_y)));
+            const next = scrollbar.scrollFromThumbTop(visible_rows, l.children.len, visible_rows, desired_top, min_thumb);
+            if (next != st.scroll) {
+                st.scroll = next;
+                result.changed = true;
+            }
+        },
+        .textarea => {
+            const st = &widgets.items[widx].state.textarea;
+            const visible_rows = r.h;
+            if (!textareaScrollbarShown(cfg, r.w, visible_rows, st.value.items)) return result;
+            const cols_with_bar = r.w - 1;
+            const content_h = textareaVisualLines(st.value.items, cols_with_bar);
+            const min_thumb = scrollbarMinThumb(cfg, visible_rows);
+            const geom = scrollbar.computeThumb(visible_rows, content_h, visible_rows, st.scroll_y, min_thumb);
+            const row = if (y > r.y) y - r.y else 0;
+            const desired_top = clampTrackThumbTop(visible_rows, geom.thumb_h, @as(isize, @intCast(row)) - @as(isize, @intCast(drag.drag_offset_y)));
+            const next = scrollbar.scrollFromThumbTop(visible_rows, content_h, visible_rows, desired_top, min_thumb);
+            if (next != st.scroll_y) {
+                st.scroll_y = next;
+                result.changed = true;
+            }
+        },
+    }
+    return result;
 }
 
 fn handleMouseDownLeft(
@@ -1515,7 +1823,11 @@ fn handleMouseWheel(
     x: usize,
     y: usize,
     delta: isize,
-) !bool {
+    mods: u8,
+    scrolling_cfg: ScrollingConfig,
+) !MouseInteractionResult {
+    var result: MouseInteractionResult = .{};
+    if (delta == 0) return result;
     var scroll_states = try collectRenderScrollStates(allocator, widgets.items);
     defer scroll_states.deinit(allocator);
     var layout_cache = render.LayoutCache.init(allocator);
@@ -1527,9 +1839,54 @@ fn handleMouseWheel(
     defer ids.deinit(allocator);
 
     // Wheel priority:
-    // 1) Topmost vlist under pointer (local scroll)
-    // 2) Topmost list under pointer (local scroll)
-    // 3) Topmost/deepest scroll viewport under pointer
+    // 1) Topmost textarea under pointer (local scroll)
+    // 2) Topmost vlist under pointer (local scroll)
+    // 3) Topmost list under pointer (local scroll)
+    // 4) Topmost/deepest scroll viewport under pointer (emits scroll event)
+    const shift_pressed = (mods & 1) != 0;
+    const dir: isize = if (delta > 0) 1 else -1;
+
+    var textarea_hit: ?[]const u8 = null;
+    var textarea_hit_rect: render.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    for (ids.items) |id| {
+        const widx = findWidgetIndex(widgets.items, id) orelse continue;
+        if (widgets.items[widx].state != .textarea) continue;
+        const r = layout_cache.findRect(id) orelse continue;
+        if (!rectContains(r, x, y)) continue;
+        textarea_hit = id;
+        textarea_hit_rect = r;
+    }
+
+    if (textarea_hit) |textarea_id| {
+        const widx = findWidgetIndex(widgets.items, textarea_id) orelse return result;
+        const st = &widgets.items[widx].state.textarea;
+        const visible_rows = textarea_hit_rect.h;
+        const show_bar = textareaScrollbarShown(scrolling_cfg, textarea_hit_rect.w, visible_rows, st.value.items);
+        const visible_cols = if (show_bar and textarea_hit_rect.w >= 1) textarea_hit_rect.w - 1 else textarea_hit_rect.w;
+        const content_h = textareaVisualLines(st.value.items, visible_cols);
+        const max_scroll = scrollbar.maxScroll(content_h, visible_rows);
+        const step: usize = if (shift_pressed)
+            (if (visible_rows > 0) visible_rows - 1 else 0)
+        else
+            scrolling_cfg.wheel_textarea_lines;
+        if (step == 0) {
+            result.suppress_pointer = true;
+            return result;
+        }
+        var next = st.scroll_y;
+        if (dir > 0) {
+            next = @min(max_scroll, next + step);
+        } else {
+            next = if (next > step) next - step else 0;
+        }
+        if (next != st.scroll_y) {
+            st.scroll_y = next;
+            result.changed = true;
+        }
+        result.suppress_pointer = true;
+        return result;
+    }
+
     var vlist_hit: ?[]const u8 = null;
     var vlist_hit_rect: render.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     for (ids.items) |id| {
@@ -1543,24 +1900,31 @@ fn handleMouseWheel(
     }
 
     if (vlist_hit) |list_id| {
-        const widx = findWidgetIndex(widgets.items, list_id) orelse return false;
-        const l = node_util.findVListNodeById(root, list_id) orelse return false;
+        const widx = findWidgetIndex(widgets.items, list_id) orelse return result;
+        const l = node_util.findVListNodeById(root, list_id) orelse return result;
         const visible_height = vlistVisibleHeight(vlist_hit_rect, l);
-        if (visible_height == 0 or l.total == 0) return false;
+        if (visible_height == 0 or l.total == 0) return result;
 
         const stw = &widgets.items[widx].state.vlist;
         const max_scroll: usize = if (l.total > visible_height) l.total - visible_height else 0;
+        const step: usize = if (shift_pressed)
+            (if (visible_height > 0) visible_height - 1 else 0)
+        else
+            scrolling_cfg.wheel_list_lines;
         var next: usize = stw.scroll;
-        if (delta > 0) {
-            if (next < max_scroll) next += 1;
-        } else if (delta < 0) {
-            if (next > 0) next -= 1;
+        if (dir > 0) {
+            next = @min(max_scroll, next + step);
+        } else {
+            next = if (next > step) next - step else 0;
         }
         next = state.clampListScroll(next, stw.selected_index, visible_height, l.total);
-        if (next == stw.scroll) return false;
-        stw.scroll = next;
+        if (next != stw.scroll) {
+            stw.scroll = next;
+            result.changed = true;
+        }
         _ = try maybeRequestVListRangeForId(allocator, backend_in, widgets, root, rows, cols, list_id, .scroll);
-        return true;
+        result.suppress_pointer = true;
+        return result;
     }
 
     var list_hit: ?[]const u8 = null;
@@ -1576,31 +1940,34 @@ fn handleMouseWheel(
     }
 
     if (list_hit) |list_id| {
-        const widx = findWidgetIndex(widgets.items, list_id) orelse return false;
-        const l = node_util.findListNodeById(root, list_id) orelse return false;
+        const widx = findWidgetIndex(widgets.items, list_id) orelse return result;
+        const l = node_util.findListNodeById(root, list_id) orelse return result;
         const visible_height = listVisibleHeight(list_hit_rect, l);
-        if (visible_height == 0) return false;
+        if (visible_height == 0) return result;
 
         const stw = &widgets.items[widx].state.list;
         const max_scroll: usize = if (l.children.len > visible_height) l.children.len - visible_height else 0;
+        const step: usize = if (shift_pressed)
+            (if (visible_height > 0) visible_height - 1 else 0)
+        else
+            scrolling_cfg.wheel_list_lines;
 
         var next: usize = stw.scroll;
-        if (delta > 0) {
-            if (next < max_scroll) next += 1;
-        } else if (delta < 0) {
-            if (next > 0) next -= 1;
+        if (dir > 0) {
+            next = @min(max_scroll, next + step);
+        } else {
+            next = if (next > step) next - step else 0;
         }
 
         const selected_index = findSelectedIndexInList(l, stw.selected_id.items);
         next = state.clampListScroll(next, selected_index, visible_height, l.children.len);
-        if (next == stw.scroll) return false;
-        stw.scroll = next;
-        return true;
+        if (next != stw.scroll) {
+            stw.scroll = next;
+            result.changed = true;
+        }
+        result.suppress_pointer = true;
+        return result;
     }
-
-    const step: usize = 3;
-    const dir: isize = if (delta > 0) 1 else if (delta < 0) -1 else 0;
-    if (dir == 0) return false;
 
     var scroll_hit: ?[]const u8 = null;
     for (ids.items) |id| {
@@ -1613,7 +1980,20 @@ fn handleMouseWheel(
     }
 
     if (scroll_hit) |scroll_id| {
-        return try scrollViewportById(
+        const widx = findWidgetIndex(widgets.items, scroll_id) orelse return result;
+        if (widgets.items[widx].state != .scroll) return result;
+        const s = node_util.findScrollNodeById(root, scroll_id) orelse return result;
+        const r = layout_cache.findRect(scroll_id) orelse return result;
+        const inner_h = if (r.h > s.pad * 2) r.h - s.pad * 2 else 0;
+        const step: usize = if (shift_pressed)
+            (if (inner_h > 0) inner_h - 1 else 0)
+        else
+            scrolling_cfg.wheel_scroll_lines;
+        if (step == 0) {
+            result.suppress_pointer = true;
+            return result;
+        }
+        result.changed = try scrollViewportByIdWithConfig(
             allocator,
             log_sink,
             backend_in,
@@ -1623,10 +2003,13 @@ fn handleMouseWheel(
             cols,
             scroll_id,
             dir * @as(isize, @intCast(step)),
+            scrolling_cfg,
         );
+        result.suppress_pointer = true;
+        return result;
     }
 
-    return false;
+    return result;
 }
 
 fn collectStateWidgets(allocator: std.mem.Allocator, root: protocol.Node) !std.ArrayList(StateWidgetSpec) {
@@ -2042,7 +2425,14 @@ fn clampScrollState(st: anytype) void {
     st.scroll_y = state.clampScrollY(st.scroll_y, st.viewport_h, st.content_h);
 }
 
-fn syncScrollForId(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, rows: usize, cols: usize, scroll_id: []const u8) void {
+fn syncScrollForIdWithConfig(
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    scroll_id: []const u8,
+    scrolling_cfg: ScrollingConfig,
+) void {
     const s = node_util.findScrollNodeById(root, scroll_id) orelse return;
     const idx = findWidgetIndex(widgets.items, scroll_id) orelse return;
     var st = &widgets.items[idx].state.scroll;
@@ -2051,12 +2441,17 @@ fn syncScrollForId(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, ro
     const inner_w: usize = if (r.w > s.pad * 2) r.w - s.pad * 2 else 0;
     const inner_h: usize = if (r.h > s.pad * 2) r.h - s.pad * 2 else 0;
 
+    const metrics = scrollContentMetrics(scrolling_cfg, s, inner_w, inner_h);
     st.viewport_h = inner_h;
-    st.content_h = render.measureContentHeight(s.child.*, inner_w);
+    st.content_h = metrics.content_h;
     clampScrollState(st);
 }
 
-fn scrollViewportById(
+fn syncScrollForId(widgets: *std.ArrayList(WidgetEntry), root: protocol.Node, rows: usize, cols: usize, scroll_id: []const u8) void {
+    return syncScrollForIdWithConfig(widgets, root, rows, cols, scroll_id, .{});
+}
+
+fn scrollViewportByIdWithConfig(
     allocator: std.mem.Allocator,
     log_sink: *log.LogSink,
     backend_in: anytype,
@@ -2066,12 +2461,13 @@ fn scrollViewportById(
     cols: usize,
     scroll_id: []const u8,
     delta_rows: isize,
+    scrolling_cfg: ScrollingConfig,
 ) !bool {
     const s = node_util.findScrollNodeById(root, scroll_id) orelse return false;
     const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
     var st = &widgets.items[idx].state.scroll;
 
-    syncScrollForId(widgets, root, rows, cols, scroll_id);
+    syncScrollForIdWithConfig(widgets, root, rows, cols, scroll_id, scrolling_cfg);
 
     const before = st.scroll_y;
     if (delta_rows > 0) {
@@ -2091,6 +2487,20 @@ fn scrollViewportById(
     );
     try protocol.writeScrollEventJsonl(backend_in, s.id, st.scroll_y);
     return true;
+}
+
+fn scrollViewportById(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    scroll_id: []const u8,
+    delta_rows: isize,
+) !bool {
+    return scrollViewportByIdWithConfig(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, delta_rows, .{});
 }
 
 pub fn ensureVisibleForFocusId(
@@ -3570,7 +3980,7 @@ pub fn handleFocusedTextareaPaste(
     return changed;
 }
 
-fn setScrollViewportYById(
+fn setScrollViewportYByIdWithConfig(
     allocator: std.mem.Allocator,
     log_sink: *log.LogSink,
     backend_in: anytype,
@@ -3580,12 +3990,13 @@ fn setScrollViewportYById(
     cols: usize,
     scroll_id: []const u8,
     next_scroll_y: usize,
+    scrolling_cfg: ScrollingConfig,
 ) !bool {
     const s = node_util.findScrollNodeById(root, scroll_id) orelse return false;
     const idx = try ensureWidgetKind(allocator, widgets, scroll_id, .scroll);
     var st = &widgets.items[idx].state.scroll;
 
-    syncScrollForId(widgets, root, rows, cols, scroll_id);
+    syncScrollForIdWithConfig(widgets, root, rows, cols, scroll_id, scrolling_cfg);
 
     const before = st.scroll_y;
     st.scroll_y = next_scroll_y;
@@ -3599,6 +4010,20 @@ fn setScrollViewportYById(
     );
     try protocol.writeScrollEventJsonl(backend_in, s.id, st.scroll_y);
     return true;
+}
+
+fn setScrollViewportYById(
+    allocator: std.mem.Allocator,
+    log_sink: *log.LogSink,
+    backend_in: anytype,
+    widgets: *std.ArrayList(WidgetEntry),
+    root: protocol.Node,
+    rows: usize,
+    cols: usize,
+    scroll_id: []const u8,
+    next_scroll_y: usize,
+) !bool {
+    return setScrollViewportYByIdWithConfig(allocator, log_sink, backend_in, widgets, root, rows, cols, scroll_id, next_scroll_y, .{});
 }
 
 pub fn handleFocusedScrollKey(

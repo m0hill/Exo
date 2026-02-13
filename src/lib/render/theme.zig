@@ -28,6 +28,8 @@ pub const ComponentChrome = struct {
     box_bottom_right: []const u8 = "┘",
     box_horizontal: []const u8 = "─",
     box_vertical: []const u8 = "│",
+    scrollbar_track_glyph: []const u8 = "│",
+    scrollbar_thumb_glyph: []const u8 = "█",
 };
 
 pub const NodeKind = theme_engine.NodeKind;
@@ -229,6 +231,8 @@ const base_rules_default = [_]BaseRule{
     .{ .kind = .text, .class = "status.success", .style = fg(tokens_default.success) },
     .{ .kind = .text, .class = "status.warn", .style = fg(tokens_default.warn) },
     .{ .kind = .text, .class = "status.error", .style = fg(tokens_default.@"error") },
+    .{ .kind = .text, .class = "scrollbar.track", .style = fg(tokens_default.border) },
+    .{ .kind = .text, .class = "scrollbar.thumb", .style = fg(tokens_default.accent) },
 };
 
 const overlay_rules_default = [_]OverlayRule{
@@ -311,6 +315,8 @@ const base_rules_light = [_]BaseRule{
     .{ .kind = .text, .class = "status.success", .style = fg(tokens_light.success) },
     .{ .kind = .text, .class = "status.warn", .style = fg(tokens_light.warn) },
     .{ .kind = .text, .class = "status.error", .style = fg(tokens_light.@"error") },
+    .{ .kind = .text, .class = "scrollbar.track", .style = fg(tokens_light.border) },
+    .{ .kind = .text, .class = "scrollbar.thumb", .style = fg(tokens_light.accent) },
 };
 
 const overlay_rules_light = [_]OverlayRule{
@@ -400,6 +406,8 @@ const base_rules_ocean = [_]BaseRule{
     .{ .kind = .text, .class = "status.success", .style = fg(tokens_ocean.success) },
     .{ .kind = .text, .class = "status.warn", .style = fg(tokens_ocean.warn) },
     .{ .kind = .text, .class = "status.error", .style = fg(tokens_ocean.@"error") },
+    .{ .kind = .text, .class = "scrollbar.track", .style = fg(tokens_ocean.border) },
+    .{ .kind = .text, .class = "scrollbar.thumb", .style = fg(tokens_ocean.accent) },
 };
 
 const overlay_rules_ocean = [_]OverlayRule{
@@ -556,6 +564,8 @@ fn cloneChrome(a: std.mem.Allocator, chrome: ComponentChrome) !ComponentChrome {
         .box_bottom_right = try a.dupe(u8, chrome.box_bottom_right),
         .box_horizontal = try a.dupe(u8, chrome.box_horizontal),
         .box_vertical = try a.dupe(u8, chrome.box_vertical),
+        .scrollbar_track_glyph = try a.dupe(u8, chrome.scrollbar_track_glyph),
+        .scrollbar_thumb_glyph = try a.dupe(u8, chrome.scrollbar_thumb_glyph),
     };
 }
 
@@ -591,6 +601,8 @@ pub fn buildThemeFromSpec(
     if (spec.chrome.box_bottom_right) |v| out_theme.chrome.box_bottom_right = try a.dupe(u8, v);
     if (spec.chrome.box_horizontal) |v| out_theme.chrome.box_horizontal = try a.dupe(u8, v);
     if (spec.chrome.box_vertical) |v| out_theme.chrome.box_vertical = try a.dupe(u8, v);
+    if (spec.chrome.scrollbar_track_glyph) |v| out_theme.chrome.scrollbar_track_glyph = try a.dupe(u8, v);
+    if (spec.chrome.scrollbar_thumb_glyph) |v| out_theme.chrome.scrollbar_thumb_glyph = try a.dupe(u8, v);
 
     var compiled = std.ArrayList(CompiledRule).empty;
     var order: u16 = 0;

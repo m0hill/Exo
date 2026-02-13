@@ -181,8 +181,17 @@ pub const ConfigAckEvent = struct {
 pub const ConfigMsg = struct {
     keybindings: ?KeybindingsConfig = null,
     theme_spec: ?ThemeSpec = null,
+    scrolling: ?ScrollingConfig = null,
     seq: ?u64 = null,
     v: ?u32 = null,
+};
+
+pub const ScrollingConfig = struct {
+    scrollbars_enabled: ?bool = null,
+    scrollbar_min_thumb: ?usize = null,
+    wheel_scroll_lines: ?usize = null,
+    wheel_list_lines: ?usize = null,
+    wheel_textarea_lines: ?usize = null,
 };
 
 pub const ThemeName = enum {
@@ -215,6 +224,8 @@ pub const ThemeChrome = struct {
     box_bottom_right: ?[]const u8 = null,
     box_horizontal: ?[]const u8 = null,
     box_vertical: ?[]const u8 = null,
+    scrollbar_track_glyph: ?[]const u8 = null,
+    scrollbar_thumb_glyph: ?[]const u8 = null,
 };
 
 pub const ThemeOverlays = struct {
@@ -821,6 +832,7 @@ pub const ParseMsgError = error{
     UnknownThemeSpecBase,
     UnknownKeyAction,
     InvalidKeybindingRule,
+    InvalidScrollingConfig,
     InvalidSelector,
     ThemeSpecTooLarge,
     UnknownField,

@@ -1301,5 +1301,37 @@
       "Send backend config with theme_spec vars/rules and confirm runtime emits config_ack applied includes theme_spec",
       "Verify $missing var in styles does not crash; runtime logs THEME_VAR_MISS and style inherits"
     ]
+  },
+  {
+    "slice": 45,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "Scroll affordances: always-visible vertical scrollbars (when scrollable) with wheel tuning, track click jump, and thumb drag suppression",
+    "deliverables": [
+      "src/lib/protocol/{types,parse,write,mod}.zig + protocol.schema.json: added optional `config.scrolling` with strict parse/write and range checks",
+      "src/lib/render/theme.zig: added scrollbar chrome glyphs (`scrollbar_track_glyph`, `scrollbar_thumb_glyph`) and builtin rules (`scrollbar.track`, `scrollbar.thumb`)",
+      "src/lib/render/mod.zig: added shared `computeScrollbar(...)`, scrollbar painting, and gutter-aware rendering for `scroll`, `list`, and `textarea`",
+      "src/bin/runtime/ui/scrollbar.zig: added scrollbar drag/click geometry/state utilities",
+      "src/bin/runtime/ui/mod.zig: added wheel tuning + Shift-page wheel behavior, scrollbar track click jump, thumb drag capture, and mouse suppression result path",
+      "src/bin/runtime/app.zig: threaded scrolling config defaults + `config.scrolling` apply/ack/reject, wired scrollbar drag state, and suppressed pointer emission during scrollbar interactions",
+      "src/test/{protocol,render,ui,pointer,keybindings}.zig: added coverage for scrolling config roundtrip, scrollbar rendering, wheel/click/drag behavior, and pointer suppression",
+      "docs/PROTOCOL.md + src/bin/demo/render.zig: documented `config.scrolling` and updated demo interaction hints"
+    ],
+    "boundaries_hit": [
+      "Scrollbar gutter reserves the rightmost content column only when the widget is scrollable and width permits",
+      "Wheel behavior is runtime-tunable and modifier-aware (`Shift` page step) while preserving existing local-vs-backend state semantics",
+      "Scrollbar drag/click is runtime-local and suppresses backend pointer events for the gesture sequence"
+    ],
+    "timestamp": "2026-02-13",
+    "manual_repro": [
+      "zig build test",
+      "python3 scripts/check_protocol_schema.py --docs docs/PROTOCOL.md",
+      "zig build demo",
+      "Hover a mouseable scroll/list/textarea with overflow: confirm right-side scrollbar is visible",
+      "Wheel over mouseable textarea/list/scroll: confirm local scrolling (Shift+wheel pages)",
+      "Click scrollbar track: confirm jump scroll; drag thumb: confirm continuous scroll and no pointer event spam",
+      "Send config `{ \"type\":\"config\", \"v\":1, \"scrolling\":{...} }`: confirm `event:config_ack` includes `scrolling` in applied/rejected",
+      "Exit with 'x'"
+    ]
   }
 ]

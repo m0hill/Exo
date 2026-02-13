@@ -5,6 +5,9 @@ const app = @import("app.zig");
 
 pub const pointer = ui.pointer;
 pub const EditDragState = ui.EditDragState;
+pub const ScrollbarDrag = ui.ScrollbarDrag;
+pub const ScrollingConfig = ui.ScrollingConfig;
+pub const MouseInteractionResult = ui.MouseInteractionResult;
 pub const WidgetEntry = ui.WidgetEntry;
 pub const deinitWidgetEntries = ui.deinitWidgetEntries;
 pub const handleMouseEvent = ui.handleMouseEvent;
@@ -19,6 +22,7 @@ pub const textareaSelectedTextAlloc = ui.textareaSelectedTextAlloc;
 pub const cycleFocusInTreeDir = ui.cycleFocusInTreeDir;
 pub const cycleFocusScopeInTreeDir = ui.cycleFocusScopeInTreeDir;
 pub const syncUiAfterPatch = ui.syncUiAfterPatch;
+pub const clampLocalStateForResizeWithConfig = ui.clampLocalStateForResizeWithConfig;
 pub const setFocusId = ui.setFocusId;
 pub const KeymapState = keybindings.KeymapState;
 pub const KeyContext = keybindings.Context;

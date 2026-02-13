@@ -176,3 +176,99 @@ test "pointer: click count + capture + leave" {
     try std.testing.expect(got_down_2);
     try std.testing.expect(got_leave);
 }
+
+test "pointer: ui scrollbar drag suppresses pointer emission" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(std.testing.allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(std.testing.allocator);
+    var hover_item: ?[]const u8 = null;
+    var auto_focus_done = true;
+    var edit_drag: runtime_ui.EditDragState = .{};
+    defer edit_drag.deinit(std.testing.allocator);
+    var scroll_drag: runtime_ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(std.testing.allocator);
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const backend_writer = backend_out.writer(std.testing.allocator);
+
+    var items = [_]protocol.Node{
+        .{ .text = .{ .id = "r0", .text = "0" } },
+        .{ .text = .{ .id = "r1", .text = "1" } },
+        .{ .text = .{ .id = "r2", .text = "2" } },
+        .{ .text = .{ .id = "r3", .text = "3" } },
+        .{ .text = .{ .id = "r4", .text = "4" } },
+        .{ .text = .{ .id = "r5", .text = "5" } },
+    };
+    const root = protocol.Node{ .list = .{ .id = "l", .mouseable = true, .w = 6, .height = 3, .children = items[0..] } };
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        backend_writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        6,
+        6,
+    );
+
+    var engine: pointer.PointerEngine = .{};
+    defer engine.deinit(std.testing.allocator);
+    var pointer_out: std.ArrayList(u8) = .empty;
+    defer pointer_out.deinit(std.testing.allocator);
+    const pointer_writer = pointer_out.writer(std.testing.allocator);
+
+    const events = [_]mouse.MouseEvent{
+        .{ .kind = .down, .button = .left, .x = 5, .y = 0 },
+        .{ .kind = .move, .x = 5, .y = 20 },
+        .{ .kind = .up, .button = .left, .x = 5, .y = 20 },
+    };
+    for (events, 0..) |ev, idx| {
+        const res = try runtime_ui.handleMouseEvent(
+            std.testing.allocator,
+            &log_sink,
+            backend_writer,
+            &widgets,
+            &edit_drag,
+            &scroll_drag,
+            &focused_id_buf,
+            &focused_id,
+            &hover_id_buf,
+            &hover_id,
+            &hover_item_buf,
+            &hover_item,
+            root,
+            6,
+            6,
+            "> ",
+            .{},
+            idx + 1,
+            ev,
+        );
+        if (!res.suppress_pointer) {
+            _ = try engine.handleMouseEvent(
+                std.testing.allocator,
+                pointer_writer,
+                widgets.items,
+                root,
+                6,
+                6,
+                ev,
+                idx + 1,
+            );
+        }
+    }
+
+    try std.testing.expect(std.mem.indexOf(u8, pointer_out.items, "\"name\":\"pointer\"") == null);
+}

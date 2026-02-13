@@ -38,6 +38,7 @@ const ThemeRule = protocol.ThemeRule;
 const ThemeVarEntry = protocol.ThemeVarEntry;
 const ThemeChrome = protocol.ThemeChrome;
 const ThemeOverlays = protocol.ThemeOverlays;
+const ScrollingConfig = protocol.ScrollingConfig;
 const HelloCaps = protocol.HelloCaps;
 const HelloLimits = protocol.HelloLimits;
 const StateMode = protocol.StateMode;
@@ -678,7 +679,8 @@ pub fn writeConfigJsonl(writer: anytype, cfg: protocol.ConfigMsg) !void {
 }
 
 pub fn writeConfigJsonlVersion(writer: anytype, cfg: protocol.ConfigMsg, v: ?u32) !void {
-    if (cfg.keybindings == null and cfg.theme_spec == null) return ParseMsgError.MissingField;
+    const has_scrolling: bool = if (cfg.scrolling) |sc| scrollingConfigHasAny(sc) else false;
+    if (cfg.keybindings == null and cfg.theme_spec == null and !has_scrolling) return ParseMsgError.MissingField;
     try writer.writeAll("{\"type\":\"config\"");
     try writeVersionField(writer, v orelse cfg.v);
     if (cfg.keybindings) |kb| {
@@ -696,10 +698,26 @@ pub fn writeConfigJsonlVersion(writer: anytype, cfg: protocol.ConfigMsg, v: ?u32
         try writer.writeAll(",\"theme_spec\":");
         try writeThemeSpecJson(writer, theme_spec);
     }
+    if (cfg.scrolling) |scrolling| {
+        if (!has_scrolling) {
+            // Skip empty scrolling objects so writer output remains schema-valid.
+        } else {
+            try writer.writeAll(",\"scrolling\":");
+            try writeScrollingConfigJson(writer, scrolling);
+        }
+    }
     if (cfg.seq) |seq| {
         try writer.print(",\"seq\":{d}", .{seq});
     }
     try writer.writeAll("}\n");
+}
+
+fn scrollingConfigHasAny(cfg: ScrollingConfig) bool {
+    return cfg.scrollbars_enabled != null or
+        cfg.scrollbar_min_thumb != null or
+        cfg.wheel_scroll_lines != null or
+        cfg.wheel_list_lines != null or
+        cfg.wheel_textarea_lines != null;
 }
 
 fn writeThemeSpecJson(writer: anytype, spec: ThemeSpec) !void {
@@ -732,7 +750,9 @@ fn writeThemeSpecJson(writer: anytype, spec: ThemeSpec) !void {
         spec.chrome.box_bottom_left != null or
         spec.chrome.box_bottom_right != null or
         spec.chrome.box_horizontal != null or
-        spec.chrome.box_vertical != null;
+        spec.chrome.box_vertical != null or
+        spec.chrome.scrollbar_track_glyph != null or
+        spec.chrome.scrollbar_thumb_glyph != null;
     if (has_chrome) {
         try writeJsonFieldName(writer, "chrome", &first);
         try writeThemeChromeJson(writer, spec.chrome);
@@ -794,6 +814,19 @@ fn writeThemeChromeJson(writer: anytype, chrome: ThemeChrome) !void {
     try writeOptionalStringField(writer, "box_bottom_right", chrome.box_bottom_right, &first);
     try writeOptionalStringField(writer, "box_horizontal", chrome.box_horizontal, &first);
     try writeOptionalStringField(writer, "box_vertical", chrome.box_vertical, &first);
+    try writeOptionalStringField(writer, "scrollbar_track_glyph", chrome.scrollbar_track_glyph, &first);
+    try writeOptionalStringField(writer, "scrollbar_thumb_glyph", chrome.scrollbar_thumb_glyph, &first);
+    try writer.writeByte('}');
+}
+
+fn writeScrollingConfigJson(writer: anytype, cfg: ScrollingConfig) !void {
+    try writer.writeByte('{');
+    var first: bool = true;
+    try writeOptionalBoolField(writer, "scrollbars_enabled", cfg.scrollbars_enabled, &first);
+    try writeOptionalUsizeField(writer, "scrollbar_min_thumb", cfg.scrollbar_min_thumb, &first);
+    try writeOptionalUsizeField(writer, "wheel_scroll_lines", cfg.wheel_scroll_lines, &first);
+    try writeOptionalUsizeField(writer, "wheel_list_lines", cfg.wheel_list_lines, &first);
+    try writeOptionalUsizeField(writer, "wheel_textarea_lines", cfg.wheel_textarea_lines, &first);
     try writer.writeByte('}');
 }
 
@@ -835,6 +868,12 @@ fn writeOptionalBoolField(writer: anytype, key: []const u8, value: ?bool, first:
     const v = value orelse return;
     try writeJsonFieldName(writer, key, first);
     try writer.writeAll(if (v) "true" else "false");
+}
+
+fn writeOptionalUsizeField(writer: anytype, key: []const u8, value: ?usize, first: *bool) !void {
+    const v = value orelse return;
+    try writeJsonFieldName(writer, key, first);
+    try writer.print("{d}", .{v});
 }
 
 fn writeOptionalStyleField(writer: anytype, key: []const u8, value: ?style.StyleOverride, first: *bool) !void {

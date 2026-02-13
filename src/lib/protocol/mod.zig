@@ -25,6 +25,7 @@ pub const AckEvent = types.AckEvent;
 pub const ConfigAckRejected = types.ConfigAckRejected;
 pub const ConfigAckEvent = types.ConfigAckEvent;
 pub const ConfigMsg = types.ConfigMsg;
+pub const ScrollingConfig = types.ScrollingConfig;
 pub const ThemeName = types.ThemeName;
 pub const ThemeVarEntry = types.ThemeVarEntry;
 pub const ThemeRule = types.ThemeRule;

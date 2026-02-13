@@ -39,6 +39,7 @@ const HelloCaps = protocol.HelloCaps;
 const HelloLimits = protocol.HelloLimits;
 const HelloEvent = protocol.HelloEvent;
 const ConfigMsg = protocol.ConfigMsg;
+const ScrollingConfig = protocol.ScrollingConfig;
 const ThemeName = protocol.ThemeName;
 const ThemeSpec = protocol.ThemeSpec;
 const ThemeVarEntry = protocol.ThemeVarEntry;
@@ -394,7 +395,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             },
         }
     } else if (std.mem.eql(u8, type_str, "config")) {
-        try expectOnlyFields(obj, &.{ "type", "keybindings", "theme_spec", "seq", "v" });
+        try expectOnlyFields(obj, &.{ "type", "keybindings", "theme_spec", "scrolling", "seq", "v" });
         const cfg = try parseConfigMsg(allocator, obj, version);
         return .{ .config = cfg };
     } else {
@@ -411,17 +412,83 @@ fn parseConfigMsg(allocator: std.mem.Allocator, obj: std.json.ObjectMap, v: ?u32
         const theme_spec_obj = try asObject(theme_spec_val);
         break :blk try parseThemeSpec(allocator, theme_spec_obj);
     } else null;
+    const scrolling: ?ScrollingConfig = if (obj.get("scrolling")) |scrolling_val| blk: {
+        const scrolling_obj = try asObject(scrolling_val);
+        break :blk try parseScrollingConfig(scrolling_obj);
+    } else null;
     const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
         try usizeToU64(seq_usize)
     else
         null;
-    if (keybindings == null and theme_spec == null) return error.MissingField;
+    if (keybindings == null and theme_spec == null and scrolling == null) return error.MissingField;
     return .{
         .keybindings = keybindings,
         .theme_spec = theme_spec,
+        .scrolling = scrolling,
         .seq = seq,
         .v = v,
     };
+}
+
+fn parseScrollingConfig(obj: std.json.ObjectMap) ParseMsgError!ScrollingConfig {
+    var out: ScrollingConfig = .{};
+    var has_any: bool = false;
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const value = entry.value_ptr.*;
+        if (std.mem.eql(u8, key, "scrollbars_enabled")) {
+            out.scrollbars_enabled = switch (value) {
+                .bool => |b| b,
+                else => return error.WrongType,
+            };
+            has_any = true;
+        } else if (std.mem.eql(u8, key, "scrollbar_min_thumb")) {
+            const v = switch (value) {
+                .integer => |n| blk: {
+                    if (n < 1) return error.InvalidScrollingConfig;
+                    break :blk @as(usize, @intCast(n));
+                },
+                else => return error.WrongType,
+            };
+            out.scrollbar_min_thumb = v;
+            has_any = true;
+        } else if (std.mem.eql(u8, key, "wheel_scroll_lines")) {
+            const v = switch (value) {
+                .integer => |n| blk: {
+                    if (n < 1 or n > 100) return error.InvalidScrollingConfig;
+                    break :blk @as(usize, @intCast(n));
+                },
+                else => return error.WrongType,
+            };
+            out.wheel_scroll_lines = v;
+            has_any = true;
+        } else if (std.mem.eql(u8, key, "wheel_list_lines")) {
+            const v = switch (value) {
+                .integer => |n| blk: {
+                    if (n < 1 or n > 100) return error.InvalidScrollingConfig;
+                    break :blk @as(usize, @intCast(n));
+                },
+                else => return error.WrongType,
+            };
+            out.wheel_list_lines = v;
+            has_any = true;
+        } else if (std.mem.eql(u8, key, "wheel_textarea_lines")) {
+            const v = switch (value) {
+                .integer => |n| blk: {
+                    if (n < 1 or n > 100) return error.InvalidScrollingConfig;
+                    break :blk @as(usize, @intCast(n));
+                },
+                else => return error.WrongType,
+            };
+            out.wheel_textarea_lines = v;
+            has_any = true;
+        } else {
+            return error.UnknownField;
+        }
+    }
+    if (!has_any) return error.MissingField;
+    return out;
 }
 
 fn parseConfigAckEvent(
@@ -643,6 +710,16 @@ fn parseThemeChrome(obj: std.json.ObjectMap) ParseMsgError!ThemeChrome {
             };
         } else if (std.mem.eql(u8, key, "box_vertical")) {
             out.box_vertical = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "scrollbar_track_glyph")) {
+            out.scrollbar_track_glyph = switch (value) {
+                .string => |s| s,
+                else => return error.WrongType,
+            };
+        } else if (std.mem.eql(u8, key, "scrollbar_thumb_glyph")) {
+            out.scrollbar_thumb_glyph = switch (value) {
                 .string => |s| s,
                 else => return error.WrongType,
             };

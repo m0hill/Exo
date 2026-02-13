@@ -125,6 +125,12 @@ Config can also install a dynamic selector-based theme spec:
 {"type":"config","v":1,"theme_spec":{"base":"default","vars":{"accent":"#38bdf8"},"rules":[{"selector":"box.button.primary:hover","style":{"bg":"$accent","bold":true}}]}}
 ```
 
+Config can also tune scrollbars and wheel behavior:
+
+```json
+{"type":"config","v":1,"scrolling":{"scrollbars_enabled":true,"scrollbar_min_thumb":1,"wheel_scroll_lines":3,"wheel_list_lines":1,"wheel_textarea_lines":3}}
+```
+
 Rules:
 
 - each rule is `{ "key": string, "mods": number (optional, default 0), "action": string }`
@@ -145,7 +151,7 @@ Theme names:
 
 - `base` (optional): `default|light|ocean`; defaults to the currently active theme
 - `vars` (optional): object map `name -> color`, where name matches `^[A-Za-z][A-Za-z0-9_]*$`
-- `chrome` (optional): partial component chrome override (`input_prefix`, list markers, box glyphs, etc.)
+- `chrome` (optional): partial component chrome override (`input_prefix`, list markers, box glyphs, scrollbar glyphs, etc.)
 - `overlays` (optional): optional style overrides for `disabled`, `readonly`, `focused`, `hovered`, `active`, `validation_error`, `validation_warning`, `validation_success`
 - `rules` (optional): array of `{ "selector": string, "style": StyleOverride }`
 
@@ -155,6 +161,8 @@ Limits:
 - `rules` max entries: `2048`
 - selector max length: `256`
 - var name max length: `64`
+- `scrolling.wheel_*_lines`: `1..100`
+- `scrolling.scrollbar_min_thumb`: `>= 1` (runtime clamps to viewport height)
 
 Action names:
 
@@ -273,10 +281,10 @@ Config acknowledgement event (runtime config negotiation result):
 `config_ack` rules:
 
 - runtime emits one `config_ack` for every backend `config` message attempt
-- `applied` is an array of top-level keys that were accepted (`keybindings`, `theme_spec`)
+- `applied` is an array of top-level keys that were accepted (`keybindings`, `theme_spec`, `scrolling`)
 - `rejected` is an array of `{ "key": string, "reason": string }`
 - malformed config that cannot be mapped to a specific top-level key uses `key:"config"`
-- keybindings are evaluated first; if keybindings fail, runtime rejects `theme_spec` in the same message with reason `keybindings_rejected`
+- keybindings are evaluated first; if keybindings fail, runtime rejects `theme_spec`/`scrolling` in the same message with reason `keybindings_rejected`
 
 Sequencing acknowledgement event:
 

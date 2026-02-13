@@ -19,6 +19,7 @@ pub const buildThemeFromSpec = theme_mod.buildThemeFromSpec;
 
 pub const RenderState = struct {
     theme: *const Theme = &theme_mod.default_theme,
+    scrolling: ScrollingRenderConfig = .{},
     focused_id: ?[]const u8 = null,
     hovered_id: ?[]const u8 = null,
     hovered_item: ?[]const u8 = null,
@@ -28,6 +29,11 @@ pub const RenderState = struct {
     lists: []const ListState = &.{},
     vlists: []const VListState = &.{},
     scrolls: []const ScrollState = &.{},
+};
+
+pub const ScrollingRenderConfig = struct {
+    scrollbars_enabled: bool = true,
+    scrollbar_min_thumb: usize = 1,
 };
 
 pub const InputState = struct {
@@ -145,6 +151,30 @@ const RectI = struct {
     w: usize,
     h: usize,
 };
+
+pub const ScrollbarGeometry = struct {
+    thumb_top: usize,
+    thumb_h: usize,
+};
+
+pub fn computeScrollbar(
+    track_h: usize,
+    content_h: usize,
+    viewport_h: usize,
+    scroll_y: usize,
+    min_thumb: usize,
+) ScrollbarGeometry {
+    if (track_h == 0 or content_h == 0 or viewport_h == 0) {
+        return .{ .thumb_top = 0, .thumb_h = 0 };
+    }
+    const min_t = @max(@as(usize, 1), @min(min_thumb, track_h));
+    var thumb_h = @max(min_t, (viewport_h * track_h) / content_h);
+    if (thumb_h > track_h) thumb_h = track_h;
+    const denom = if (content_h > viewport_h) content_h - viewport_h else 0;
+    const max_top = track_h - thumb_h;
+    const thumb_top = if (denom == 0) 0 else @min(max_top, (scroll_y * max_top) / denom);
+    return .{ .thumb_top = thumb_top, .thumb_h = thumb_h };
+}
 
 const VBoxMode = enum {
     bounded,
@@ -1364,6 +1394,53 @@ fn fillRectStyle(frame: *Frame, rect: RectI, clip: RectI, st: style.PackedStyle)
     }
 }
 
+fn shouldShowScrollbar(enabled: bool, avail_w: usize, viewport_h: usize, content_h: usize) bool {
+    return enabled and avail_w >= 2 and viewport_h > 0 and content_h > viewport_h;
+}
+
+fn scrollbarGlyphOrFallback(glyph: []const u8, fallback: []const u8) []const u8 {
+    if (unicode.displayWidth(glyph) == 1) return glyph;
+    return fallback;
+}
+
+fn scrollbarStyles(state: RenderState, inherited: style.Style) struct { track: style.PackedStyle, thumb: style.PackedStyle } {
+    const base = inherited;
+    const track_ov = state.theme.resolveEngineOverride(.text, "", "scrollbar.track", .{});
+    const thumb_ov = state.theme.resolveEngineOverride(.text, "", "scrollbar.thumb", .{});
+    return .{
+        .track = style.pack(style.merge(base, track_ov)),
+        .thumb = style.pack(style.merge(base, thumb_ov)),
+    };
+}
+
+fn paintScrollbarColumn(
+    frame: *Frame,
+    track_rect: RectI,
+    clip: RectI,
+    thumb_top: usize,
+    thumb_h: usize,
+    track_style: style.PackedStyle,
+    thumb_style: style.PackedStyle,
+    track_glyph: []const u8,
+    thumb_glyph: []const u8,
+) void {
+    if (track_rect.w == 0 or track_rect.h == 0) return;
+    var row_i: usize = 0;
+    while (row_i < track_rect.h) : (row_i += 1) {
+        const row = track_rect.y + @as(isize, @intCast(row_i));
+        const in_thumb = row_i >= thumb_top and row_i < thumb_top + thumb_h;
+        render_text.putGraphemeClipped(
+            frame,
+            row,
+            track_rect.x,
+            if (in_thumb) thumb_glyph else track_glyph,
+            1,
+            clip,
+            if (in_thumb) thumb_style else track_style,
+        );
+    }
+}
+
 fn paintInput(
     frame: *Frame,
     rect: RectI,
@@ -1571,8 +1648,21 @@ fn paintTextarea(
         return;
     }
 
-    const cols: usize = rect.w;
+    const content_h_no_bar = unicode.defaultTextMetrics().visualPosForByte(value, value.len, rect.w).y + 1;
+    var show_bar = shouldShowScrollbar(state.scrolling.scrollbars_enabled, rect.w, rect.h, content_h_no_bar);
+    var cols: usize = if (show_bar) rect.w - 1 else rect.w;
+    const content_h = if (show_bar) unicode.defaultTextMetrics().visualPosForByte(value, value.len, cols).y + 1 else content_h_no_bar;
+    if (show_bar and content_h <= rect.h) {
+        show_bar = false;
+        cols = rect.w;
+    }
     const rows: usize = rect.h;
+    const content_rect: RectI = .{
+        .x = rect.x,
+        .y = rect.y,
+        .w = cols,
+        .h = rect.h,
+    };
 
     var cursor_vis_y: usize = 0;
     var cursor_vis_x: usize = 0;
@@ -1591,8 +1681,8 @@ fn paintTextarea(
         if (item.row >= scroll_y and item.row < scroll_y + rows) {
             const b0: u8 = value[item.grapheme.start];
             const glyph: []const u8 = if (b0 == '\t') " " else value[item.grapheme.start..item.grapheme.end];
-            const row: isize = rect.y + @as(isize, @intCast(item.row - scroll_y));
-            const col_abs: isize = rect.x + @as(isize, @intCast(item.col));
+            const row: isize = content_rect.y + @as(isize, @intCast(item.row - scroll_y));
+            const col_abs: isize = content_rect.x + @as(isize, @intCast(item.col));
             const selected = sel_start != null and sel_end != null and item.grapheme.start >= sel_start.? and item.grapheme.start < sel_end.?;
             render_text.putGraphemeClipped(
                 frame,
@@ -1618,9 +1708,9 @@ fn paintTextarea(
 
     if (focused and cursor_out.* == null and cols != 0) {
         if (cursor_vis_y >= scroll_y and cursor_vis_y < scroll_y + rows) {
-            const row: isize = rect.y + @as(isize, @intCast(cursor_vis_y - scroll_y));
-            var col_abs: isize = rect.x + @as(isize, @intCast(cursor_vis_x));
-            const rect_x2: isize = rect.x + @as(isize, @intCast(cols));
+            const row: isize = content_rect.y + @as(isize, @intCast(cursor_vis_y - scroll_y));
+            var col_abs: isize = content_rect.x + @as(isize, @intCast(cursor_vis_x));
+            const rect_x2: isize = content_rect.x + @as(isize, @intCast(cols));
             if (col_abs >= rect_x2) col_abs = rect_x2 - 1;
 
             if (row >= clip.y and row < clip.y + @as(isize, @intCast(clip.h)) and col_abs >= clip.x and col_abs < clip.x + @as(isize, @intCast(clip.w)) and row >= 0 and col_abs >= 0) {
@@ -1630,6 +1720,31 @@ fn paintTextarea(
                 };
             }
         }
+    }
+
+    if (show_bar) {
+        const min_thumb = @max(@as(usize, 1), @min(state.scrolling.scrollbar_min_thumb, rect.h));
+        const geom = computeScrollbar(rect.h, content_h, rect.h, scroll_y, min_thumb);
+        const styles = scrollbarStyles(state, inherited);
+        const track_rect: RectI = .{
+            .x = rect.x + @as(isize, @intCast(cols)),
+            .y = rect.y,
+            .w = 1,
+            .h = rect.h,
+        };
+        const track_glyph = scrollbarGlyphOrFallback(state.theme.chrome.scrollbar_track_glyph, "|");
+        const thumb_glyph = scrollbarGlyphOrFallback(state.theme.chrome.scrollbar_thumb_glyph, "#");
+        paintScrollbarColumn(
+            frame,
+            track_rect,
+            clip,
+            geom.thumb_top,
+            geom.thumb_h,
+            styles.track,
+            styles.thumb,
+            track_glyph,
+            thumb_glyph,
+        );
     }
 }
 
@@ -1647,6 +1762,8 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
 
     const desired_height: usize = l.height orelse rect.h;
     const height: usize = @min(desired_height, rect.h);
+    const show_bar = shouldShowScrollbar(state.scrolling.scrollbars_enabled, rect.w, height, l.children.len);
+    const content_w: usize = if (show_bar) rect.w - 1 else rect.w;
     const start: usize = @min(scroll, l.children.len);
 
     var row_idx: usize = 0;
@@ -1671,7 +1788,7 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
         const row: isize = rect.y + @as(isize, @intCast(row_idx));
         const y_end: isize = rect.y + @as(isize, @intCast(rect.h));
         if (row >= y_end) break;
-        const row_rect: RectI = .{ .x = rect.x, .y = row, .w = rect.w, .h = 1 };
+        const row_rect: RectI = .{ .x = rect.x, .y = row, .w = content_w, .h = 1 };
         if (!packedEq(row_packed, list_packed) and row_packed.affectsBlank()) {
             fillRectStyle(frame, row_rect, clip, row_packed);
         }
@@ -1695,6 +1812,31 @@ fn paintList(frame: *Frame, rect: RectI, clip: RectI, state: RenderState, l: pro
             },
             else => {},
         }
+    }
+
+    if (show_bar) {
+        const min_thumb = @max(@as(usize, 1), @min(state.scrolling.scrollbar_min_thumb, height));
+        const geom = computeScrollbar(height, l.children.len, height, scroll, min_thumb);
+        const styles = scrollbarStyles(state, inherited);
+        const track_rect: RectI = .{
+            .x = rect.x + @as(isize, @intCast(content_w)),
+            .y = rect.y,
+            .w = 1,
+            .h = height,
+        };
+        const track_glyph = scrollbarGlyphOrFallback(state.theme.chrome.scrollbar_track_glyph, "|");
+        const thumb_glyph = scrollbarGlyphOrFallback(state.theme.chrome.scrollbar_thumb_glyph, "#");
+        paintScrollbarColumn(
+            frame,
+            track_rect,
+            clip,
+            geom.thumb_top,
+            geom.thumb_h,
+            styles.track,
+            styles.thumb,
+            track_glyph,
+            thumb_glyph,
+        );
     }
 }
 
@@ -2250,16 +2392,49 @@ fn paintScroll(
 
     const st = findScrollState(state.scrolls, s.id);
     const scroll_y: usize = if (st) |ss| ss.scroll_y else 0;
-    const content_h: usize = if (st) |ss| ss.content_h else measureHeight(s.child.*, inner.w);
+    const content_h_no_bar: usize = if (st) |ss| ss.content_h else measureHeight(s.child.*, inner.w);
+    var show_bar = shouldShowScrollbar(state.scrolling.scrollbars_enabled, inner.w, inner.h, content_h_no_bar);
+    var content_w: usize = if (show_bar) inner.w - 1 else inner.w;
+    var content_h: usize = if (show_bar) measureHeight(s.child.*, content_w) else content_h_no_bar;
+    if (show_bar and content_h <= inner.h) {
+        show_bar = false;
+        content_w = inner.w;
+        content_h = content_h_no_bar;
+    }
 
     const dy: isize = @as(isize, @intCast(@min(scroll_y, @as(usize, std.math.maxInt(isize)))));
     const child_rect: RectI = .{
         .x = inner.x,
         .y = inner.y - dy,
-        .w = inner.w,
+        .w = content_w,
         .h = content_h,
     };
     paintNode(frame, s.child.*, child_rect, child_clip, state, cursor_out, inherited, .unbounded);
+
+    if (show_bar) {
+        const min_thumb = @max(@as(usize, 1), @min(state.scrolling.scrollbar_min_thumb, inner.h));
+        const geom = computeScrollbar(inner.h, content_h, inner.h, scroll_y, min_thumb);
+        const styles = scrollbarStyles(state, inherited);
+        const track_rect: RectI = .{
+            .x = inner.x + @as(isize, @intCast(content_w)),
+            .y = inner.y,
+            .w = 1,
+            .h = inner.h,
+        };
+        const track_glyph = scrollbarGlyphOrFallback(state.theme.chrome.scrollbar_track_glyph, "|");
+        const thumb_glyph = scrollbarGlyphOrFallback(state.theme.chrome.scrollbar_thumb_glyph, "#");
+        paintScrollbarColumn(
+            frame,
+            track_rect,
+            child_clip,
+            geom.thumb_top,
+            geom.thumb_h,
+            styles.track,
+            styles.thumb,
+            track_glyph,
+            thumb_glyph,
+        );
+    }
 }
 
 fn findInputState(inputs: []const InputState, id: []const u8) ?InputState {

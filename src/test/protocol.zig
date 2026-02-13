@@ -734,6 +734,73 @@ test "protocol: parse config theme_spec-only message" {
     }
 }
 
+test "protocol: parse config scrolling-only message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const msg = try protocol.parseMsgLeaky(
+        arena.allocator(),
+        "{\"type\":\"config\",\"v\":1,\"scrolling\":{\"scrollbars_enabled\":true,\"scrollbar_min_thumb\":2,\"wheel_scroll_lines\":4,\"wheel_list_lines\":2,\"wheel_textarea_lines\":5}}",
+    );
+    switch (msg) {
+        .config => |cfg| {
+            try std.testing.expect(cfg.keybindings == null);
+            try std.testing.expect(cfg.theme_spec == null);
+            const scrolling = cfg.scrolling orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(true, scrolling.scrollbars_enabled orelse false);
+            try std.testing.expectEqual(@as(usize, 2), scrolling.scrollbar_min_thumb orelse 0);
+            try std.testing.expectEqual(@as(usize, 4), scrolling.wheel_scroll_lines orelse 0);
+            try std.testing.expectEqual(@as(usize, 2), scrolling.wheel_list_lines orelse 0);
+            try std.testing.expectEqual(@as(usize, 5), scrolling.wheel_textarea_lines orelse 0);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: write+parse config scrolling message" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+
+    try protocol.writeConfigJsonl(buf.writer(std.testing.allocator), .{
+        .scrolling = .{
+            .scrollbars_enabled = false,
+            .scrollbar_min_thumb = 3,
+            .wheel_scroll_lines = 7,
+            .wheel_list_lines = 2,
+            .wheel_textarea_lines = 6,
+        },
+    });
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (msg) {
+        .config => |cfg| {
+            const scrolling = cfg.scrolling orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqual(false, scrolling.scrollbars_enabled orelse true);
+            try std.testing.expectEqual(@as(usize, 3), scrolling.scrollbar_min_thumb orelse 0);
+            try std.testing.expectEqual(@as(usize, 7), scrolling.wheel_scroll_lines orelse 0);
+            try std.testing.expectEqual(@as(usize, 2), scrolling.wheel_list_lines orelse 0);
+            try std.testing.expectEqual(@as(usize, 6), scrolling.wheel_textarea_lines orelse 0);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "protocol: reject config scrolling out-of-range" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    try std.testing.expectError(
+        error.InvalidScrollingConfig,
+        protocol.parseMsgLeaky(
+            arena.allocator(),
+            "{\"type\":\"config\",\"v\":1,\"scrolling\":{\"wheel_list_lines\":0}}",
+        ),
+    );
+}
+
 test "protocol: parse config seq field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

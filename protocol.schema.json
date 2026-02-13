@@ -821,8 +821,29 @@
         "box_bottom_left": { "type": "string" },
         "box_bottom_right": { "type": "string" },
         "box_horizontal": { "type": "string" },
-        "box_vertical": { "type": "string" }
+        "box_vertical": { "type": "string" },
+        "scrollbar_track_glyph": { "type": "string" },
+        "scrollbar_thumb_glyph": { "type": "string" }
       },
+      "additionalProperties": false
+    },
+
+    "ScrollingConfig": {
+      "type": "object",
+      "properties": {
+        "scrollbars_enabled": { "type": "boolean" },
+        "scrollbar_min_thumb": { "type": "integer", "minimum": 1 },
+        "wheel_scroll_lines": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "wheel_list_lines": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "wheel_textarea_lines": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "anyOf": [
+        { "required": ["scrollbars_enabled"] },
+        { "required": ["scrollbar_min_thumb"] },
+        { "required": ["wheel_scroll_lines"] },
+        { "required": ["wheel_list_lines"] },
+        { "required": ["wheel_textarea_lines"] }
+      ],
       "additionalProperties": false
     },
 
@@ -873,13 +894,15 @@
         "type": { "const": "config" },
         "keybindings": { "$ref": "#/$defs/KeybindingsConfig" },
         "theme_spec": { "$ref": "#/$defs/ThemeSpec" },
+        "scrolling": { "$ref": "#/$defs/ScrollingConfig" },
         "seq": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
       "required": ["type", "v"],
       "anyOf": [
         { "required": ["keybindings"] },
-        { "required": ["theme_spec"] }
+        { "required": ["theme_spec"] },
+        { "required": ["scrolling"] }
       ],
       "additionalProperties": false
     },

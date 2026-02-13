@@ -523,6 +523,8 @@ test "ui: mouse click in input places cursor by column" {
     var auto_focus_done = true;
     var edit_drag: runtime_ui.EditDragState = .{};
     defer edit_drag.deinit(std.testing.allocator);
+    var scroll_drag: runtime_ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(std.testing.allocator);
 
     var log_sink = runtime_ui.makeNoopLogSink();
     var backend_out: std.ArrayList(u8) = .empty;
@@ -550,6 +552,7 @@ test "ui: mouse click in input places cursor by column" {
         writer,
         &widgets,
         &edit_drag,
+        &scroll_drag,
         &focused_id_buf,
         &focused_id,
         &hover_id_buf,
@@ -560,6 +563,7 @@ test "ui: mouse click in input places cursor by column" {
         4,
         20,
         "> ",
+        .{},
         1,
         .{ .kind = .down, .button = .left, .x = 4, .y = 0 },
     );
@@ -584,6 +588,8 @@ test "ui: mouse drag in input updates selection anchor and cursor" {
     var auto_focus_done = true;
     var edit_drag: runtime_ui.EditDragState = .{};
     defer edit_drag.deinit(std.testing.allocator);
+    var scroll_drag: runtime_ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(std.testing.allocator);
 
     var log_sink = runtime_ui.makeNoopLogSink();
     var backend_out: std.ArrayList(u8) = .empty;
@@ -611,6 +617,7 @@ test "ui: mouse drag in input updates selection anchor and cursor" {
         writer,
         &widgets,
         &edit_drag,
+        &scroll_drag,
         &focused_id_buf,
         &focused_id,
         &hover_id_buf,
@@ -621,6 +628,7 @@ test "ui: mouse drag in input updates selection anchor and cursor" {
         4,
         20,
         "> ",
+        .{},
         1,
         .{ .kind = .down, .button = .left, .x = 3, .y = 0 },
     );
@@ -630,6 +638,7 @@ test "ui: mouse drag in input updates selection anchor and cursor" {
         writer,
         &widgets,
         &edit_drag,
+        &scroll_drag,
         &focused_id_buf,
         &focused_id,
         &hover_id_buf,
@@ -640,6 +649,7 @@ test "ui: mouse drag in input updates selection anchor and cursor" {
         4,
         20,
         "> ",
+        .{},
         2,
         .{ .kind = .move, .x = 6, .y = 0 },
     );
@@ -666,6 +676,8 @@ test "ui: mouse click and drag in textarea updates wrapped cursor and selection"
     var auto_focus_done = true;
     var edit_drag: runtime_ui.EditDragState = .{};
     defer edit_drag.deinit(std.testing.allocator);
+    var scroll_drag: runtime_ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(std.testing.allocator);
 
     var log_sink = runtime_ui.makeNoopLogSink();
     var backend_out: std.ArrayList(u8) = .empty;
@@ -682,8 +694,8 @@ test "ui: mouse click and drag in textarea updates wrapped cursor and selection"
         &focused_id,
         &auto_focus_done,
         root,
-        6,
-        10,
+        2,
+        5,
     );
     _ = try runtime_ui.handleFocusedTextareaPaste(std.testing.allocator, &widgets, "ta", "abcdef", false, 3, 4);
 
@@ -693,6 +705,7 @@ test "ui: mouse click and drag in textarea updates wrapped cursor and selection"
         writer,
         &widgets,
         &edit_drag,
+        &scroll_drag,
         &focused_id_buf,
         &focused_id,
         &hover_id_buf,
@@ -700,9 +713,10 @@ test "ui: mouse click and drag in textarea updates wrapped cursor and selection"
         &hover_item_buf,
         &hover_item,
         root,
-        6,
-        10,
+        2,
+        5,
         "> ",
+        .{},
         1,
         .{ .kind = .down, .button = .left, .x = 1, .y = 1 },
     );
@@ -712,6 +726,7 @@ test "ui: mouse click and drag in textarea updates wrapped cursor and selection"
         writer,
         &widgets,
         &edit_drag,
+        &scroll_drag,
         &focused_id_buf,
         &focused_id,
         &hover_id_buf,
@@ -722,6 +737,7 @@ test "ui: mouse click and drag in textarea updates wrapped cursor and selection"
         6,
         10,
         "> ",
+        .{},
         2,
         .{ .kind = .move, .x = 0, .y = 0 },
     );
@@ -730,4 +746,272 @@ test "ui: mouse click and drag in textarea updates wrapped cursor and selection"
     try std.testing.expectEqual(@as(usize, 0), ta_widget.state.textarea.cursor);
     try std.testing.expect(ta_widget.state.textarea.selection_anchor != null);
     try std.testing.expect(ta_widget.state.textarea.selection_anchor.? > 0);
+}
+
+test "ui: mouse wheel over textarea updates local scroll_y" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(std.testing.allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(std.testing.allocator);
+    var hover_item: ?[]const u8 = null;
+    var auto_focus_done = true;
+    var edit_drag: runtime_ui.EditDragState = .{};
+    defer edit_drag.deinit(std.testing.allocator);
+    var scroll_drag: runtime_ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(std.testing.allocator);
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    const root = protocol.Node{ .textarea = .{ .id = "ta", .mouseable = true, .w = 5, .h = 2 } };
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        6,
+        10,
+    );
+    _ = try runtime_ui.handleFocusedTextareaPaste(std.testing.allocator, &widgets, "ta", "abcdefghijklmnop", false, 2, 5);
+    const ta_idx = for (widgets.items, 0..) |w, idx| {
+        if (std.mem.eql(u8, w.id.items, "ta")) break idx;
+    } else return error.TestUnexpectedResult;
+    widgets.items[ta_idx].state.textarea.scroll_y = 2;
+
+    const res = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &scroll_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        6,
+        10,
+        "> ",
+        .{},
+        1,
+        .{ .kind = .wheel, .x = 2, .y = 0, .wheel_dy = -1 },
+    );
+    try std.testing.expect(res.suppress_pointer);
+
+    const ta_widget = findWidget(widgets.items, "ta") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(ta_widget.state.textarea.scroll_y < 2);
+}
+
+test "ui: scrollbar track click jumps list scroll" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(std.testing.allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(std.testing.allocator);
+    var hover_item: ?[]const u8 = null;
+    var auto_focus_done = true;
+    var edit_drag: runtime_ui.EditDragState = .{};
+    defer edit_drag.deinit(std.testing.allocator);
+    var scroll_drag: runtime_ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(std.testing.allocator);
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    var items = [_]protocol.Node{
+        .{ .text = .{ .id = "r0", .text = "0" } },
+        .{ .text = .{ .id = "r1", .text = "1" } },
+        .{ .text = .{ .id = "r2", .text = "2" } },
+        .{ .text = .{ .id = "r3", .text = "3" } },
+        .{ .text = .{ .id = "r4", .text = "4" } },
+        .{ .text = .{ .id = "r5", .text = "5" } },
+        .{ .text = .{ .id = "r6", .text = "6" } },
+        .{ .text = .{ .id = "r7", .text = "7" } },
+    };
+    const root = protocol.Node{ .list = .{ .id = "l", .mouseable = true, .w = 6, .height = 3, .children = items[0..] } };
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        6,
+        6,
+    );
+
+    const res = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &scroll_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        6,
+        6,
+        "> ",
+        .{},
+        1,
+        .{ .kind = .down, .button = .left, .x = 5, .y = 2 },
+    );
+    try std.testing.expect(res.changed);
+    try std.testing.expect(res.suppress_pointer);
+
+    const list_widget = findWidget(widgets.items, "l") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(list_widget.state.list.scroll > 0);
+}
+
+test "ui: scrollbar thumb drag updates and clamps list scroll" {
+    var widgets: std.ArrayList(runtime_ui.WidgetEntry) = .empty;
+    defer runtime_ui.deinitWidgetEntries(std.testing.allocator, &widgets);
+
+    var focused_id_buf: std.ArrayList(u8) = .empty;
+    defer focused_id_buf.deinit(std.testing.allocator);
+    var focused_id: ?[]const u8 = null;
+    var hover_id_buf: std.ArrayList(u8) = .empty;
+    defer hover_id_buf.deinit(std.testing.allocator);
+    var hover_id: ?[]const u8 = null;
+    var hover_item_buf: std.ArrayList(u8) = .empty;
+    defer hover_item_buf.deinit(std.testing.allocator);
+    var hover_item: ?[]const u8 = null;
+    var auto_focus_done = true;
+    var edit_drag: runtime_ui.EditDragState = .{};
+    defer edit_drag.deinit(std.testing.allocator);
+    var scroll_drag: runtime_ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(std.testing.allocator);
+
+    var log_sink = runtime_ui.makeNoopLogSink();
+    var backend_out: std.ArrayList(u8) = .empty;
+    defer backend_out.deinit(std.testing.allocator);
+    const writer = backend_out.writer(std.testing.allocator);
+
+    var items = [_]protocol.Node{
+        .{ .text = .{ .id = "r0", .text = "0" } },
+        .{ .text = .{ .id = "r1", .text = "1" } },
+        .{ .text = .{ .id = "r2", .text = "2" } },
+        .{ .text = .{ .id = "r3", .text = "3" } },
+        .{ .text = .{ .id = "r4", .text = "4" } },
+        .{ .text = .{ .id = "r5", .text = "5" } },
+        .{ .text = .{ .id = "r6", .text = "6" } },
+        .{ .text = .{ .id = "r7", .text = "7" } },
+    };
+    const root = protocol.Node{ .list = .{ .id = "l", .mouseable = true, .w = 6, .height = 3, .children = items[0..] } };
+    try runtime_ui.syncUiAfterPatch(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &focused_id_buf,
+        &focused_id,
+        &auto_focus_done,
+        root,
+        6,
+        6,
+    );
+
+    const down_res = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &scroll_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        6,
+        6,
+        "> ",
+        .{},
+        1,
+        .{ .kind = .down, .button = .left, .x = 5, .y = 0 },
+    );
+    try std.testing.expect(down_res.suppress_pointer);
+
+    const move_res = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &scroll_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        6,
+        6,
+        "> ",
+        .{},
+        2,
+        .{ .kind = .move, .x = 5, .y = 20 },
+    );
+    try std.testing.expect(move_res.suppress_pointer);
+    try std.testing.expect(move_res.changed);
+
+    const up_res = try runtime_ui.handleMouseEvent(
+        std.testing.allocator,
+        &log_sink,
+        writer,
+        &widgets,
+        &edit_drag,
+        &scroll_drag,
+        &focused_id_buf,
+        &focused_id,
+        &hover_id_buf,
+        &hover_id,
+        &hover_item_buf,
+        &hover_item,
+        root,
+        6,
+        6,
+        "> ",
+        .{},
+        3,
+        .{ .kind = .up, .button = .left, .x = 5, .y = 20 },
+    );
+    try std.testing.expect(up_res.suppress_pointer);
+
+    const list_widget = findWidget(widgets.items, "l") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 5), list_widget.state.list.scroll);
 }

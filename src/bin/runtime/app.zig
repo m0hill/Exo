@@ -165,6 +165,7 @@ fn configRejectedKeyForParseError(parse_err: anyerror) []const u8 {
     return switch (parse_err) {
         error.UnknownThemeSpecBase, error.InvalidSelector, error.ThemeSpecTooLarge => "theme_spec",
         error.UnknownKeyAction, error.InvalidKeybindingRule => "keybindings",
+        error.InvalidScrollingConfig => "scrolling",
         else => "config",
     };
 }
@@ -176,7 +177,8 @@ fn parseErrIsKeybindingsReject(parse_err: anyerror) bool {
 fn buildConfigRejectEntries(
     parse_err: anyerror,
     has_theme_spec_key: bool,
-    storage: *[2]protocol.ConfigAckRejected,
+    has_scrolling_key: bool,
+    storage: *[3]protocol.ConfigAckRejected,
 ) []const protocol.ConfigAckRejected {
     storage[0] = .{
         .key = configRejectedKeyForParseError(parse_err),
@@ -186,6 +188,13 @@ fn buildConfigRejectEntries(
     if (has_theme_spec_key and parseErrIsKeybindingsReject(parse_err)) {
         storage[len] = .{
             .key = "theme_spec",
+            .reason = "keybindings_rejected",
+        };
+        len += 1;
+    }
+    if (has_scrolling_key and parseErrIsKeybindingsReject(parse_err)) {
+        storage[len] = .{
+            .key = "scrolling",
             .reason = "keybindings_rejected",
         };
         len += 1;
@@ -204,6 +213,7 @@ const BackendLineHint = struct {
     kind: BackendMsgKind = .other,
     seq: ?u64 = null,
     has_theme_spec_key: bool = false,
+    has_scrolling_key: bool = false,
 };
 
 fn parseBackendLineHint(allocator: std.mem.Allocator, line: []const u8) BackendLineHint {
@@ -234,6 +244,7 @@ fn parseBackendLineHint(allocator: std.mem.Allocator, line: []const u8) BackendL
         .kind = .config,
         .seq = seq,
         .has_theme_spec_key = obj.get("theme_spec") != null,
+        .has_scrolling_key = obj.get("scrolling") != null,
     };
 }
 
@@ -271,9 +282,10 @@ pub fn writeConfigRejectAckAndErrorEvents(
     writer: anytype,
     parse_err: anyerror,
     has_theme_spec_key: bool,
+    has_scrolling_key: bool,
 ) !void {
-    var rejected_storage: [2]protocol.ConfigAckRejected = undefined;
-    const rejected = buildConfigRejectEntries(parse_err, has_theme_spec_key, &rejected_storage);
+    var rejected_storage: [3]protocol.ConfigAckRejected = undefined;
+    const rejected = buildConfigRejectEntries(parse_err, has_theme_spec_key, has_scrolling_key, &rejected_storage);
     try protocol.writeConfigAckEventJsonl(writer, .{
         .applied = &.{},
         .rejected = rejected,
@@ -306,9 +318,10 @@ fn emitConfigRejectAckEvent(
     backend_in: anytype,
     parse_err: anyerror,
     has_theme_spec_key: bool,
+    has_scrolling_key: bool,
 ) !void {
-    var rejected_storage: [2]protocol.ConfigAckRejected = undefined;
-    const rejected = buildConfigRejectEntries(parse_err, has_theme_spec_key, &rejected_storage);
+    var rejected_storage: [3]protocol.ConfigAckRejected = undefined;
+    const rejected = buildConfigRejectEntries(parse_err, has_theme_spec_key, has_scrolling_key, &rejected_storage);
     try emitConfigAckEvent(log_sink, backend_in, &.{}, rejected);
 }
 
@@ -450,6 +463,8 @@ pub fn run() !void {
     defer ui.deinitWidgetEntries(allocator, &widgets);
     var edit_drag: ui.EditDragState = .{};
     defer edit_drag.deinit(allocator);
+    var scroll_drag: ui.ScrollbarDrag = .{};
+    defer scroll_drag.deinit(allocator);
     var doc_selection: ui.text_selection.DocumentSelectionEngine = .{};
     defer doc_selection.deinit(allocator);
     var render_inputs: std.ArrayList(render.InputState) = .empty;
@@ -474,6 +489,7 @@ pub fn run() !void {
     defer decoder.deinit();
     var keymap = try keybindings.KeymapState.initDefaults(allocator);
     defer keymap.deinit();
+    var ui_cfg: ui.ScrollingConfig = .{};
     var active_theme: render.Theme = render.default_theme;
     var active_theme_owned: ?render.OwnedTheme = null;
     defer if (active_theme_owned) |*owned| owned.deinit();
@@ -606,12 +622,13 @@ pub fn run() !void {
                                 e == error.UnknownThemeSpecBase or
                                 e == error.InvalidSelector or
                                 e == error.ThemeSpecTooLarge or
+                                e == error.InvalidScrollingConfig or
                                 e == error.MissingField or
                                 e == error.WrongType or
                                 e == error.UnknownField))
                         {
                             log.logPrint(&log_sink, "CONFIG_ERR reason={s}\n", .{@errorName(e)});
-                            try emitConfigRejectAckEvent(&log_sink, child_in, e, line_hint.has_theme_spec_key);
+                            try emitConfigRejectAckEvent(&log_sink, child_in, e, line_hint.has_theme_spec_key, line_hint.has_scrolling_key);
                             try emitRuntimeErrorEvent(
                                 &log_sink,
                                 child_in,
@@ -889,8 +906,8 @@ pub fn run() !void {
                             }
                         },
                         .config => |cfg| {
-                            var applied_keys: [2][]const u8 = undefined;
-                            var rejected_keys: [2]protocol.ConfigAckRejected = undefined;
+                            var applied_keys: [3][]const u8 = undefined;
+                            var rejected_keys: [3]protocol.ConfigAckRejected = undefined;
                             var applied_len: usize = 0;
                             var rejected_len: usize = 0;
 
@@ -905,6 +922,13 @@ pub fn run() !void {
                                     if (cfg.theme_spec != null) {
                                         rejected_keys[rejected_len] = .{
                                             .key = "theme_spec",
+                                            .reason = "keybindings_rejected",
+                                        };
+                                        rejected_len += 1;
+                                    }
+                                    if (cfg.scrolling != null) {
+                                        rejected_keys[rejected_len] = .{
+                                            .key = "scrolling",
                                             .reason = "keybindings_rejected",
                                         };
                                         rejected_len += 1;
@@ -971,6 +995,30 @@ pub fn run() !void {
                                 log.logPrint(&log_sink, "CONFIG_APPLY kind=theme_spec rules={d} vars={d}\n", .{ theme_spec.rules.len, theme_spec.vars.len });
                                 applied_keys[applied_len] = "theme_spec";
                                 applied_len += 1;
+                            }
+                            if (cfg.scrolling) |sc| {
+                                if (sc.scrollbars_enabled) |v| ui_cfg.scrollbars_enabled = v;
+                                if (sc.scrollbar_min_thumb) |v| ui_cfg.scrollbar_min_thumb = v;
+                                if (sc.wheel_scroll_lines) |v| ui_cfg.wheel_scroll_lines = v;
+                                if (sc.wheel_list_lines) |v| ui_cfg.wheel_list_lines = v;
+                                if (sc.wheel_textarea_lines) |v| ui_cfg.wheel_textarea_lines = v;
+                                if (current_root != null) {
+                                    ui.clampLocalStateForResizeWithConfig(&widgets, current_root.?, last_term_size, ui_cfg);
+                                }
+                                log.logPrint(
+                                    &log_sink,
+                                    "CONFIG_APPLY kind=scrolling bars={s} min_thumb={d} wheel_scroll={d} wheel_list={d} wheel_textarea={d}\n",
+                                    .{
+                                        if (ui_cfg.scrollbars_enabled) "true" else "false",
+                                        ui_cfg.scrollbar_min_thumb,
+                                        ui_cfg.wheel_scroll_lines,
+                                        ui_cfg.wheel_list_lines,
+                                        ui_cfg.wheel_textarea_lines,
+                                    },
+                                );
+                                applied_keys[applied_len] = "scrolling";
+                                applied_len += 1;
+                                requested_reason = .input;
                             }
                             if (applied_len != 0 or rejected_len != 0) {
                                 try emitConfigAckEvent(
@@ -1063,13 +1111,14 @@ pub fn run() !void {
                                     doc_changed = true;
                                 }
 
-                                const changed = if (!doc_consumed)
+                                const mouse_result = if (!doc_consumed)
                                     try ui.handleMouseEvent(
                                         allocator,
                                         &log_sink,
                                         child_in,
                                         &widgets,
                                         &edit_drag,
+                                        &scroll_drag,
                                         &focused_id_buf,
                                         &focused_id,
                                         &hover_id_buf,
@@ -1080,12 +1129,13 @@ pub fn run() !void {
                                         rows,
                                         cols,
                                         active_theme.chrome.input_prefix,
+                                        ui_cfg,
                                         timing.monotonicNowNs(),
                                         mev,
                                     )
                                 else
-                                    false;
-                                if (!doc_consumed) {
+                                    ui.MouseInteractionResult{};
+                                if (!doc_consumed and !mouse_result.suppress_pointer) {
                                     const wrote_pointer = try pointer_engine.handleMouseEvent(
                                         allocator,
                                         child_in,
@@ -1098,7 +1148,7 @@ pub fn run() !void {
                                     );
                                     if (wrote_pointer) need_backend_flush = true;
                                 }
-                                if (changed or doc_changed) requested_reason = .input;
+                                if (mouse_result.changed or doc_changed) requested_reason = .input;
                                 handled_input_this_iter = true;
                                 continue;
                             } else {},
@@ -1635,7 +1685,7 @@ pub fn run() !void {
                 backend_flush_pending = false;
 
                 if (resize_changed_this_iter) {
-                    ui.clampLocalStateForResize(&widgets, current_root.?, last_term_size);
+                    ui.clampLocalStateForResizeWithConfig(&widgets, current_root.?, last_term_size, ui_cfg);
                 }
 
                 var rs = try ui.buildRenderState(
@@ -1652,6 +1702,10 @@ pub fn run() !void {
                     pointer_engine.activeId(),
                 );
                 rs.theme = &active_theme;
+                rs.scrolling = .{
+                    .scrollbars_enabled = ui_cfg.scrollbars_enabled,
+                    .scrollbar_min_thumb = ui_cfg.scrollbar_min_thumb,
+                };
                 try renderer.drawWithCaps(&term, term.caps(), current_root.?, rs, doc_selection.toScreenSelection());
                 last_render_ns = timing.monotonicNowNs();
 

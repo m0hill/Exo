@@ -622,6 +622,70 @@ test "render: scroll viewport shifts visible content" {
     try std.testing.expectEqual(@as(u8, 'D'), cellByte(&frame, 1, 0));
 }
 
+test "render: scroll paints scrollbar and thumb moves with scroll_y" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 3, 5);
+    frame.clear(' ');
+
+    var child_children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .text = "A" } },
+        .{ .text = .{ .id = "b", .text = "B" } },
+        .{ .text = .{ .id = "c", .text = "C" } },
+        .{ .text = .{ .id = "d", .text = "D" } },
+        .{ .text = .{ .id = "e", .text = "E" } },
+        .{ .text = .{ .id = "f", .text = "F" } },
+    };
+    var child = protocol.Node{ .vbox = .{ .id = "child", .children = child_children[0..] } };
+    const root = protocol.Node{ .scroll = .{ .id = "sv", .child = &child } };
+
+    render.renderToFrame(root, .{
+        .scrolls = &.{.{ .id = "sv", .scroll_y = 0, .content_h = 6, .viewport_h = 3 }},
+    }, &frame);
+    const thumb_top_0 = if (std.mem.eql(u8, cellText(&frame, 0, 4), "█")) @as(usize, 0) else if (std.mem.eql(u8, cellText(&frame, 1, 4), "█")) @as(usize, 1) else @as(usize, 2);
+    try std.testing.expect(std.mem.eql(u8, cellText(&frame, 0, 4), "│") or std.mem.eql(u8, cellText(&frame, 0, 4), "█"));
+
+    frame.clear(' ');
+    render.renderToFrame(root, .{
+        .scrolls = &.{.{ .id = "sv", .scroll_y = 3, .content_h = 6, .viewport_h = 3 }},
+    }, &frame);
+    const thumb_top_1 = if (std.mem.eql(u8, cellText(&frame, 0, 4), "█")) @as(usize, 0) else if (std.mem.eql(u8, cellText(&frame, 1, 4), "█")) @as(usize, 1) else @as(usize, 2);
+    try std.testing.expect(thumb_top_1 >= thumb_top_0);
+}
+
+test "render: list scrollbar reserves right gutter column" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 2, 5);
+    frame.clear(' ');
+
+    var items = [_]protocol.Node{
+        .{ .text = .{ .id = "r0", .text = "ABCD" } },
+        .{ .text = .{ .id = "r1", .text = "EFGH" } },
+        .{ .text = .{ .id = "r2", .text = "IJKL" } },
+    };
+    const root = protocol.Node{ .list = .{ .id = "l", .marker = .none, .children = items[0..] } };
+    render.renderToFrame(root, .{
+        .lists = &.{.{ .id = "l", .selected_id = "", .scroll = 0 }},
+    }, &frame);
+
+    try std.testing.expectEqual(@as(u8, 'D'), cellByte(&frame, 0, 3));
+    try std.testing.expect(std.mem.eql(u8, cellText(&frame, 0, 4), "│") or std.mem.eql(u8, cellText(&frame, 0, 4), "█"));
+}
+
+test "render: textarea scrollbar reserves right gutter column" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 2, 5);
+    frame.clear(' ');
+
+    const root = protocol.Node{ .textarea = .{ .id = "ta" } };
+    const st: render.TextareaState = .{ .id = "ta", .value = "abcdefghijk", .cursor = 0, .scroll_y = 0 };
+    render.renderToFrame(root, .{ .textareas = &.{st} }, &frame);
+
+    try std.testing.expect(std.mem.eql(u8, cellText(&frame, 0, 4), "│") or std.mem.eql(u8, cellText(&frame, 0, 4), "█"));
+}
+
 test "render: overlay paints above base" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
