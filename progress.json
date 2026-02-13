@@ -1333,5 +1333,36 @@
       "Send config `{ \"type\":\"config\", \"v\":1, \"scrolling\":{...} }`: confirm `event:config_ack` includes `scrolling` in applied/rejected",
       "Exit with 'x'"
     ]
+  },
+  {
+    "slice": 46,
+    "name": "tracer-slice",
+    "status": "completed",
+    "description": "More complete layout constraints: node min/max and percent sizing, bounded flex redistribution, and single-line text ellipsis overflow",
+    "deliverables": [
+      "src/lib/protocol/{types,parse,write,mod}.zig + protocol.schema.json: added optional node layout hints (`min_w/max_w/min_h/max_h/w_pct/h_pct`) across all node types and `overflow` (`clip|ellipsis`) on `text`/`styled_text`",
+      "docs/PROTOCOL.md: documented new layout fields, precedence (`w/h` > `%` > auto), min/max clamp semantics, and single-line overflow behavior",
+      "src/lib/render/mod.zig: centralized hint/min/max helpers; added bounded `hbox` redistribution with min/max caps and deterministic overflow truncation; added vbox pinned-height (%/fixed) handling and max-size rect clamping in paint/rect lookup paths",
+      "src/lib/render/text.zig: added grapheme-safe ellipsis fitting helpers for single-line rendering",
+      "src/lib/tree.zig + src/lib/scheduler.zig + src/bin/runtime/ui/node_util.zig: propagated new fields through morph/clone paths so constraints/overflow survive runtime patching",
+      "src/bin/demo/render.zig: added a constraints demo section with `w_pct` sidebar, flex panels with min/max bounds, and list rows using ellipsis overflow",
+      "src/test/protocol.zig + src/test/render.zig: added protocol roundtrip coverage for new fields and render tests for percent splits, constrained flex redistribution, vbox percent height pinning, and ellipsis rendering"
+    ],
+    "boundaries_hit": [
+      "Percent sizing is parent-relative and clamped by node min/max hints",
+      "HBox allocation now redistributes growth/shrink under constraints and falls back deterministically when total mins overrun available width",
+      "Ellipsis applies only in single-line list/vlist row rendering; wrapped text rendering remains unchanged",
+      "Track-level grid `minmax(...)` remains deferred; node-level min/max works inside existing `fixed|auto|fr` tracks"
+    ],
+    "timestamp": "2026-02-13",
+    "manual_repro": [
+      "zig build test",
+      "python3 scripts/check_protocol_schema.py --docs docs/PROTOCOL.md",
+      "zig build demo",
+      "In demo, inspect the constraints row: sidebar uses `w_pct=30` and main panels redistribute width while respecting min/max",
+      "Make terminal narrower/wider and confirm panel widths clamp predictably",
+      "Check list rows in the constraints sidebar and confirm long text ends with ellipsis instead of hard clipping",
+      "Exit with 'x'"
+    ]
   }
 ]

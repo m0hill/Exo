@@ -47,6 +47,7 @@ pub const JustifyContent = types.JustifyContent;
 pub const AlignItems = types.AlignItems;
 pub const HorizontalAlign = types.HorizontalAlign;
 pub const VerticalAlign = types.VerticalAlign;
+pub const TextOverflow = types.TextOverflow;
 
 pub const VBoxNode = types.VBoxNode;
 pub const HBoxNode = types.HBoxNode;

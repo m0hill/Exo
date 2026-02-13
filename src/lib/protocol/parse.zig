@@ -12,6 +12,7 @@ const JustifyContent = protocol.JustifyContent;
 const AlignItems = protocol.AlignItems;
 const HorizontalAlign = protocol.HorizontalAlign;
 const VerticalAlign = protocol.VerticalAlign;
+const TextOverflow = protocol.TextOverflow;
 const OverlayPlacement = protocol.OverlayPlacement;
 const OverlayAlign = protocol.OverlayAlign;
 const OverlayLayer = protocol.OverlayLayer;
@@ -1077,6 +1078,13 @@ fn parseVerticalAlignOrDefault(obj: std.json.ObjectMap, field: []const u8, defau
     return parseVerticalAlignString(s);
 }
 
+fn parseTextOverflow(obj: std.json.ObjectMap) ParseMsgError!TextOverflow {
+    const s = try getOptionalString(obj, "overflow") orelse return .clip;
+    if (std.mem.eql(u8, s, "clip")) return .clip;
+    if (std.mem.eql(u8, s, "ellipsis")) return .ellipsis;
+    return error.UnknownTextOverflow;
+}
+
 fn parseHoverable(obj: std.json.ObjectMap) ParseMsgError!bool {
     if (obj.get("hoverable")) |v| {
         return switch (v) {
@@ -1154,6 +1162,18 @@ const GridPlacement = struct {
     grid_area: ?[]const u8,
 };
 
+const NodeSizeHints = struct {
+    w: ?usize,
+    h: ?usize,
+    min_w: ?usize,
+    max_w: ?usize,
+    min_h: ?usize,
+    max_h: ?usize,
+    w_pct: ?u8,
+    h_pct: ?u8,
+    flex: usize,
+};
+
 fn parseGridPlacement(obj: std.json.ObjectMap) ParseMsgError!GridPlacement {
     const row_span = try getOptionalUsize(obj, "row_span") orelse 1;
     const col_span = try getOptionalUsize(obj, "col_span") orelse 1;
@@ -1164,6 +1184,26 @@ fn parseGridPlacement(obj: std.json.ObjectMap) ParseMsgError!GridPlacement {
         .row_span = row_span,
         .col_span = col_span,
         .grid_area = try getOptionalString(obj, "grid_area"),
+    };
+}
+
+fn parseOptionalPercent(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?u8 {
+    const v = try getOptionalUsize(obj, field) orelse return null;
+    if (v > 100) return error.WrongType;
+    return @as(u8, @intCast(v));
+}
+
+fn parseNodeSizeHints(obj: std.json.ObjectMap) ParseMsgError!NodeSizeHints {
+    return .{
+        .w = try getOptionalUsize(obj, "w"),
+        .h = try getOptionalUsize(obj, "h"),
+        .min_w = try getOptionalUsize(obj, "min_w"),
+        .max_w = try getOptionalUsize(obj, "max_w"),
+        .min_h = try getOptionalUsize(obj, "min_h"),
+        .max_h = try getOptionalUsize(obj, "max_h"),
+        .w_pct = try parseOptionalPercent(obj, "w_pct"),
+        .h_pct = try parseOptionalPercent(obj, "h_pct"),
+        .flex = try getOptionalUsize(obj, "flex") orelse 0,
     };
 }
 
@@ -1304,12 +1344,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
     if (try parseMinimalTextNode(obj)) |node| return node;
     const type_str = try getRequiredString(obj, "type");
     if (std.mem.eql(u8, type_str, "vbox")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "justify_content", "align_items", "gap", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "children" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "justify_content", "align_items", "gap", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
@@ -1334,9 +1372,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .vbox = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
@@ -1359,12 +1403,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "hbox")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "justify_content", "align_items", "gap", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "children" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "justify_content", "align_items", "gap", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
@@ -1389,9 +1431,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .hbox = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
@@ -1414,12 +1462,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "grid")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "gap_x", "gap_y", "rows", "cols", "areas", "style", "children" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "gap_x", "gap_y", "rows", "cols", "areas", "style", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
@@ -1446,9 +1492,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .grid = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
@@ -1473,12 +1525,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "box")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "title", "border", "pad", "clip", "shadow", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "child" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "title", "border", "pad", "clip", "shadow", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "child" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const title = try getOptionalString(obj, "title");
         const border = try getOptionalBool(obj, "border") orelse true;
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
@@ -1501,9 +1551,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .box = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .title = title,
             .border = border,
             .pad = pad,
@@ -1526,12 +1582,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .child = child,
         } };
     } else if (std.mem.eql(u8, type_str, "scroll")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "scroll_y", "child" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "scroll_y", "child" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse true;
         const hoverable = try parseHoverable(obj);
@@ -1553,9 +1607,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .scroll = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
@@ -1577,12 +1637,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .child = child,
         } };
     } else if (std.mem.eql(u8, type_str, "overlay")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "base", "layers" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "base", "layers" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const pad = try getOptionalUsize(obj, "pad") orelse 0;
         const clip = try getOptionalBool(obj, "clip") orelse false;
         const hoverable = try parseHoverable(obj);
@@ -1611,9 +1669,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .overlay = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .pad = pad,
             .clip = clip,
             .hoverable = hoverable,
@@ -1634,13 +1698,12 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .layers = layers,
         } };
     } else if (std.mem.eql(u8, type_str, "text")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "ext_align", "v_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "text" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "overflow", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "ext_align", "v_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "text" });
         const id = try getRequiredString(obj, "id");
         const text = try getRequiredString(obj, "text");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
+        const overflow = try parseTextOverflow(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
@@ -1656,9 +1719,16 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .text = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
+            .overflow = overflow,
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
@@ -1678,12 +1748,11 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .text = text,
         } };
     } else if (std.mem.eql(u8, type_str, "styled_text")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "ext_align", "v_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "spans" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "overflow", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "ext_align", "v_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "spans" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
+        const overflow = try parseTextOverflow(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
@@ -1705,9 +1774,16 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .styled_text = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
+            .overflow = overflow,
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
@@ -1727,12 +1803,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .spans = spans_out,
         } };
     } else if (std.mem.eql(u8, type_str, "input")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "content_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "selection_style", "placeholder_style", "placeholder", "state_mode", "value", "cursor", "scroll_x", "selection_start", "selection_end" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "content_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "selection_style", "placeholder_style", "placeholder", "state_mode", "value", "cursor", "scroll_x", "selection_start", "selection_end" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
@@ -1756,9 +1830,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .input = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
@@ -1785,12 +1865,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .selection_end = selection_end,
         } };
     } else if (std.mem.eql(u8, type_str, "textarea")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "selection_style", "placeholder_style", "placeholder", "state_mode", "value", "cursor", "scroll_y", "selection_start", "selection_end" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "selection_style", "placeholder_style", "placeholder", "state_mode", "value", "cursor", "scroll_y", "selection_start", "selection_end" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
         const mouseable = try parseMouseable(obj);
@@ -1813,9 +1891,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .textarea = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .align_self = align_self,
             .hoverable = hoverable,
             .mouseable = mouseable,
@@ -1841,12 +1925,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .selection_end = selection_end,
         } };
     } else if (std.mem.eql(u8, type_str, "list")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "height", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "marker", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "selected_id", "scroll", "children" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "height", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "marker", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "selected_id", "scroll", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const height = try getOptionalUsize(obj, "height");
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
@@ -1871,9 +1953,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .list = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .height = height,
             .align_self = align_self,
             .hoverable = hoverable,
@@ -1896,12 +1984,10 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "vlist")) {
-        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "height", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "marker", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "selected_index", "scroll", "total", "window_start", "item_id_prefix", "overscan", "req", "children" });
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "min_w", "max_w", "min_h", "max_h", "w_pct", "h_pct", "flex", "height", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "marker", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "selected_index", "scroll", "total", "window_start", "item_id_prefix", "overscan", "req", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
-        const w = try getOptionalUsize(obj, "w");
-        const h = try getOptionalUsize(obj, "h");
-        const flex = try getOptionalUsize(obj, "flex") orelse 0;
+        const size = try parseNodeSizeHints(obj);
         const height = try getOptionalUsize(obj, "height");
         const align_self = try parseAlignItemsOptional(obj, "align_self");
         const hoverable = try parseHoverable(obj);
@@ -1934,9 +2020,15 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
         return .{ .vlist = .{
             .id = id,
             .class = class,
-            .w = w,
-            .h = h,
-            .flex = flex,
+            .w = size.w,
+            .h = size.h,
+            .min_w = size.min_w,
+            .max_w = size.max_w,
+            .min_h = size.min_h,
+            .max_h = size.max_h,
+            .w_pct = size.w_pct,
+            .h_pct = size.h_pct,
+            .flex = size.flex,
             .height = height,
             .align_self = align_self,
             .hoverable = hoverable,

@@ -653,6 +653,22 @@ test "render: scroll paints scrollbar and thumb moves with scroll_y" {
     try std.testing.expect(thumb_top_1 >= thumb_top_0);
 }
 
+test "render: scroll unbounded layout ignores percent height hints" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 4);
+    frame.clear(' ');
+
+    var child_children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .h_pct = 50, .text = "A" } },
+    };
+    var child = protocol.Node{ .vbox = .{ .id = "child", .children = child_children[0..] } };
+    const root = protocol.Node{ .scroll = .{ .id = "sv", .child = &child } };
+
+    render.renderToFrame(root, .{}, &frame);
+    try std.testing.expectEqual(@as(u8, 'A'), cellByte(&frame, 0, 0));
+}
+
 test "render: list scrollbar reserves right gutter column" {
     var frame: Frame = .{};
     defer frame.deinit(std.testing.allocator);
@@ -892,4 +908,79 @@ test "render: cursor column uses display width not bytes" {
 
     // Line 3, col = 1 + prefix(2) + (a=1, 漢=2) = 6.
     try std.testing.expect(std.mem.indexOf(u8, term.out.items, "\x1b[3;6H") != null);
+}
+
+test "render: hbox percent split honors equal halves" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .w_pct = 50, .text = "A" } },
+        .{ .text = .{ .id = "b", .w_pct = 50, .text = "B" } },
+    };
+    const root = protocol.Node{ .hbox = .{
+        .id = "root",
+        .children = children[0..],
+    } };
+
+    const ra = render.findRectForId(root, 1, 11, "a") orelse return error.TestUnexpectedResult;
+    const rb = render.findRectForId(root, 1, 11, "b") orelse return error.TestUnexpectedResult;
+
+    const delta = if (ra.w > rb.w) ra.w - rb.w else rb.w - ra.w;
+    try std.testing.expect(delta <= 1);
+    try std.testing.expect(ra.w + rb.w <= 11);
+    try std.testing.expect(ra.w + rb.w >= 10);
+}
+
+test "render: hbox flex redistribution clamps and truncates deterministically" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "a", .flex = 1, .min_w = 10, .text = "A" } },
+        .{ .text = .{ .id = "b", .flex = 1, .min_w = 10, .text = "B" } },
+    };
+    const root = protocol.Node{ .hbox = .{
+        .id = "root",
+        .children = children[0..],
+    } };
+
+    const ra = render.findRectForId(root, 1, 15, "a") orelse return error.TestUnexpectedResult;
+    const rb = render.findRectForId(root, 1, 15, "b") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 10), ra.w);
+    try std.testing.expectEqual(@as(usize, 5), rb.w);
+    try std.testing.expectEqual(@as(usize, 15), ra.w + rb.w);
+}
+
+test "render: vbox percent height is pinned before flex" {
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "top", .h_pct = 50, .text = "top" } },
+        .{ .text = .{ .id = "fill", .flex = 1, .text = "fill" } },
+    };
+    const root = protocol.Node{ .vbox = .{
+        .id = "root",
+        .children = children[0..],
+    } };
+
+    const top = render.findRectForId(root, 10, 20, "top") orelse return error.TestUnexpectedResult;
+    const fill = render.findRectForId(root, 10, 20, "fill") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(usize, 5), top.h);
+    try std.testing.expectEqual(@as(usize, 5), fill.h);
+}
+
+test "render: list text overflow ellipsis draws suffix glyph" {
+    var frame: Frame = .{};
+    defer frame.deinit(std.testing.allocator);
+    try frame.resize(std.testing.allocator, 1, 8);
+    frame.clear(' ');
+
+    var rows = [_]protocol.Node{
+        .{ .text = .{
+            .id = "row-1",
+            .overflow = .ellipsis,
+            .text = "abcdefghijklmnopqrstuvwxyz",
+        } },
+    };
+    const root = protocol.Node{ .list = .{
+        .id = "l",
+        .marker = .none,
+        .children = rows[0..],
+    } };
+
+    render.renderToFrame(root, .{ .lists = &.{.{ .id = "l", .selected_id = "", .scroll = 0 }} }, &frame);
+    try std.testing.expectEqualStrings("…", cellText(&frame, 0, 7));
 }

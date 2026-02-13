@@ -6,90 +6,149 @@
   "$defs": {
     "Msg": {
       "oneOf": [
-        { "$ref": "#/$defs/PatchMsgFull" },
-        { "$ref": "#/$defs/PatchMsgTarget" },
-        { "$ref": "#/$defs/EventMsg" },
-        { "$ref": "#/$defs/ClipboardWriteMsg" },
-        { "$ref": "#/$defs/ClipboardReadMsg" },
-        { "$ref": "#/$defs/ConfigMsg" }
+        {
+          "$ref": "#/$defs/PatchMsgFull"
+        },
+        {
+          "$ref": "#/$defs/PatchMsgTarget"
+        },
+        {
+          "$ref": "#/$defs/EventMsg"
+        },
+        {
+          "$ref": "#/$defs/ClipboardWriteMsg"
+        },
+        {
+          "$ref": "#/$defs/ClipboardReadMsg"
+        },
+        {
+          "$ref": "#/$defs/ConfigMsg"
+        }
       ]
     },
-
     "VersionField": {
       "type": "integer",
       "const": 1
     },
-
     "ThemeName": {
       "type": "string",
-      "enum": ["default", "light", "ocean"]
+      "enum": [
+        "default",
+        "light",
+        "ocean"
+      ]
     },
-
     "ValidationState": {
       "type": "string",
-      "enum": ["none", "error", "warning", "success"]
+      "enum": [
+        "none",
+        "error",
+        "warning",
+        "success"
+      ]
     },
-
     "StateMode": {
       "type": "string",
-      "enum": ["uncontrolled", "init", "controlled"]
+      "enum": [
+        "uncontrolled",
+        "init",
+        "controlled"
+      ]
     },
-
     "ListMarker": {
       "type": "string",
-      "enum": ["default", "none"]
+      "enum": [
+        "default",
+        "none"
+      ]
     },
-
     "JustifyContent": {
       "type": "string",
-      "enum": ["start", "center", "end", "space_between", "space_around", "space_evenly"]
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "space_between",
+        "space_around",
+        "space_evenly"
+      ]
     },
-
     "AlignItems": {
       "type": "string",
-      "enum": ["start", "center", "end", "stretch"]
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "stretch"
+      ]
     },
-
     "HorizontalAlign": {
       "type": "string",
-      "enum": ["left", "center", "right"]
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ]
     },
-
     "VerticalAlign": {
       "type": "string",
-      "enum": ["top", "center", "bottom"]
+      "enum": [
+        "top",
+        "center",
+        "bottom"
+      ]
     },
-
     "OverlayPlacement": {
       "type": "string",
-      "enum": ["below", "above", "right", "left", "center"]
+      "enum": [
+        "below",
+        "above",
+        "right",
+        "left",
+        "center"
+      ]
     },
-
     "OverlayAlign": {
       "type": "string",
-      "enum": ["start", "center", "end"]
+      "enum": [
+        "start",
+        "center",
+        "end"
+      ]
     },
-
     "PointerKind": {
       "type": "string",
-      "enum": ["down", "up", "move", "drag", "scroll"]
+      "enum": [
+        "down",
+        "up",
+        "move",
+        "drag",
+        "scroll"
+      ]
     },
-
     "PointerButton": {
       "type": "string",
-      "enum": ["left", "middle", "right", "none"]
+      "enum": [
+        "left",
+        "middle",
+        "right",
+        "none"
+      ]
     },
-
     "ClipboardOp": {
       "type": "string",
-      "enum": ["write", "read"]
+      "enum": [
+        "write",
+        "read"
+      ]
     },
-
     "PasteSource": {
       "type": "string",
-      "enum": ["bracketed", "clipboard"]
+      "enum": [
+        "bracketed",
+        "clipboard"
+      ]
     },
-
     "KeyAction": {
       "type": "string",
       "enum": [
@@ -156,589 +215,1807 @@
         "textarea_redo"
       ]
     },
-
     "IdString": {
       "type": "string",
       "minLength": 1
     },
-
     "StyleOverride": {
       "type": "object",
       "properties": {
         "fg": {
           "oneOf": [
-            { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|\\$[A-Za-z][A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*)$" },
-            { "type": "null" }
+            {
+              "type": "string",
+              "pattern": "^(#[0-9a-fA-F]{6}|\\$[A-Za-z][A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "bg": {
           "oneOf": [
-            { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|\\$[A-Za-z][A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*)$" },
-            { "type": "null" }
+            {
+              "type": "string",
+              "pattern": "^(#[0-9a-fA-F]{6}|\\$[A-Za-z][A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*)$"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "bold": { "type": "boolean" },
-        "dim": { "type": "boolean" },
-        "italic": { "type": "boolean" },
-        "underline": { "type": "boolean" },
-        "blink": { "type": "boolean" },
-        "inverse": { "type": "boolean" },
-        "hidden": { "type": "boolean" },
-        "strikethrough": { "type": "boolean" }
+        "bold": {
+          "type": "boolean"
+        },
+        "dim": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "blink": {
+          "type": "boolean"
+        },
+        "inverse": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        }
       },
       "additionalProperties": false
     },
-
     "NodeArray": {
       "type": "array",
-      "items": { "$ref": "#/$defs/Node" }
+      "items": {
+        "$ref": "#/$defs/Node"
+      }
     },
-
     "GridTrack": {
       "description": "Canonical grid track: integer fixed, \"auto\", or \"<n>fr\" with n >= 1.",
       "oneOf": [
-        { "type": "integer", "minimum": 0 },
-        { "type": "string", "const": "auto" },
-        { "type": "string", "pattern": "^[1-9][0-9]*fr$" }
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*fr$"
+        }
       ]
     },
-
     "OverlayLayer": {
       "type": "object",
       "properties": {
-        "node": { "$ref": "#/$defs/Node" },
-        "anchor": { "type": "string" },
-        "placement": { "$ref": "#/$defs/OverlayPlacement" },
-        "align": { "$ref": "#/$defs/OverlayAlign" },
-        "offset_x": { "type": "integer" },
-        "offset_y": { "type": "integer" },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "clip": { "type": "boolean" },
-        "modal": { "type": "boolean" }
+        "node": {
+          "$ref": "#/$defs/Node"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/OverlayPlacement"
+        },
+        "align": {
+          "$ref": "#/$defs/OverlayAlign"
+        },
+        "offset_x": {
+          "type": "integer"
+        },
+        "offset_y": {
+          "type": "integer"
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clip": {
+          "type": "boolean"
+        },
+        "modal": {
+          "type": "boolean"
+        }
       },
-      "required": ["node", "placement"],
+      "required": [
+        "node",
+        "placement"
+      ],
       "additionalProperties": false
     },
-
     "Span": {
       "type": "object",
       "properties": {
-        "text": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" }
+        "text": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        }
       },
-      "required": ["text"],
+      "required": [
+        "text"
+      ],
       "additionalProperties": false
     },
-
     "Node": {
       "oneOf": [
-        { "$ref": "#/$defs/NodeVBox" },
-        { "$ref": "#/$defs/NodeHBox" },
-        { "$ref": "#/$defs/NodeGrid" },
-        { "$ref": "#/$defs/NodeBox" },
-        { "$ref": "#/$defs/NodeScroll" },
-        { "$ref": "#/$defs/NodeOverlay" },
-        { "$ref": "#/$defs/NodeText" },
-        { "$ref": "#/$defs/NodeStyledText" },
-        { "$ref": "#/$defs/NodeInput" },
-        { "$ref": "#/$defs/NodeTextarea" },
-        { "$ref": "#/$defs/NodeList" },
-        { "$ref": "#/$defs/NodeVList" }
+        {
+          "$ref": "#/$defs/NodeVBox"
+        },
+        {
+          "$ref": "#/$defs/NodeHBox"
+        },
+        {
+          "$ref": "#/$defs/NodeGrid"
+        },
+        {
+          "$ref": "#/$defs/NodeBox"
+        },
+        {
+          "$ref": "#/$defs/NodeScroll"
+        },
+        {
+          "$ref": "#/$defs/NodeOverlay"
+        },
+        {
+          "$ref": "#/$defs/NodeText"
+        },
+        {
+          "$ref": "#/$defs/NodeStyledText"
+        },
+        {
+          "$ref": "#/$defs/NodeInput"
+        },
+        {
+          "$ref": "#/$defs/NodeTextarea"
+        },
+        {
+          "$ref": "#/$defs/NodeList"
+        },
+        {
+          "$ref": "#/$defs/NodeVList"
+        }
       ]
     },
-
     "NodeVBox": {
       "type": "object",
       "properties": {
-        "type": { "const": "vbox" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "pad": { "type": "integer", "minimum": 0 },
-        "clip": { "type": "boolean" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "justify_content": { "$ref": "#/$defs/JustifyContent" },
-        "align_items": { "$ref": "#/$defs/AlignItems" },
-        "gap": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "children": { "$ref": "#/$defs/NodeArray" }
+        "type": {
+          "const": "vbox"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pad": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clip": {
+          "type": "boolean"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "justify_content": {
+          "$ref": "#/$defs/JustifyContent"
+        },
+        "align_items": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "gap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "children": {
+          "$ref": "#/$defs/NodeArray"
+        }
       },
-      "required": ["type", "id", "children"],
+      "required": [
+        "type",
+        "id",
+        "children"
+      ],
       "additionalProperties": false
     },
-
     "NodeHBox": {
       "type": "object",
       "properties": {
-        "type": { "const": "hbox" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "pad": { "type": "integer", "minimum": 0 },
-        "clip": { "type": "boolean" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "justify_content": { "$ref": "#/$defs/JustifyContent" },
-        "align_items": { "$ref": "#/$defs/AlignItems" },
-        "gap": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "children": { "$ref": "#/$defs/NodeArray" }
+        "type": {
+          "const": "hbox"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pad": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clip": {
+          "type": "boolean"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "justify_content": {
+          "$ref": "#/$defs/JustifyContent"
+        },
+        "align_items": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "gap": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "children": {
+          "$ref": "#/$defs/NodeArray"
+        }
       },
-      "required": ["type", "id", "children"],
+      "required": [
+        "type",
+        "id",
+        "children"
+      ],
       "additionalProperties": false
     },
-
     "NodeGrid": {
       "type": "object",
       "properties": {
-        "type": { "const": "grid" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "pad": { "type": "integer", "minimum": 0 },
-        "clip": { "type": "boolean" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "gap_x": { "type": "integer", "minimum": 0 },
-        "gap_y": { "type": "integer", "minimum": 0 },
+        "type": {
+          "const": "grid"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pad": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clip": {
+          "type": "boolean"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "gap_x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gap_y": {
+          "type": "integer",
+          "minimum": 0
+        },
         "rows": {
           "type": "array",
-          "items": { "$ref": "#/$defs/GridTrack" }
+          "items": {
+            "$ref": "#/$defs/GridTrack"
+          }
         },
         "cols": {
           "type": "array",
-          "items": { "$ref": "#/$defs/GridTrack" }
+          "items": {
+            "$ref": "#/$defs/GridTrack"
+          }
         },
         "areas": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "children": { "$ref": "#/$defs/NodeArray" }
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "children": {
+          "$ref": "#/$defs/NodeArray"
+        }
       },
-      "required": ["type", "id", "rows", "cols", "children"],
+      "required": [
+        "type",
+        "id",
+        "rows",
+        "cols",
+        "children"
+      ],
       "additionalProperties": false
     },
-
     "NodeBox": {
       "type": "object",
       "properties": {
-        "type": { "const": "box" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "title": { "type": "string" },
-        "border": { "type": "boolean" },
-        "pad": { "type": "integer", "minimum": 0 },
-        "clip": { "type": "boolean" },
-        "shadow": { "type": "boolean" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "child": { "$ref": "#/$defs/Node" }
+        "type": {
+          "const": "box"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "title": {
+          "type": "string"
+        },
+        "border": {
+          "type": "boolean"
+        },
+        "pad": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clip": {
+          "type": "boolean"
+        },
+        "shadow": {
+          "type": "boolean"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "child": {
+          "$ref": "#/$defs/Node"
+        }
       },
-      "required": ["type", "id", "child"],
+      "required": [
+        "type",
+        "id",
+        "child"
+      ],
       "additionalProperties": false
     },
-
     "NodeScroll": {
       "type": "object",
       "properties": {
-        "type": { "const": "scroll" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "pad": { "type": "integer", "minimum": 0 },
-        "clip": { "type": "boolean" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "state_mode": { "$ref": "#/$defs/StateMode" },
-        "scroll_y": { "type": "integer", "minimum": 0 },
-        "child": { "$ref": "#/$defs/Node" }
+        "type": {
+          "const": "scroll"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pad": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clip": {
+          "type": "boolean"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "state_mode": {
+          "$ref": "#/$defs/StateMode"
+        },
+        "scroll_y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "child": {
+          "$ref": "#/$defs/Node"
+        }
       },
-      "required": ["type", "id", "child"],
+      "required": [
+        "type",
+        "id",
+        "child"
+      ],
       "additionalProperties": false
     },
-
     "NodeOverlay": {
       "type": "object",
       "properties": {
-        "type": { "const": "overlay" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "pad": { "type": "integer", "minimum": 0 },
-        "clip": { "type": "boolean" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "base": { "$ref": "#/$defs/Node" },
+        "type": {
+          "const": "overlay"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pad": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "clip": {
+          "type": "boolean"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "base": {
+          "$ref": "#/$defs/Node"
+        },
         "layers": {
           "type": "array",
-          "items": { "$ref": "#/$defs/OverlayLayer" }
+          "items": {
+            "$ref": "#/$defs/OverlayLayer"
+          }
         }
       },
-      "required": ["type", "id", "base", "layers"],
+      "required": [
+        "type",
+        "id",
+        "base",
+        "layers"
+      ],
       "additionalProperties": false
     },
-
     "NodeText": {
       "type": "object",
       "properties": {
-        "type": { "const": "text" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "ext_align": { "$ref": "#/$defs/HorizontalAlign" },
-        "v_align": { "$ref": "#/$defs/VerticalAlign" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "text": { "type": "string" }
+        "type": {
+          "const": "text"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "ext_align": {
+          "$ref": "#/$defs/HorizontalAlign"
+        },
+        "v_align": {
+          "$ref": "#/$defs/VerticalAlign"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "text": {
+          "type": "string"
+        },
+        "overflow": {
+          "$ref": "#/$defs/OverflowMode"
+        }
       },
-      "required": ["type", "id", "text"],
+      "required": [
+        "type",
+        "id",
+        "text"
+      ],
       "additionalProperties": false
     },
-
     "NodeStyledText": {
       "type": "object",
       "properties": {
-        "type": { "const": "styled_text" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "ext_align": { "$ref": "#/$defs/HorizontalAlign" },
-        "v_align": { "$ref": "#/$defs/VerticalAlign" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
+        "type": {
+          "const": "styled_text"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "ext_align": {
+          "$ref": "#/$defs/HorizontalAlign"
+        },
+        "v_align": {
+          "$ref": "#/$defs/VerticalAlign"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
         "spans": {
           "type": "array",
-          "items": { "$ref": "#/$defs/Span" }
+          "items": {
+            "$ref": "#/$defs/Span"
+          }
+        },
+        "overflow": {
+          "$ref": "#/$defs/OverflowMode"
         }
       },
-      "required": ["type", "id", "spans"],
+      "required": [
+        "type",
+        "id",
+        "spans"
+      ],
       "additionalProperties": false
     },
-
     "NodeInput": {
       "type": "object",
       "properties": {
-        "type": { "const": "input" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "content_align": { "$ref": "#/$defs/HorizontalAlign" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "selection_style": { "$ref": "#/$defs/StyleOverride" },
-        "placeholder_style": { "$ref": "#/$defs/StyleOverride" },
-        "placeholder": { "type": "string" },
-        "state_mode": { "$ref": "#/$defs/StateMode" },
-        "value": { "type": "string" },
-        "cursor": { "type": "integer", "minimum": 0 },
-        "scroll_x": { "type": "integer", "minimum": 0 },
-        "selection_start": { "type": "integer", "minimum": 0 },
-        "selection_end": { "type": "integer", "minimum": 0 }
+        "type": {
+          "const": "input"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "content_align": {
+          "$ref": "#/$defs/HorizontalAlign"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "selection_style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "placeholder_style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "placeholder": {
+          "type": "string"
+        },
+        "state_mode": {
+          "$ref": "#/$defs/StateMode"
+        },
+        "value": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scroll_x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selection_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selection_end": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
-      "required": ["type", "id"],
+      "required": [
+        "type",
+        "id"
+      ],
       "additionalProperties": false
     },
-
     "NodeTextarea": {
       "type": "object",
       "properties": {
-        "type": { "const": "textarea" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "selection_style": { "$ref": "#/$defs/StyleOverride" },
-        "placeholder_style": { "$ref": "#/$defs/StyleOverride" },
-        "placeholder": { "type": "string" },
-        "state_mode": { "$ref": "#/$defs/StateMode" },
-        "value": { "type": "string" },
-        "cursor": { "type": "integer", "minimum": 0 },
-        "scroll_y": { "type": "integer", "minimum": 0 },
-        "selection_start": { "type": "integer", "minimum": 0 },
-        "selection_end": { "type": "integer", "minimum": 0 }
+        "type": {
+          "const": "textarea"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "selection_style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "placeholder_style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "placeholder": {
+          "type": "string"
+        },
+        "state_mode": {
+          "$ref": "#/$defs/StateMode"
+        },
+        "value": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scroll_y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selection_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selection_end": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
-      "required": ["type", "id"],
+      "required": [
+        "type",
+        "id"
+      ],
       "additionalProperties": false
     },
-
     "NodeList": {
       "type": "object",
       "properties": {
-        "type": { "const": "list" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "height": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "marker": { "$ref": "#/$defs/ListMarker" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "state_mode": { "$ref": "#/$defs/StateMode" },
-        "selected_id": { "type": "string" },
-        "scroll": { "type": "integer", "minimum": 0 },
-        "children": { "$ref": "#/$defs/NodeArray" }
+        "type": {
+          "const": "list"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "marker": {
+          "$ref": "#/$defs/ListMarker"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "state_mode": {
+          "$ref": "#/$defs/StateMode"
+        },
+        "selected_id": {
+          "type": "string"
+        },
+        "scroll": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "children": {
+          "$ref": "#/$defs/NodeArray"
+        }
       },
-      "required": ["type", "id", "children"],
+      "required": [
+        "type",
+        "id",
+        "children"
+      ],
       "additionalProperties": false
     },
-
     "NodeVList": {
       "type": "object",
       "properties": {
-        "type": { "const": "vlist" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string", "minLength": 1 },
-        "w": { "type": "integer", "minimum": 0 },
-        "h": { "type": "integer", "minimum": 0 },
-        "flex": { "type": "integer", "minimum": 0 },
-        "height": { "type": "integer", "minimum": 0 },
-        "align_self": { "$ref": "#/$defs/AlignItems" },
-        "hoverable": { "type": "boolean" },
-        "mouseable": { "type": "boolean" },
-        "disabled": { "type": "boolean" },
-        "readonly": { "type": "boolean" },
-        "validation": { "$ref": "#/$defs/ValidationState" },
-        "focusable": { "type": "boolean" },
-        "focus_scope": { "$ref": "#/$defs/IdString" },
-        "marker": { "$ref": "#/$defs/ListMarker" },
-        "grid_row": { "type": "integer", "minimum": 0 },
-        "grid_col": { "type": "integer", "minimum": 0 },
-        "row_span": { "type": "integer", "minimum": 1 },
-        "col_span": { "type": "integer", "minimum": 1 },
-        "grid_area": { "type": "string" },
-        "style": { "$ref": "#/$defs/StyleOverride" },
-        "state_mode": { "$ref": "#/$defs/StateMode" },
-        "selected_index": { "type": "integer", "minimum": 0 },
-        "scroll": { "type": "integer", "minimum": 0 },
-        "total": { "type": "integer", "minimum": 0 },
-        "window_start": { "type": "integer", "minimum": 0 },
-        "item_id_prefix": { "type": "string" },
-        "overscan": { "type": "integer", "minimum": 0 },
-        "req": { "type": "integer", "minimum": 0 },
-        "children": { "$ref": "#/$defs/NodeArray" }
+        "type": {
+          "const": "vlist"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_w": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "h_pct": {
+          "$ref": "#/$defs/PercentField"
+        },
+        "flex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "align_self": {
+          "$ref": "#/$defs/AlignItems"
+        },
+        "hoverable": {
+          "type": "boolean"
+        },
+        "mouseable": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationState"
+        },
+        "focusable": {
+          "type": "boolean"
+        },
+        "focus_scope": {
+          "$ref": "#/$defs/IdString"
+        },
+        "marker": {
+          "$ref": "#/$defs/ListMarker"
+        },
+        "grid_row": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grid_col": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "row_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "col_span": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_area": {
+          "type": "string"
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "state_mode": {
+          "$ref": "#/$defs/StateMode"
+        },
+        "selected_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scroll": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "window_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item_id_prefix": {
+          "type": "string"
+        },
+        "overscan": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "req": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "children": {
+          "$ref": "#/$defs/NodeArray"
+        }
       },
-      "required": ["type", "id", "total", "window_start", "item_id_prefix", "children"],
+      "required": [
+        "type",
+        "id",
+        "total",
+        "window_start",
+        "item_id_prefix",
+        "children"
+      ],
       "additionalProperties": false
     },
-
     "PatchMsgFull": {
       "type": "object",
       "properties": {
-        "type": { "const": "patch" },
-        "root": { "$ref": "#/$defs/Node" },
-        "seq": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "patch"
+        },
+        "root": {
+          "$ref": "#/$defs/Node"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "root", "v"],
+      "required": [
+        "type",
+        "root",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "PatchMsgTarget": {
       "type": "object",
       "properties": {
-        "type": { "const": "patch" },
-        "target": { "$ref": "#/$defs/IdString" },
-        "node": { "$ref": "#/$defs/Node" },
+        "type": {
+          "const": "patch"
+        },
+        "target": {
+          "$ref": "#/$defs/IdString"
+        },
+        "node": {
+          "$ref": "#/$defs/Node"
+        },
         "mode": {
           "type": "string",
-          "enum": ["replace", "morph"]
+          "enum": [
+            "replace",
+            "morph"
+          ]
         },
-        "seq": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "target", "node", "mode", "v"],
+      "required": [
+        "type",
+        "target",
+        "node",
+        "mode",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "ClipboardWriteMsg": {
       "type": "object",
       "properties": {
-        "type": { "const": "clipboard" },
-        "op": { "const": "write" },
-        "data": { "type": "string" },
+        "type": {
+          "const": "clipboard"
+        },
+        "op": {
+          "const": "write"
+        },
+        "data": {
+          "type": "string"
+        },
         "target": {
           "type": "string",
-          "enum": ["clipboard"]
+          "enum": [
+            "clipboard"
+          ]
         },
-        "seq": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "op", "data", "v"],
+      "required": [
+        "type",
+        "op",
+        "data",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "ClipboardReadMsg": {
       "type": "object",
       "properties": {
-        "type": { "const": "clipboard" },
-        "op": { "const": "read" },
-        "request_id": { "type": "integer", "minimum": 0 },
+        "type": {
+          "const": "clipboard"
+        },
+        "op": {
+          "const": "read"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0
+        },
         "target": {
           "type": "string",
-          "enum": ["clipboard"]
+          "enum": [
+            "clipboard"
+          ]
         },
-        "seq": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "op", "request_id", "v"],
+      "required": [
+        "type",
+        "op",
+        "request_id",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "KeybindingRule": {
       "type": "object",
       "properties": {
@@ -751,213 +2028,425 @@
           "minimum": 0,
           "maximum": 7
         },
-        "action": { "$ref": "#/$defs/KeyAction" }
+        "action": {
+          "$ref": "#/$defs/KeyAction"
+        }
       },
-      "required": ["key", "action"],
+      "required": [
+        "key",
+        "action"
+      ],
       "additionalProperties": false
     },
-
     "KeybindingsConfig": {
       "type": "object",
       "properties": {
         "global": {
           "type": "array",
-          "items": { "$ref": "#/$defs/KeybindingRule" }
+          "items": {
+            "$ref": "#/$defs/KeybindingRule"
+          }
         },
         "input": {
           "type": "array",
-          "items": { "$ref": "#/$defs/KeybindingRule" }
+          "items": {
+            "$ref": "#/$defs/KeybindingRule"
+          }
         },
         "textarea": {
           "type": "array",
-          "items": { "$ref": "#/$defs/KeybindingRule" }
+          "items": {
+            "$ref": "#/$defs/KeybindingRule"
+          }
         },
         "list": {
           "type": "array",
-          "items": { "$ref": "#/$defs/KeybindingRule" }
+          "items": {
+            "$ref": "#/$defs/KeybindingRule"
+          }
         },
         "scroll": {
           "type": "array",
-          "items": { "$ref": "#/$defs/KeybindingRule" }
+          "items": {
+            "$ref": "#/$defs/KeybindingRule"
+          }
         },
         "action": {
           "type": "array",
-          "items": { "$ref": "#/$defs/KeybindingRule" }
+          "items": {
+            "$ref": "#/$defs/KeybindingRule"
+          }
         }
       },
       "additionalProperties": false
     },
-
     "ThemeVarName": {
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
       "maxLength": 64
     },
-
     "ThemeColorValue": {
       "type": "string",
       "pattern": "^(#[0-9a-fA-F]{6}|[A-Za-z][A-Za-z0-9]*)$"
     },
-
     "ThemeSpecVars": {
       "type": "object",
-      "propertyNames": { "$ref": "#/$defs/ThemeVarName" },
-      "additionalProperties": { "$ref": "#/$defs/ThemeColorValue" },
+      "propertyNames": {
+        "$ref": "#/$defs/ThemeVarName"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/ThemeColorValue"
+      },
       "maxProperties": 256
     },
-
     "ThemeSpecChrome": {
       "type": "object",
       "properties": {
-        "input_prefix": { "type": "string" },
-        "input_placeholder_left": { "type": "string" },
-        "input_placeholder_right": { "type": "string" },
-        "list_selected_focused_marker": { "type": "string" },
-        "list_selected_marker": { "type": "string" },
-        "list_unselected_marker": { "type": "string" },
-        "list_selected_inverse": { "type": "boolean" },
-        "box_top_left": { "type": "string" },
-        "box_top_right": { "type": "string" },
-        "box_bottom_left": { "type": "string" },
-        "box_bottom_right": { "type": "string" },
-        "box_horizontal": { "type": "string" },
-        "box_vertical": { "type": "string" },
-        "scrollbar_track_glyph": { "type": "string" },
-        "scrollbar_thumb_glyph": { "type": "string" }
+        "input_prefix": {
+          "type": "string"
+        },
+        "input_placeholder_left": {
+          "type": "string"
+        },
+        "input_placeholder_right": {
+          "type": "string"
+        },
+        "list_selected_focused_marker": {
+          "type": "string"
+        },
+        "list_selected_marker": {
+          "type": "string"
+        },
+        "list_unselected_marker": {
+          "type": "string"
+        },
+        "list_selected_inverse": {
+          "type": "boolean"
+        },
+        "box_top_left": {
+          "type": "string"
+        },
+        "box_top_right": {
+          "type": "string"
+        },
+        "box_bottom_left": {
+          "type": "string"
+        },
+        "box_bottom_right": {
+          "type": "string"
+        },
+        "box_horizontal": {
+          "type": "string"
+        },
+        "box_vertical": {
+          "type": "string"
+        },
+        "scrollbar_track_glyph": {
+          "type": "string"
+        },
+        "scrollbar_thumb_glyph": {
+          "type": "string"
+        }
       },
       "additionalProperties": false
     },
-
     "ScrollingConfig": {
       "type": "object",
       "properties": {
-        "scrollbars_enabled": { "type": "boolean" },
-        "scrollbar_min_thumb": { "type": "integer", "minimum": 1 },
-        "wheel_scroll_lines": { "type": "integer", "minimum": 1, "maximum": 100 },
-        "wheel_list_lines": { "type": "integer", "minimum": 1, "maximum": 100 },
-        "wheel_textarea_lines": { "type": "integer", "minimum": 1, "maximum": 100 }
+        "scrollbars_enabled": {
+          "type": "boolean"
+        },
+        "scrollbar_min_thumb": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "wheel_scroll_lines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "wheel_list_lines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "wheel_textarea_lines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
       },
       "anyOf": [
-        { "required": ["scrollbars_enabled"] },
-        { "required": ["scrollbar_min_thumb"] },
-        { "required": ["wheel_scroll_lines"] },
-        { "required": ["wheel_list_lines"] },
-        { "required": ["wheel_textarea_lines"] }
+        {
+          "required": [
+            "scrollbars_enabled"
+          ]
+        },
+        {
+          "required": [
+            "scrollbar_min_thumb"
+          ]
+        },
+        {
+          "required": [
+            "wheel_scroll_lines"
+          ]
+        },
+        {
+          "required": [
+            "wheel_list_lines"
+          ]
+        },
+        {
+          "required": [
+            "wheel_textarea_lines"
+          ]
+        }
       ],
       "additionalProperties": false
     },
-
     "ThemeSpecOverlays": {
       "type": "object",
       "properties": {
-        "disabled": { "$ref": "#/$defs/StyleOverride" },
-        "readonly": { "$ref": "#/$defs/StyleOverride" },
-        "focused": { "$ref": "#/$defs/StyleOverride" },
-        "hovered": { "$ref": "#/$defs/StyleOverride" },
-        "active": { "$ref": "#/$defs/StyleOverride" },
-        "validation_error": { "$ref": "#/$defs/StyleOverride" },
-        "validation_warning": { "$ref": "#/$defs/StyleOverride" },
-        "validation_success": { "$ref": "#/$defs/StyleOverride" }
+        "disabled": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "readonly": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "focused": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "hovered": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "active": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "validation_error": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "validation_warning": {
+          "$ref": "#/$defs/StyleOverride"
+        },
+        "validation_success": {
+          "$ref": "#/$defs/StyleOverride"
+        }
       },
       "additionalProperties": false
     },
-
     "ThemeSpecRule": {
       "type": "object",
       "properties": {
-        "selector": { "type": "string", "maxLength": 256 },
-        "style": { "$ref": "#/$defs/StyleOverride" }
+        "selector": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "style": {
+          "$ref": "#/$defs/StyleOverride"
+        }
       },
-      "required": ["selector", "style"],
+      "required": [
+        "selector",
+        "style"
+      ],
       "additionalProperties": false
     },
-
     "ThemeSpec": {
       "type": "object",
       "properties": {
-        "base": { "$ref": "#/$defs/ThemeName" },
-        "vars": { "$ref": "#/$defs/ThemeSpecVars" },
-        "chrome": { "$ref": "#/$defs/ThemeSpecChrome" },
-        "overlays": { "$ref": "#/$defs/ThemeSpecOverlays" },
+        "base": {
+          "$ref": "#/$defs/ThemeName"
+        },
+        "vars": {
+          "$ref": "#/$defs/ThemeSpecVars"
+        },
+        "chrome": {
+          "$ref": "#/$defs/ThemeSpecChrome"
+        },
+        "overlays": {
+          "$ref": "#/$defs/ThemeSpecOverlays"
+        },
         "rules": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ThemeSpecRule" },
+          "items": {
+            "$ref": "#/$defs/ThemeSpecRule"
+          },
           "maxItems": 2048
         }
       },
       "additionalProperties": false
     },
-
     "ConfigMsg": {
       "type": "object",
       "properties": {
-        "type": { "const": "config" },
-        "keybindings": { "$ref": "#/$defs/KeybindingsConfig" },
-        "theme_spec": { "$ref": "#/$defs/ThemeSpec" },
-        "scrolling": { "$ref": "#/$defs/ScrollingConfig" },
-        "seq": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "config"
+        },
+        "keybindings": {
+          "$ref": "#/$defs/KeybindingsConfig"
+        },
+        "theme_spec": {
+          "$ref": "#/$defs/ThemeSpec"
+        },
+        "scrolling": {
+          "$ref": "#/$defs/ScrollingConfig"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "v"],
+      "required": [
+        "type",
+        "v"
+      ],
       "anyOf": [
-        { "required": ["keybindings"] },
-        { "required": ["theme_spec"] },
-        { "required": ["scrolling"] }
+        {
+          "required": [
+            "keybindings"
+          ]
+        },
+        {
+          "required": [
+            "theme_spec"
+          ]
+        },
+        {
+          "required": [
+            "scrolling"
+          ]
+        }
       ],
       "additionalProperties": false
     },
-
     "EventMsg": {
       "oneOf": [
-        { "$ref": "#/$defs/EventHello" },
-        { "$ref": "#/$defs/EventKey" },
-        { "$ref": "#/$defs/EventFocus" },
-        { "$ref": "#/$defs/EventInput" },
-        { "$ref": "#/$defs/EventSelect" },
-        { "$ref": "#/$defs/EventActivate" },
-        { "$ref": "#/$defs/EventScroll" },
-        { "$ref": "#/$defs/EventVListRange" },
-        { "$ref": "#/$defs/EventResize" },
-        { "$ref": "#/$defs/EventHover" },
-        { "$ref": "#/$defs/EventSelection" },
-        { "$ref": "#/$defs/EventPointer" },
-        { "$ref": "#/$defs/EventClipboard" },
-        { "$ref": "#/$defs/EventPaste" },
-        { "$ref": "#/$defs/EventError" },
-        { "$ref": "#/$defs/EventAck" },
-        { "$ref": "#/$defs/EventConfigAck" },
-        { "$ref": "#/$defs/EventRendered" },
-        { "$ref": "#/$defs/EventDropped" }
+        {
+          "$ref": "#/$defs/EventHello"
+        },
+        {
+          "$ref": "#/$defs/EventKey"
+        },
+        {
+          "$ref": "#/$defs/EventFocus"
+        },
+        {
+          "$ref": "#/$defs/EventInput"
+        },
+        {
+          "$ref": "#/$defs/EventSelect"
+        },
+        {
+          "$ref": "#/$defs/EventActivate"
+        },
+        {
+          "$ref": "#/$defs/EventScroll"
+        },
+        {
+          "$ref": "#/$defs/EventVListRange"
+        },
+        {
+          "$ref": "#/$defs/EventResize"
+        },
+        {
+          "$ref": "#/$defs/EventHover"
+        },
+        {
+          "$ref": "#/$defs/EventSelection"
+        },
+        {
+          "$ref": "#/$defs/EventPointer"
+        },
+        {
+          "$ref": "#/$defs/EventClipboard"
+        },
+        {
+          "$ref": "#/$defs/EventPaste"
+        },
+        {
+          "$ref": "#/$defs/EventError"
+        },
+        {
+          "$ref": "#/$defs/EventAck"
+        },
+        {
+          "$ref": "#/$defs/EventConfigAck"
+        },
+        {
+          "$ref": "#/$defs/EventRendered"
+        },
+        {
+          "$ref": "#/$defs/EventDropped"
+        }
       ]
     },
-
     "HelloCaps": {
       "type": "object",
       "properties": {
-        "ansi": { "type": "boolean" },
-        "alt_screen": { "type": "boolean" },
-        "bracketed_paste": { "type": "boolean" },
-        "mouse_sgr": { "type": "boolean" },
-        "osc52": { "type": "boolean" },
+        "ansi": {
+          "type": "boolean"
+        },
+        "alt_screen": {
+          "type": "boolean"
+        },
+        "bracketed_paste": {
+          "type": "boolean"
+        },
+        "mouse_sgr": {
+          "type": "boolean"
+        },
+        "osc52": {
+          "type": "boolean"
+        },
         "color": {
           "type": "string",
-          "enum": ["mono", "ansi16", "ansi256", "truecolor"]
+          "enum": [
+            "mono",
+            "ansi16",
+            "ansi256",
+            "truecolor"
+          ]
         }
       },
-      "required": ["ansi", "alt_screen", "bracketed_paste", "mouse_sgr", "osc52", "color"],
+      "required": [
+        "ansi",
+        "alt_screen",
+        "bracketed_paste",
+        "mouse_sgr",
+        "osc52",
+        "color"
+      ],
       "additionalProperties": false
     },
-
     "HelloLimits": {
       "type": "object",
       "properties": {
-        "max_fps": { "type": "integer", "minimum": 0 },
-        "frame_interval_ns": { "type": "integer", "minimum": 0 },
-        "max_pending_targets": { "type": "integer", "minimum": 0 },
-        "max_backend_lines_per_iter": { "type": "integer", "minimum": 0 },
+        "max_fps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "frame_interval_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_pending_targets": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_backend_lines_per_iter": {
+          "type": "integer",
+          "minimum": 0
+        },
         "queue_overflow": {
           "type": "string",
-          "enum": ["drop_newest", "drop_oldest"]
+          "enum": [
+            "drop_newest",
+            "drop_oldest"
+          ]
         }
       },
       "required": [
@@ -969,122 +2458,271 @@
       ],
       "additionalProperties": false
     },
-
     "EventHello": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "hello" },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "hello"
+        },
         "protocol_version": {
           "type": "integer",
           "const": 1
         },
-        "caps": { "$ref": "#/$defs/HelloCaps" },
-        "limits": { "$ref": "#/$defs/HelloLimits" },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "caps": {
+          "$ref": "#/$defs/HelloCaps"
+        },
+        "limits": {
+          "$ref": "#/$defs/HelloLimits"
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "protocol_version", "caps", "limits", "v"],
+      "required": [
+        "type",
+        "name",
+        "protocol_version",
+        "caps",
+        "limits",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventKey": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "key" },
-        "key": { "type": "string", "minLength": 1 },
-        "mods": { "type": "integer", "minimum": 0, "maximum": 255 },
-        "seq": { "type": "string" },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "key"
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mods": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "seq": {
+          "type": "string"
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "key", "v"],
+      "required": [
+        "type",
+        "name",
+        "key",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventFocus": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "focus" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "focus"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "id", "v"],
+      "required": [
+        "type",
+        "name",
+        "id",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventInput": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "input" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "value": { "type": "string" },
-        "cursor": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "input"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "value": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "id", "value", "cursor", "v"],
+      "required": [
+        "type",
+        "name",
+        "id",
+        "value",
+        "cursor",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventSelect": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "select" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "item": { "type": "string" },
-        "index": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "select"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "item": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "id", "item", "v"],
+      "required": [
+        "type",
+        "name",
+        "id",
+        "item",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventActivate": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "activate" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "item": { "type": "string" },
-        "index": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "activate"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "item": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "id", "item", "v"],
+      "required": [
+        "type",
+        "name",
+        "id",
+        "item",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventScroll": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "scroll" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "scroll_y": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "scroll"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "scroll_y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "id", "scroll_y", "v"],
+      "required": [
+        "type",
+        "name",
+        "id",
+        "scroll_y",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventVListRange": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "vlist_range" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "request_id": { "type": "integer", "minimum": 0 },
-        "start": { "type": "integer", "minimum": 0 },
-        "len": { "type": "integer", "minimum": 0 },
-        "scroll": { "type": "integer", "minimum": 0 },
-        "viewport_h": { "type": "integer", "minimum": 0 },
-        "overscan": { "type": "integer", "minimum": 0 },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "vlist_range"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "len": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scroll": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "viewport_h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "overscan": {
+          "type": "integer",
+          "minimum": 0
+        },
         "reason": {
           "type": "string",
-          "enum": ["init", "scroll", "resize", "focus", "selection"]
+          "enum": [
+            "init",
+            "scroll",
+            "resize",
+            "focus",
+            "selection"
+          ]
         },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
       "required": [
         "type",
@@ -1101,67 +2739,159 @@
       ],
       "additionalProperties": false
     },
-
     "EventResize": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "resize" },
-        "rows": { "type": "integer", "minimum": 0 },
-        "cols": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "resize"
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "rows", "cols", "v"],
+      "required": [
+        "type",
+        "name",
+        "rows",
+        "cols",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventHover": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "hover" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "x": { "type": "integer", "minimum": 0 },
-        "y": { "type": "integer", "minimum": 0 },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "hover"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0
+        },
         "item": {
           "oneOf": [
-            { "type": "string" },
-            { "type": "null" }
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "index": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "id", "x", "y", "v"],
+      "required": [
+        "type",
+        "name",
+        "id",
+        "x",
+        "y",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventPointer": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "pointer" },
-        "kind": { "$ref": "#/$defs/PointerKind" },
-        "id": { "$ref": "#/$defs/IdString" },
-        "x": { "type": "integer", "minimum": 0 },
-        "y": { "type": "integer", "minimum": 0 },
-        "local_x": { "type": "integer", "minimum": 0 },
-        "local_y": { "type": "integer", "minimum": 0 },
-        "button": { "$ref": "#/$defs/PointerButton" },
-        "buttons": { "type": "integer", "minimum": 0, "maximum": 255 },
-        "mods": { "type": "integer", "minimum": 0, "maximum": 255 },
-        "clicks": { "type": "integer", "minimum": 0, "maximum": 255 },
-        "scroll_dx": { "type": "integer" },
-        "scroll_dy": { "type": "integer" },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "pointer"
+        },
+        "kind": {
+          "$ref": "#/$defs/PointerKind"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
+        "x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "local_x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "local_y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "button": {
+          "$ref": "#/$defs/PointerButton"
+        },
+        "buttons": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "mods": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "clicks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "scroll_dx": {
+          "type": "integer"
+        },
+        "scroll_dy": {
+          "type": "integer"
+        },
         "item": {
           "oneOf": [
-            { "type": "string" },
-            { "type": "null" }
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "item_index": { "type": "integer", "minimum": 0 },
-        "captured": { "type": "boolean" },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "item_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "captured": {
+          "type": "boolean"
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
       "required": [
         "type",
@@ -1183,29 +2913,69 @@
       ],
       "additionalProperties": false
     },
-
     "EventSelection": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "selection" },
-        "id": { "$ref": "#/$defs/IdString" },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "selection"
+        },
+        "id": {
+          "$ref": "#/$defs/IdString"
+        },
         "kind": {
           "type": "string",
-          "enum": ["document"]
+          "enum": [
+            "document"
+          ]
         },
-        "x0": { "type": "integer", "minimum": 0 },
-        "y0": { "type": "integer", "minimum": 0 },
-        "x1": { "type": "integer", "minimum": 0 },
-        "y1": { "type": "integer", "minimum": 0 },
-        "local_x0": { "type": "integer", "minimum": 0 },
-        "local_y0": { "type": "integer", "minimum": 0 },
-        "local_x1": { "type": "integer", "minimum": 0 },
-        "local_y1": { "type": "integer", "minimum": 0 },
-        "text": { "type": "string" },
-        "bytes": { "type": "integer", "minimum": 0 },
-        "truncated": { "type": "boolean" },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "x0": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "y0": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "x1": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "y1": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "local_x0": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "local_y0": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "local_x1": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "local_y1": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
       "required": [
         "type",
@@ -1227,67 +2997,137 @@
       ],
       "additionalProperties": false
     },
-
     "EventClipboard": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "clipboard" },
-        "op": { "$ref": "#/$defs/ClipboardOp" },
-        "ok": { "type": "boolean" },
-        "request_id": { "type": "integer", "minimum": 0 },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "clipboard"
+        },
+        "op": {
+          "$ref": "#/$defs/ClipboardOp"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "integer",
+          "minimum": 0
+        },
         "data": {
           "oneOf": [
-            { "type": "string" },
-            { "type": "null" }
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "reason": {
           "oneOf": [
-            { "type": "string" },
-            { "type": "null" }
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "op", "ok", "v"],
+      "required": [
+        "type",
+        "name",
+        "op",
+        "ok",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventPaste": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "paste" },
-        "source": { "$ref": "#/$defs/PasteSource" },
-        "bytes": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "paste"
+        },
+        "source": {
+          "$ref": "#/$defs/PasteSource"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "source", "bytes", "v"],
+      "required": [
+        "type",
+        "name",
+        "source",
+        "bytes",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventError": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "error" },
-        "code": { "type": "string", "minLength": 1 },
-        "message": { "type": "string", "minLength": 1 },
-        "seq": { "type": "integer", "minimum": 0 },
-        "context": { "type": "string" },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "error"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "context": {
+          "type": "string"
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "code", "message", "v"],
+      "required": [
+        "type",
+        "name",
+        "code",
+        "message",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventAck": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "ack" },
-        "seq": { "type": "integer", "minimum": 0 },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "ack"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
         "status": {
           "type": "string",
           "enum": [
@@ -1301,68 +3141,152 @@
             "ignored_invalid"
           ]
         },
-        "detail": { "type": "string" },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "detail": {
+          "type": "string"
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "seq", "status", "v"],
+      "required": [
+        "type",
+        "name",
+        "seq",
+        "status",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "ConfigAckRejected": {
       "type": "object",
       "properties": {
-        "key": { "type": "string", "minLength": 1 },
-        "reason": { "type": "string", "minLength": 1 }
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
       },
-      "required": ["key", "reason"],
+      "required": [
+        "key",
+        "reason"
+      ],
       "additionalProperties": false
     },
-
     "EventConfigAck": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "config_ack" },
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "config_ack"
+        },
         "applied": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "rejected": {
           "type": "array",
-          "items": { "$ref": "#/$defs/ConfigAckRejected" }
+          "items": {
+            "$ref": "#/$defs/ConfigAckRejected"
+          }
         },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "applied", "rejected", "v"],
+      "required": [
+        "type",
+        "name",
+        "applied",
+        "rejected",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventRendered": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "rendered" },
-        "seq": { "type": "integer", "minimum": 0 },
-        "dropped": { "type": "integer", "minimum": 0 },
-        "bytes": { "type": "integer", "minimum": 0 },
-        "changed_cells": { "type": "integer", "minimum": 0 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "rendered"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_cells": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "seq", "v"],
+      "required": [
+        "type",
+        "name",
+        "seq",
+        "v"
+      ],
       "additionalProperties": false
     },
-
     "EventDropped": {
       "type": "object",
       "properties": {
-        "type": { "const": "event" },
-        "name": { "const": "dropped" },
-        "seq": { "type": "integer", "minimum": 0 },
-        "reason": { "type": "string", "minLength": 1 },
-        "v": { "$ref": "#/$defs/VersionField" }
+        "type": {
+          "const": "event"
+        },
+        "name": {
+          "const": "dropped"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "v": {
+          "$ref": "#/$defs/VersionField"
+        }
       },
-      "required": ["type", "name", "seq", "reason", "v"],
+      "required": [
+        "type",
+        "name",
+        "seq",
+        "reason",
+        "v"
+      ],
       "additionalProperties": false
+    },
+    "PercentField": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "OverflowMode": {
+      "type": "string",
+      "enum": [
+        "clip",
+        "ellipsis"
+      ]
     }
   }
 }

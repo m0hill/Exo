@@ -341,11 +341,24 @@ Node types (current):
 
 - `id` (string, required)
 - `class` (string, optional, non-empty): theme class hook string; selector matching tokenizes by ASCII whitespace
-- layout: `w`/`h` (int?), `flex` (int), `pad` (int), `clip` (bool)
+- layout: `w`/`h` (int?), `w_pct`/`h_pct` (int `0..100`), `min_w`/`max_w`/`min_h`/`max_h` (int?), `flex` (int), `pad` (int), `clip` (bool)
 - interaction/state: `hoverable` (bool), `mouseable` (bool), `focusable` (bool), `disabled` (bool), `readonly` (bool)
 - focus scoping: `focus_scope` (string, optional, non-empty)
 - validation: `validation` (`none|error|warning|success`)
 - `style` (object, optional): style overrides
+
+Layout size precedence and clamping:
+
+- for each dimension `D` in `{w,h}`:
+  - if explicit `D` exists, it is the base hint
+  - else if `D_pct` exists, base hint is `floor(parent_inner_D * D_pct / 100)`
+  - else there is no base hint
+- `min_*`/`max_*` then clamp either the base hint or the measured/computed size during layout
+- defaults:
+  - `min_*`: `0`
+  - `max_*`: unset
+  - `w_pct`/`h_pct`: unset
+- `w`/`h` still act as exact-size hints and take precedence over percent/flex
 
 ### Controlled State
 
@@ -418,6 +431,12 @@ Range contract:
 
 `input`/`textarea` also accept `placeholder_style` and `selection_style`.
 
+Text overflow (single-line contexts):
+
+- `text` and `styled_text` support `overflow: "clip" | "ellipsis"` (default `"clip"`)
+- currently applied where rows are rendered as a single line (for example list/vlist rows)
+- wrapped rendering (`drawWrapped*`) keeps existing wrap + clip behavior
+
 `fg` / `bg` accept:
 
 - `#RRGGBB`
@@ -460,6 +479,7 @@ Child placement fields (available on all node types):
 - `row_span`, `col_span` (default `1`)
 - `grid_area` (name from `areas`)
 - precedence: explicit `grid_row`/`grid_col` placement is used when present; `grid_area` is used otherwise.
+- track-level `minmax()` is intentionally deferred; use node-level `min_*`/`max_*` constraints inside existing `fixed|auto|fr` tracks.
 
 ### Terminal caps / env overrides
 

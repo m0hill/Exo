@@ -1012,6 +1012,38 @@ fn writeClassField(writer: anytype, class: ?[]const u8) !void {
     try writeJsonString(writer, cls);
 }
 
+fn writeNodeSizeFields(
+    writer: anytype,
+    w: ?usize,
+    h: ?usize,
+    min_w: ?usize,
+    max_w: ?usize,
+    min_h: ?usize,
+    max_h: ?usize,
+    w_pct: ?u8,
+    h_pct: ?u8,
+    flex: usize,
+) !void {
+    if (w) |v| try writer.print(",\"w\":{d}", .{v});
+    if (h) |v| try writer.print(",\"h\":{d}", .{v});
+    if (min_w) |v| try writer.print(",\"min_w\":{d}", .{v});
+    if (max_w) |v| try writer.print(",\"max_w\":{d}", .{v});
+    if (min_h) |v| try writer.print(",\"min_h\":{d}", .{v});
+    if (max_h) |v| try writer.print(",\"max_h\":{d}", .{v});
+    if (w_pct) |v| try writer.print(",\"w_pct\":{d}", .{v});
+    if (h_pct) |v| try writer.print(",\"h_pct\":{d}", .{v});
+    if (flex != 0) try writer.print(",\"flex\":{d}", .{flex});
+}
+
+fn writeTextOverflowField(writer: anytype, overflow: protocol.TextOverflow) !void {
+    if (overflow == .clip) return;
+    try writer.writeAll(",\"overflow\":");
+    try writeJsonString(writer, switch (overflow) {
+        .clip => "clip",
+        .ellipsis => "ellipsis",
+    });
+}
+
 fn writeGridPlacementFields(
     writer: anytype,
     grid_row: ?usize,
@@ -1056,9 +1088,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"vbox\",\"id\":");
             try writeJsonString(writer, v.id);
             try writeClassField(writer, v.class);
-            if (v.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (v.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (v.flex != 0) try writer.print(",\"flex\":{d}", .{v.flex});
+            try writeNodeSizeFields(writer, v.w, v.h, v.min_w, v.max_w, v.min_h, v.max_h, v.w_pct, v.h_pct, v.flex);
             if (v.pad != 0) try writer.print(",\"pad\":{d}", .{v.pad});
             if (v.clip) try writer.writeAll(",\"clip\":true");
             if (v.hoverable) try writer.writeAll(",\"hoverable\":true");
@@ -1110,9 +1140,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"hbox\",\"id\":");
             try writeJsonString(writer, h.id);
             try writeClassField(writer, h.class);
-            if (h.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (h.h) |hh| try writer.print(",\"h\":{d}", .{hh});
-            if (h.flex != 0) try writer.print(",\"flex\":{d}", .{h.flex});
+            try writeNodeSizeFields(writer, h.w, h.h, h.min_w, h.max_w, h.min_h, h.max_h, h.w_pct, h.h_pct, h.flex);
             if (h.pad != 0) try writer.print(",\"pad\":{d}", .{h.pad});
             if (h.clip) try writer.writeAll(",\"clip\":true");
             if (h.hoverable) try writer.writeAll(",\"hoverable\":true");
@@ -1164,9 +1192,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"grid\",\"id\":");
             try writeJsonString(writer, g.id);
             try writeClassField(writer, g.class);
-            if (g.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (g.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (g.flex != 0) try writer.print(",\"flex\":{d}", .{g.flex});
+            try writeNodeSizeFields(writer, g.w, g.h, g.min_w, g.max_w, g.min_h, g.max_h, g.w_pct, g.h_pct, g.flex);
             if (g.pad != 0) try writer.print(",\"pad\":{d}", .{g.pad});
             if (g.clip) try writer.writeAll(",\"clip\":true");
             if (g.hoverable) try writer.writeAll(",\"hoverable\":true");
@@ -1218,9 +1244,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"box\",\"id\":");
             try writeJsonString(writer, b.id);
             try writeClassField(writer, b.class);
-            if (b.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (b.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (b.flex != 0) try writer.print(",\"flex\":{d}", .{b.flex});
+            try writeNodeSizeFields(writer, b.w, b.h, b.min_w, b.max_w, b.min_h, b.max_h, b.w_pct, b.h_pct, b.flex);
             if (b.title) |t| {
                 try writer.writeAll(",\"title\":");
                 try writeJsonString(writer, t);
@@ -1254,9 +1278,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"scroll\",\"id\":");
             try writeJsonString(writer, s.id);
             try writeClassField(writer, s.class);
-            if (s.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (s.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (s.flex != 0) try writer.print(",\"flex\":{d}", .{s.flex});
+            try writeNodeSizeFields(writer, s.w, s.h, s.min_w, s.max_w, s.min_h, s.max_h, s.w_pct, s.h_pct, s.flex);
             if (s.pad != 0) try writer.print(",\"pad\":{d}", .{s.pad});
             if (!s.clip) try writer.writeAll(",\"clip\":false");
             if (s.hoverable) try writer.writeAll(",\"hoverable\":true");
@@ -1286,9 +1308,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"overlay\",\"id\":");
             try writeJsonString(writer, o.id);
             try writeClassField(writer, o.class);
-            if (o.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (o.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (o.flex != 0) try writer.print(",\"flex\":{d}", .{o.flex});
+            try writeNodeSizeFields(writer, o.w, o.h, o.min_w, o.max_w, o.min_h, o.max_h, o.w_pct, o.h_pct, o.flex);
             if (o.pad != 0) try writer.print(",\"pad\":{d}", .{o.pad});
             if (o.clip) try writer.writeAll(",\"clip\":true");
             if (o.hoverable) try writer.writeAll(",\"hoverable\":true");
@@ -1349,9 +1369,8 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"text\",\"id\":");
             try writeJsonString(writer, t.id);
             try writeClassField(writer, t.class);
-            if (t.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (t.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (t.flex != 0) try writer.print(",\"flex\":{d}", .{t.flex});
+            try writeNodeSizeFields(writer, t.w, t.h, t.min_w, t.max_w, t.min_h, t.max_h, t.w_pct, t.h_pct, t.flex);
+            try writeTextOverflowField(writer, t.overflow);
             if (t.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -1393,9 +1412,8 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"styled_text\",\"id\":");
             try writeJsonString(writer, t.id);
             try writeClassField(writer, t.class);
-            if (t.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (t.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (t.flex != 0) try writer.print(",\"flex\":{d}", .{t.flex});
+            try writeNodeSizeFields(writer, t.w, t.h, t.min_w, t.max_w, t.min_h, t.max_h, t.w_pct, t.h_pct, t.flex);
+            try writeTextOverflowField(writer, t.overflow);
             if (t.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -1440,9 +1458,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"input\",\"id\":");
             try writeJsonString(writer, inp.id);
             try writeClassField(writer, inp.class);
-            if (inp.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (inp.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (inp.flex != 0) try writer.print(",\"flex\":{d}", .{inp.flex});
+            try writeNodeSizeFields(writer, inp.w, inp.h, inp.min_w, inp.max_w, inp.min_h, inp.max_h, inp.w_pct, inp.h_pct, inp.flex);
             if (inp.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -1495,9 +1511,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"textarea\",\"id\":");
             try writeJsonString(writer, ta.id);
             try writeClassField(writer, ta.class);
-            if (ta.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (ta.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (ta.flex != 0) try writer.print(",\"flex\":{d}", .{ta.flex});
+            try writeNodeSizeFields(writer, ta.w, ta.h, ta.min_w, ta.max_w, ta.min_h, ta.max_h, ta.w_pct, ta.h_pct, ta.flex);
             if (ta.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
                 try writeJsonString(writer, switch (as) {
@@ -1542,9 +1556,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"list\",\"id\":");
             try writeJsonString(writer, l.id);
             try writeClassField(writer, l.class);
-            if (l.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (l.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (l.flex != 0) try writer.print(",\"flex\":{d}", .{l.flex});
+            try writeNodeSizeFields(writer, l.w, l.h, l.min_w, l.max_w, l.min_h, l.max_h, l.w_pct, l.h_pct, l.flex);
             if (l.height) |height| try writer.print(",\"height\":{d}", .{height});
             if (l.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");
@@ -1587,9 +1599,7 @@ pub fn writeNodeJson(writer: anytype, node: Node) !void {
             try writer.writeAll("{\"type\":\"vlist\",\"id\":");
             try writeJsonString(writer, l.id);
             try writeClassField(writer, l.class);
-            if (l.w) |w| try writer.print(",\"w\":{d}", .{w});
-            if (l.h) |h| try writer.print(",\"h\":{d}", .{h});
-            if (l.flex != 0) try writer.print(",\"flex\":{d}", .{l.flex});
+            try writeNodeSizeFields(writer, l.w, l.h, l.min_w, l.max_w, l.min_h, l.max_h, l.w_pct, l.h_pct, l.flex);
             if (l.height) |height| try writer.print(",\"height\":{d}", .{height});
             if (l.align_self) |as| {
                 try writer.writeAll(",\"align_self\":");

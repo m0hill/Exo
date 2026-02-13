@@ -476,6 +476,102 @@ fn writeVirtualPanelNode(
     try writer.writeByte('}');
 }
 
+fn writeConstraintsDemoNode(writer: anytype) !void {
+    var sidebar_rows = [_]protocol.Node{
+        .{ .text = .{
+            .id = "constraints-row-1",
+            .overflow = .ellipsis,
+            .text = "A very long list row that should ellipsize when space is tight.",
+        } },
+        .{ .text = .{
+            .id = "constraints-row-2",
+            .overflow = .ellipsis,
+            .text = "Another long row to verify clip vs ellipsis behavior in list rendering.",
+        } },
+    };
+    const sidebar_list = protocol.Node{ .list = .{
+        .id = "constraints-list",
+        .marker = .none,
+        .height = 2,
+        .children = sidebar_rows[0..],
+    } };
+    var sidebar_children = [_]protocol.Node{
+        .{ .text = .{
+            .id = "constraints-sidebar-title",
+            .style = .{ .attrs_set = style.ATTR_BOLD, .attrs_values = style.ATTR_BOLD },
+            .text = "w_pct=30, min/max clamped",
+        } },
+        sidebar_list,
+    };
+    var sidebar_body = protocol.Node{ .vbox = .{
+        .id = "constraints-sidebar-body",
+        .gap = 1,
+        .clip = true,
+        .children = sidebar_children[0..],
+    } };
+    const sidebar = protocol.Node{ .box = .{
+        .id = "constraints-sidebar",
+        .w_pct = 30,
+        .min_w = 18,
+        .max_w = 30,
+        .pad = 1,
+        .clip = true,
+        .title = "Sidebar",
+        .child = &sidebar_body,
+    } };
+
+    var panel_a_text = protocol.Node{ .text = .{
+        .id = "constraints-panel-a-text",
+        .text = "Panel A (flex=1, min_w=18, max_w=30)",
+    } };
+    const panel_a = protocol.Node{ .box = .{
+        .id = "constraints-panel-a",
+        .flex = 1,
+        .min_w = 18,
+        .max_w = 30,
+        .pad = 1,
+        .clip = true,
+        .title = "Panel A",
+        .child = &panel_a_text,
+    } };
+
+    var panel_b_text = protocol.Node{ .text = .{
+        .id = "constraints-panel-b-text",
+        .text = "Panel B (flex=2, min_w=24, max_w=44)",
+    } };
+    const panel_b = protocol.Node{ .box = .{
+        .id = "constraints-panel-b",
+        .flex = 2,
+        .min_w = 24,
+        .max_w = 44,
+        .pad = 1,
+        .clip = true,
+        .title = "Panel B",
+        .child = &panel_b_text,
+    } };
+
+    var main_children = [_]protocol.Node{ panel_a, panel_b };
+    const main = protocol.Node{ .hbox = .{
+        .id = "constraints-main",
+        .flex = 1,
+        .gap = 1,
+        .clip = true,
+        .children = main_children[0..],
+    } };
+
+    var row_children = [_]protocol.Node{ sidebar, main };
+    const root = protocol.Node{ .hbox = .{
+        .id = "constraints-demo",
+        .h = 8,
+        .pad = 1,
+        .gap = 1,
+        .clip = true,
+        .children = row_children[0..],
+    } };
+
+    try protocol.writeNodeJson(writer, root);
+}
+
 fn writeAlignmentPanelNode(writer: anytype, focus_scope: []const u8) !void {
     const panel_style: style.StyleOverride = .{
         .bg = .{ .rgb = .{ .r = 0x0B, .g = 0x12, .b = 0x20 } },
@@ -992,6 +1088,8 @@ fn writeRootNode(
             .children = md_wrap_children,
         },
     });
+    try writer.writeByte(',');
+    try writeConstraintsDemoNode(writer);
     try writer.writeByte(',');
     try writeGridPlacementPrecedenceDemoNode(writer);
     try writer.writeByte(',');

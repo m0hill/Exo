@@ -231,6 +231,115 @@ test "protocol: write+parse widget state fields" {
     try std.testing.expectEqualStrings("panel-a", b.focus_scope orelse return error.TestUnexpectedResult);
 }
 
+test "protocol: write+parse min/max and percent layout hints" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const child = protocol.Node{ .text = .{
+        .id = "t",
+        .text = "hello",
+        .min_w = 2,
+        .max_w = 12,
+        .min_h = 1,
+        .max_h = 3,
+        .w_pct = 30,
+        .h_pct = 50,
+    } };
+    var children = [_]protocol.Node{child};
+    const node = protocol.Node{ .vbox = .{
+        .id = "root",
+        .w = 40,
+        .h = 10,
+        .min_w = 20,
+        .max_w = 80,
+        .min_h = 5,
+        .max_h = 20,
+        .w_pct = 60,
+        .h_pct = 75,
+        .children = children[0..],
+    } };
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"v\":1,\"root\":");
+    try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
+    try buf.appendSlice(std.testing.allocator, "}");
+
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"min_w\":20") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"max_w\":80") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"min_h\":5") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"max_h\":20") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"w_pct\":60") != null);
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"h_pct\":75") != null);
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const v = switch (root) {
+        .vbox => |vv| vv,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(?usize, 20), v.min_w);
+    try std.testing.expectEqual(@as(?usize, 80), v.max_w);
+    try std.testing.expectEqual(@as(?usize, 5), v.min_h);
+    try std.testing.expectEqual(@as(?usize, 20), v.max_h);
+    try std.testing.expectEqual(@as(?u8, 60), v.w_pct);
+    try std.testing.expectEqual(@as(?u8, 75), v.h_pct);
+
+    const t = switch (v.children[0]) {
+        .text => |tt| tt,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(?usize, 2), t.min_w);
+    try std.testing.expectEqual(@as(?usize, 12), t.max_w);
+    try std.testing.expectEqual(@as(?u8, 30), t.w_pct);
+    try std.testing.expectEqual(@as(?u8, 50), t.h_pct);
+}
+
+test "protocol: write+parse text overflow field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var spans = [_]protocol.Span{
+        .{ .text = "abc" },
+    };
+    var children = [_]protocol.Node{
+        .{ .text = .{ .id = "t", .overflow = .ellipsis, .text = "long text" } },
+        .{ .styled_text = .{ .id = "st", .overflow = .ellipsis, .spans = spans[0..] } },
+    };
+    const node = protocol.Node{ .vbox = .{ .id = "root", .children = children[0..] } };
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(std.testing.allocator);
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"v\":1,\"root\":");
+    try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
+    try buf.appendSlice(std.testing.allocator, "}");
+
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"overflow\":\"ellipsis\"") != null);
+
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    const root = switch (msg) {
+        .patch => |p| switch (p) {
+            .full => |f| f.root,
+            else => return error.TestUnexpectedResult,
+        },
+        else => return error.TestUnexpectedResult,
+    };
+
+    const v = switch (root) {
+        .vbox => |vv| vv,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(protocol.TextOverflow.ellipsis, v.children[0].text.overflow);
+    try std.testing.expectEqual(protocol.TextOverflow.ellipsis, v.children[1].styled_text.overflow);
+}
+
 test "protocol: reject non-canonical focus_group field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

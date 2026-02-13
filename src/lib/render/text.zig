@@ -5,6 +5,17 @@ const unicode = @import("../unicode.zig");
 
 const Frame = frame_mod.Frame;
 
+pub const EllipsisSuffix = struct {
+    text: []const u8,
+    width: usize,
+};
+
+pub const EllipsisFit = struct {
+    slice_end_byte: usize,
+    use_ellipsis: bool,
+    suffix: EllipsisSuffix,
+};
+
 pub fn countWrappedLines(text: []const u8, cols: usize) usize {
     const metrics = unicode.defaultTextMetrics();
     var lines: usize = 1;
@@ -81,6 +92,49 @@ pub fn countWrappedLinesSpans(spans: []const protocol.Span, cols: usize) usize {
     }
 
     return lines;
+}
+
+pub fn ellipsisSuffixForWidth(max_cols: usize) EllipsisSuffix {
+    if (max_cols == 0) return .{ .text = "", .width = 0 };
+
+    const ellipsis = "…";
+    const ellipsis_w = unicode.displayWidth(ellipsis);
+    if (max_cols == 1) {
+        if (ellipsis_w == 1) return .{ .text = ellipsis, .width = 1 };
+        return .{ .text = ".", .width = 1 };
+    }
+    if (ellipsis_w > 0 and ellipsis_w <= max_cols) {
+        return .{ .text = ellipsis, .width = ellipsis_w };
+    }
+
+    const dots = if (max_cols >= 3) "..." else if (max_cols == 2) ".." else ".";
+    return .{ .text = dots, .width = unicode.displayWidth(dots) };
+}
+
+pub fn fitWithEllipsis(bytes: []const u8, max_cols: usize) EllipsisFit {
+    if (max_cols == 0) {
+        return .{
+            .slice_end_byte = 0,
+            .use_ellipsis = false,
+            .suffix = .{ .text = "", .width = 0 },
+        };
+    }
+    if (unicode.displayWidth(bytes) <= max_cols) {
+        return .{
+            .slice_end_byte = bytes.len,
+            .use_ellipsis = false,
+            .suffix = .{ .text = "", .width = 0 },
+        };
+    }
+
+    const suffix = ellipsisSuffixForWidth(max_cols);
+    const content_cols: usize = if (max_cols > suffix.width) max_cols - suffix.width else 0;
+    const end = unicode.sliceEndByWidth(bytes, 0, content_cols);
+    return .{
+        .slice_end_byte = end,
+        .use_ellipsis = true,
+        .suffix = suffix,
+    };
 }
 
 pub fn putGraphemeClipped(
