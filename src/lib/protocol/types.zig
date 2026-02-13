@@ -8,6 +8,8 @@ pub const Msg = union(enum) {
     config: ConfigMsg,
 };
 
+pub const PROTOCOL_VERSION: u32 = 1;
+
 pub const PatchMsg = union(enum) {
     full: struct { root: Node, seq: ?u64 = null, v: ?u32 = null },
     target: struct { target: []const u8, node: Node, mode: PatchMode = .replace, seq: ?u64 = null, v: ?u32 = null },
@@ -822,4 +824,5 @@ pub const ParseMsgError = error{
     InvalidSelector,
     ThemeSpecTooLarge,
     UnknownField,
+    UnsupportedVersion,
 } || std.mem.Allocator.Error;

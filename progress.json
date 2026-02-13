@@ -835,7 +835,7 @@
     ],
     "boundaries_hit": [
       "Inherited focus scoping from containers to descendants without introducing a new node type",
-      "Backwards compatibility via `focus_group` parse alias while standardizing on `focus_scope` output",
+      "Transitioned to canonical `focus_scope` field only",
       "Two traversal modes sharing the same focus list: in-scope cycling vs cross-scope jumping"
     ],
     "timestamp": "2026-02-07",
@@ -1028,18 +1028,18 @@
     "description": "Protocol versioning: optional version field on all message types with compatibility policy",
     "deliverables": [
       "src/lib/protocol/types.zig: added optional `v` (?u32) field to all message types (PatchMsg, EventMsg, ClipboardMsg, ConfigMsg, ThemeMsg, PointerEvent, etc.)",
-      "src/lib/protocol/parse.zig: parse optional `v` field from all message types; ignore unknown fields per compatibility policy",
+      "src/lib/protocol/parse.zig: require `v` field on all messages and reject unknown fields",
       "src/lib/protocol/write.zig: write optional `v` field for all message types; version-conditional field emission to minimize payload size",
       "src/lib/protocol/mod.zig: added PROTOCOL_VERSION constant (1) and convenience helpers",
-      "docs/PROTOCOL.md: documented version field semantics, compatibility policy (additive non-breaking, unknown fields ignored), and current version",
+      "docs/PROTOCOL.md: documented strict version semantics (`v` required and fixed) and current version",
       "src/bin/demo/render.zig: demo emits `v:1` on all patch messages via DEMO_PROTOCOL_VERSION constant",
       "src/bin/demo/main.zig: demo updated to use protocol version",
       "src/test/protocol.zig: roundtrip tests for version field on all message types"
     ],
     "boundaries_hit": [
-      "Receivers accept messages with or without `v` (backward and forward compatible)",
-      "Senders may omit `v` to keep payloads smaller; emit only when non-null",
-      "Additive fields are non-breaking; unknown fields must be ignored",
+      "Receivers require `v` on every message and reject unsupported versions",
+      "Writers always emit `v` to keep wire format explicit and canonical",
+      "Unknown fields are rejected to match strict canonical schema",
       "Removing or changing meaning of existing fields requires new version rollout plan"
     ],
     "timestamp": "2026-02-08",
@@ -1195,7 +1195,7 @@
     "boundaries_hit": [
       "Theme changes consolidated into config message (single channel for runtime configuration)",
       "Strict schema validation: unknown fields rejected, not ignored (`additionalProperties: false`)",
-      "Removed backward-compat aliases to simplify protocol surface",
+      "Removed compatibility aliases to simplify protocol surface",
       "Canonical schema in `protocol.schema.json` is source of truth for SDKs and validation"
     ],
     "timestamp": "2026-02-08",
@@ -1280,7 +1280,7 @@
     "description": "Rich selector-based theming with pseudo-states, theme variables, and runtime config.theme_spec",
     "deliverables": [
       "src/lib/render/theme_engine.zig: selector parser/matcher, state flags, compiled-rule cascade with specificity+order, and rule buckets",
-      "src/lib/render/theme.zig + src/lib/render/mod.zig: theme vars, dynamic OwnedTheme builder from ThemeSpec, selector-engine integration in paint pipeline, and legacy fallback behavior",
+      "src/lib/render/theme.zig + src/lib/render/mod.zig: theme vars, dynamic OwnedTheme builder from ThemeSpec, and selector-engine integration in paint pipeline",
       "src/lib/protocol/{types,parse,write,mod}.zig + protocol.schema.json: StyleOverride supports $vars, ConfigMsg.theme_spec types/parse/write, strict theme_spec validation + limits, and new parse errors",
       "src/bin/runtime/app.zig: config.theme_spec apply/swap with owned theme lifecycle, config_ack handling for theme_spec, and parse-error rejection mapping",
       "src/bin/demo/main.zig: demo keybinding (y) to send runtime theme_spec updates",

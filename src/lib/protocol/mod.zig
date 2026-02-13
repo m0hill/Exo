@@ -69,7 +69,7 @@ pub const ListNode = types.ListNode;
 pub const VListNode = types.VListNode;
 
 pub const ParseMsgError = types.ParseMsgError;
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = types.PROTOCOL_VERSION;
 
 pub const parseMsgLeaky = parse.parseMsgLeaky;
 

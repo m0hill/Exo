@@ -66,8 +66,9 @@ pub fn writeJsonString(writer: anytype, s: []const u8) !void {
 
 fn writeVersionField(writer: anytype, v: ?u32) !void {
     if (v) |version| {
-        try writer.print(",\"v\":{d}", .{version});
+        if (version != protocol.PROTOCOL_VERSION) return error.UnsupportedVersion;
     }
+    try writer.print(",\"v\":{d}", .{protocol.PROTOCOL_VERSION});
 }
 
 pub fn writeEventJsonl(writer: anytype, key: []const u8) !void {

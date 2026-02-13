@@ -326,7 +326,7 @@ fn buildLargePatchJson(allocator: std.mem.Allocator, node_count: usize) ![]const
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
 
-    try buf.appendSlice(allocator, "{\"type\":\"patch\",\"root\":{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
+    try buf.appendSlice(allocator, "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"vbox\",\"id\":\"root\",\"children\":[");
     var i: usize = 0;
     while (i < node_count) : (i += 1) {
         if (i != 0) try buf.append(allocator, ',');

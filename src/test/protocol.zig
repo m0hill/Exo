@@ -31,7 +31,7 @@ test "protocol: parse styled_text spans" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"patch\",\"root\":{\"type\":\"styled_text\",\"id\":\"t\",\"spans\":[" ++ "{\"text\":\"A\"}," ++ "{\"text\":\"B\",\"style\":{\"fg\":\"#00ff00\"}}," ++ "{\"text\":\"C\",\"style\":{\"fg\":null}}" ++ "]}}";
+        "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"styled_text\",\"id\":\"t\",\"spans\":[" ++ "{\"text\":\"A\"}," ++ "{\"text\":\"B\",\"style\":{\"fg\":\"#00ff00\"}}," ++ "{\"text\":\"C\",\"style\":{\"fg\":null}}" ++ "]}}";
 
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const root = switch (msg) {
@@ -69,7 +69,7 @@ test "protocol: parse scroll node + scroll event" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"patch\",\"root\":{\"type\":\"scroll\",\"id\":\"sv\",\"child\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"hi\"}}}";
+        "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"scroll\",\"id\":\"sv\",\"child\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"hi\"}}}";
 
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const root = switch (msg) {
@@ -90,7 +90,7 @@ test "protocol: parse scroll node + scroll event" {
     try std.testing.expectEqualStrings("t", child.text.id);
     try std.testing.expectEqualStrings("hi", child.text.text);
 
-    const ev_line = "{\"type\":\"event\",\"name\":\"scroll\",\"id\":\"sv\",\"scroll_y\":42}";
+    const ev_line = "{\"type\":\"event\",\"v\":1,\"name\":\"scroll\",\"id\":\"sv\",\"scroll_y\":42}";
     const ev_msg = try protocol.parseMsgLeaky(arena.allocator(), ev_line);
     switch (ev_msg) {
         .event => |ev| switch (ev) {
@@ -108,7 +108,7 @@ test "protocol: parse hover event (no item)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const line = "{\"type\":\"event\",\"name\":\"hover\",\"id\":\"query\",\"x\":12,\"y\":3}";
+    const line = "{\"type\":\"event\",\"v\":1,\"name\":\"hover\",\"id\":\"query\",\"x\":12,\"y\":3}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const ev = switch (msg) {
         .event => |e| e,
@@ -128,7 +128,7 @@ test "protocol: parse hover event (with item)" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const line = "{\"type\":\"event\",\"name\":\"hover\",\"id\":\"results\",\"x\":0,\"y\":1,\"item\":\"results-1\"}";
+    const line = "{\"type\":\"event\",\"v\":1,\"name\":\"hover\",\"id\":\"results\",\"x\":0,\"y\":1,\"item\":\"results-1\"}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const ev = switch (msg) {
         .event => |e| e,
@@ -148,7 +148,7 @@ test "protocol: parse hoverable field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const line = "{\"type\":\"patch\",\"root\":{\"type\":\"text\",\"id\":\"t\",\"hoverable\":true,\"text\":\"hi\"}}";
+    const line = "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"text\",\"id\":\"t\",\"hoverable\":true,\"text\":\"hi\"}}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const root = switch (msg) {
         .patch => |p| switch (p) {
@@ -168,7 +168,7 @@ test "protocol: parse mouseable field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const line = "{\"type\":\"patch\",\"root\":{\"type\":\"text\",\"id\":\"t\",\"mouseable\":true,\"text\":\"hi\"}}";
+    const line = "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"text\",\"id\":\"t\",\"mouseable\":true,\"text\":\"hi\"}}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const root = switch (msg) {
         .patch => |p| switch (p) {
@@ -201,7 +201,7 @@ test "protocol: write+parse widget state fields" {
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
-    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"v\":1,\"root\":");
     try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
     try buf.appendSlice(std.testing.allocator, "}");
 
@@ -235,7 +235,7 @@ test "protocol: reject non-canonical focus_group field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const line = "{\"type\":\"patch\",\"root\":{\"type\":\"input\",\"id\":\"q\",\"focus_group\":\"main\"}}";
+    const line = "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"input\",\"id\":\"q\",\"focus_group\":\"main\"}}";
     try std.testing.expectError(error.UnknownField, protocol.parseMsgLeaky(arena.allocator(), line));
 }
 
@@ -265,7 +265,7 @@ test "protocol: write+parse textarea + list marker" {
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
-    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"v\":1,\"root\":");
     try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
     try buf.appendSlice(std.testing.allocator, "}");
 
@@ -343,7 +343,7 @@ test "protocol: write+parse controlled state fields" {
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
-    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"v\":1,\"root\":");
     try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
     try buf.appendSlice(std.testing.allocator, "}");
 
@@ -492,7 +492,7 @@ test "protocol: parse overlay node" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"patch\",\"root\":{\"type\":\"overlay\",\"id\":\"root\",\"base\":{\"type\":\"vbox\",\"id\":\"base\",\"children\":[{\"type\":\"text\",\"id\":\"a\",\"text\":\"A\"}]},\"layers\":[{\"node\":{\"type\":\"text\",\"id\":\"tip\",\"text\":\"T\"},\"anchor\":\"a\",\"placement\":\"below\",\"align\":\"center\",\"offset_x\":1,\"offset_y\":-2,\"w\":10,\"modal\":true}]}}";
+        "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"overlay\",\"id\":\"root\",\"base\":{\"type\":\"vbox\",\"id\":\"base\",\"children\":[{\"type\":\"text\",\"id\":\"a\",\"text\":\"A\"}]},\"layers\":[{\"node\":{\"type\":\"text\",\"id\":\"tip\",\"text\":\"T\"},\"anchor\":\"a\",\"placement\":\"below\",\"align\":\"center\",\"offset_x\":1,\"offset_y\":-2,\"w\":10,\"modal\":true}]}}";
 
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const root = switch (msg) {
@@ -526,7 +526,7 @@ test "protocol: parse box node" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"patch\",\"root\":{\"type\":\"box\",\"id\":\"b\",\"child\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"hi\"}}}";
+        "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"box\",\"id\":\"b\",\"child\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"hi\"}}}";
 
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     const root = switch (msg) {
@@ -555,7 +555,7 @@ test "protocol: parse alignment fields" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"patch\",\"root\":{\"type\":\"vbox\",\"id\":\"root\",\"justify_content\":\"center\",\"align_items\":\"center\",\"gap\":2,\"children\":[" ++
+        "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"vbox\",\"id\":\"root\",\"justify_content\":\"center\",\"align_items\":\"center\",\"gap\":2,\"children\":[" ++
         "{\"type\":\"text\",\"id\":\"t\",\"w\":10,\"h\":3,\"align_self\":\"end\",\"ext_align\":\"right\",\"v_align\":\"center\",\"text\":\"hi\"}," ++
         "{\"type\":\"input\",\"id\":\"i\",\"content_align\":\"center\",\"placeholder\":\"p\"}" ++
         "]}}";
@@ -669,7 +669,7 @@ test "protocol: parse config keybindings message" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"config\",\"keybindings\":{" ++
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{" ++
         "\"global\":[{\"key\":\"Tab\",\"action\":\"focus_next\"}]," ++
         "\"list\":[{\"key\":\"j\",\"action\":\"list_next\"},{\"key\":\"k\",\"action\":\"list_prev\"}]" ++
         "}}";
@@ -687,7 +687,7 @@ test "protocol: parse config keybindings message" {
     try std.testing.expectEqual(protocol.KeyAction.list_next, cfg.list.?[0].action);
 
     const scope_line =
-        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"n\",\"action\":\"focus_scope_next\"}]}}";
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{\"global\":[{\"key\":\"n\",\"action\":\"focus_scope_next\"}]}}";
     const scope_msg = try protocol.parseMsgLeaky(arena.allocator(), scope_line);
     const scope_cfg = switch (scope_msg) {
         .config => |c| c.keybindings orelse return error.TestUnexpectedResult,
@@ -701,7 +701,7 @@ test "protocol: reject unknown keybinding action" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"action\":\"focus_later\"}]}}";
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"action\":\"focus_later\"}]}}";
     try std.testing.expectError(error.UnknownKeyAction, protocol.parseMsgLeaky(arena.allocator(), line));
 }
 
@@ -710,11 +710,11 @@ test "protocol: reject malformed keybinding rule" {
     defer arena.deinit();
 
     const bad_mods =
-        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"mods\":99,\"action\":\"focus_next\"}]}}";
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"mods\":99,\"action\":\"focus_next\"}]}}";
     try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), bad_mods));
 
     const missing_key =
-        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"action\":\"focus_next\"}]}}";
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{\"global\":[{\"action\":\"focus_next\"}]}}";
     try std.testing.expectError(error.InvalidKeybindingRule, protocol.parseMsgLeaky(arena.allocator(), missing_key));
 }
 
@@ -722,7 +722,7 @@ test "protocol: parse config theme_spec-only message" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme_spec\":{\"base\":\"ocean\"}}");
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"v\":1,\"theme_spec\":{\"base\":\"ocean\"}}");
     switch (msg) {
         .config => |cfg| {
             try std.testing.expect(cfg.keybindings == null);
@@ -738,7 +738,7 @@ test "protocol: parse config seq field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"theme_spec\":{\"base\":\"ocean\"},\"seq\":41}");
+    const msg = try protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"config\",\"v\":1,\"theme_spec\":{\"base\":\"ocean\"},\"seq\":41}");
     switch (msg) {
         .config => |cfg| try std.testing.expectEqual(@as(?u64, 41), cfg.seq),
         else => return error.TestUnexpectedResult,
@@ -769,7 +769,7 @@ test "protocol: parse style override color var" {
 
     const msg = try protocol.parseMsgLeaky(
         arena.allocator(),
-        "{\"type\":\"patch\",\"root\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"x\",\"style\":{\"fg\":\"$accent\",\"bg\":\"$surface\"}}}",
+        "{\"type\":\"patch\",\"v\":1,\"root\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"x\",\"style\":{\"fg\":\"$accent\",\"bg\":\"$surface\"}}}",
     );
     const root = switch (msg) {
         .patch => |p| switch (p) {
@@ -806,7 +806,7 @@ test "protocol: parse config theme_spec message" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"config\",\"theme_spec\":{" ++
+        "{\"type\":\"config\",\"v\":1,\"theme_spec\":{" ++
         "\"base\":\"light\"," ++
         "\"vars\":{\"accent\":\"#38bdf8\"}," ++
         "\"chrome\":{\"input_prefix\":\"# \"}," ++
@@ -836,7 +836,7 @@ test "protocol: reject theme_spec var names with hyphen" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"config\",\"theme_spec\":{" ++
+        "{\"type\":\"config\",\"v\":1,\"theme_spec\":{" ++
         "\"vars\":{\"accent-primary\":\"#38bdf8\"}" ++
         "}}";
     try std.testing.expectError(error.WrongType, protocol.parseMsgLeaky(arena.allocator(), line));
@@ -899,7 +899,7 @@ test "protocol: class roundtrip via writer+parser" {
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
-    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"v\":1,\"root\":");
     try protocol.writeNodeJson(buf.writer(std.testing.allocator), root);
     try buf.appendSlice(std.testing.allocator, "}");
 
@@ -923,7 +923,7 @@ test "protocol: parse textarea v2 key actions" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"config\",\"keybindings\":{" ++
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{" ++
         "\"textarea\":[" ++
         "{\"key\":\"ArrowLeft\",\"mods\":1,\"action\":\"textarea_select_left\"}," ++
         "{\"key\":\"a\",\"mods\":2,\"action\":\"textarea_select_all\"}," ++
@@ -945,7 +945,7 @@ test "protocol: parse input v2 key actions" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"config\",\"keybindings\":{" ++
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{" ++
         "\"input\":[" ++
         "{\"key\":\"ArrowLeft\",\"mods\":1,\"action\":\"input_select_left\"}," ++
         "{\"key\":\"a\",\"mods\":2,\"action\":\"input_select_all\"}," ++
@@ -967,7 +967,7 @@ test "protocol: parse input selection_style" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"patch\",\"root\":{" ++
+        "{\"type\":\"patch\",\"v\":1,\"root\":{" ++
         "\"type\":\"input\",\"id\":\"in\",\"selection_style\":{\"inverse\":true},\"placeholder\":\"Type\"" ++
         "}}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
@@ -992,7 +992,7 @@ test "protocol: parse grid node with tracks and placement" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"patch\",\"root\":{" ++
+        "{\"type\":\"patch\",\"v\":1,\"root\":{" ++
         "\"type\":\"grid\",\"id\":\"g\",\"rows\":[\"auto\",\"1fr\"],\"cols\":[10,\"2fr\"],\"gap_x\":1,\"gap_y\":1," ++
         "\"areas\":[\"header header\",\"sidebar content\"]," ++
         "\"children\":[" ++
@@ -1026,7 +1026,7 @@ test "protocol: parse patch seq field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const full_line = "{\"type\":\"patch\",\"seq\":12,\"root\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"ok\"}}";
+    const full_line = "{\"type\":\"patch\",\"v\":1,\"seq\":12,\"root\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"ok\"}}";
     const full_msg = try protocol.parseMsgLeaky(arena.allocator(), full_line);
     const full_patch = switch (full_msg) {
         .patch => |p| p,
@@ -1037,7 +1037,7 @@ test "protocol: parse patch seq field" {
         else => return error.TestUnexpectedResult,
     }
 
-    const target_line = "{\"type\":\"patch\",\"seq\":99,\"target\":\"t\",\"node\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"next\"}}";
+    const target_line = "{\"type\":\"patch\",\"v\":1,\"seq\":99,\"target\":\"t\",\"mode\":\"replace\",\"node\":{\"type\":\"text\",\"id\":\"t\",\"text\":\"next\"}}";
     const target_msg = try protocol.parseMsgLeaky(arena.allocator(), target_line);
     const target_patch = switch (target_msg) {
         .patch => |p| p,
@@ -1120,7 +1120,7 @@ test "protocol: parse config_ack event" {
     defer arena.deinit();
 
     const line =
-        "{\"type\":\"event\",\"name\":\"config_ack\",\"applied\":[\"keybindings\"],\"rejected\":[{\"key\":\"theme_spec\",\"reason\":\"UnknownThemeSpecBase\"}]}";
+        "{\"type\":\"event\",\"v\":1,\"name\":\"config_ack\",\"applied\":[\"keybindings\"],\"rejected\":[{\"key\":\"theme_spec\",\"reason\":\"UnknownThemeSpecBase\"}]}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     switch (msg) {
         .event => |ev| switch (ev) {
@@ -1174,7 +1174,7 @@ test "protocol: parse ack event" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    const line = "{\"type\":\"event\",\"name\":\"ack\",\"seq\":42,\"status\":\"applied\",\"detail\":\"target\"}";
+    const line = "{\"type\":\"event\",\"v\":1,\"name\":\"ack\",\"seq\":42,\"status\":\"applied\",\"detail\":\"target\"}";
     const msg = try protocol.parseMsgLeaky(arena.allocator(), line);
     switch (msg) {
         .event => |ev| switch (ev) {
@@ -1256,7 +1256,7 @@ test "protocol: write+parse hello event" {
     }
 }
 
-test "protocol: write helpers omit and include version field" {
+test "protocol: write helpers always emit canonical version field" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -1264,11 +1264,11 @@ test "protocol: write helpers omit and include version field" {
     defer buf.deinit(std.testing.allocator);
 
     try protocol.writeFocusEventJsonl(buf.writer(std.testing.allocator), "query");
-    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"v\":") == null);
-    const no_v_msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
-    switch (no_v_msg) {
+    try std.testing.expect(std.mem.indexOf(u8, buf.items, "\"v\":1") != null);
+    const canonical_msg = try protocol.parseMsgLeaky(arena.allocator(), buf.items);
+    switch (canonical_msg) {
         .event => |ev| switch (ev) {
-            .focus => |f| try std.testing.expectEqual(@as(?u32, null), f.v),
+            .focus => |f| try std.testing.expectEqual(@as(?u32, 1), f.v),
             else => return error.TestUnexpectedResult,
         },
         else => return error.TestUnexpectedResult,
@@ -1285,6 +1285,20 @@ test "protocol: write helpers omit and include version field" {
         },
         else => return error.TestUnexpectedResult,
     }
+}
+
+test "protocol: reject missing or unsupported top-level version field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    try std.testing.expectError(
+        error.MissingField,
+        protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"event\",\"name\":\"focus\",\"id\":\"query\"}"),
+    );
+    try std.testing.expectError(
+        error.UnsupportedVersion,
+        protocol.parseMsgLeaky(arena.allocator(), "{\"type\":\"event\",\"v\":2,\"name\":\"focus\",\"id\":\"query\"}"),
+    );
 }
 
 test "protocol: parse top-level version field across message types" {
@@ -1359,7 +1373,7 @@ test "protocol: write+parse vlist node" {
 
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(std.testing.allocator);
-    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"root\":");
+    try buf.appendSlice(std.testing.allocator, "{\"type\":\"patch\",\"v\":1,\"root\":");
     try protocol.writeNodeJson(buf.writer(std.testing.allocator), node);
     try buf.appendSlice(std.testing.allocator, "}");
 
@@ -1419,7 +1433,7 @@ test "protocol: parse+write vlist range and optional indices" {
         else => return error.TestUnexpectedResult,
     }
 
-    const select_line = "{\"type\":\"event\",\"name\":\"select\",\"id\":\"results\",\"item\":\"row-99\",\"index\":99}";
+    const select_line = "{\"type\":\"event\",\"v\":1,\"name\":\"select\",\"id\":\"results\",\"item\":\"row-99\",\"index\":99}";
     const select_msg = try protocol.parseMsgLeaky(arena.allocator(), select_line);
     switch (select_msg) {
         .event => |ev| switch (ev) {
@@ -1429,7 +1443,7 @@ test "protocol: parse+write vlist range and optional indices" {
         else => return error.TestUnexpectedResult,
     }
 
-    const pointer_line = "{\"type\":\"event\",\"name\":\"pointer\",\"kind\":\"down\",\"id\":\"results\",\"x\":1,\"y\":2,\"local_x\":0,\"local_y\":0,\"button\":\"left\",\"buttons\":1,\"mods\":0,\"clicks\":1,\"scroll_dx\":0,\"scroll_dy\":0,\"item\":\"row-99\",\"item_index\":99,\"captured\":false}";
+    const pointer_line = "{\"type\":\"event\",\"v\":1,\"name\":\"pointer\",\"kind\":\"down\",\"id\":\"results\",\"x\":1,\"y\":2,\"local_x\":0,\"local_y\":0,\"button\":\"left\",\"buttons\":1,\"mods\":0,\"clicks\":1,\"scroll_dx\":0,\"scroll_dy\":0,\"item\":\"row-99\",\"item_index\":99,\"captured\":false}";
     const pointer_msg = try protocol.parseMsgLeaky(arena.allocator(), pointer_line);
     switch (pointer_msg) {
         .event => |ev| switch (ev) {

@@ -68,7 +68,7 @@ pub fn parseMsgLeaky(allocator: std.mem.Allocator, line: []const u8) ParseMsgErr
 fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Msg {
     const obj = try asObject(v);
     const type_str = try getRequiredString(obj, "type");
-    const version = try getOptionalVersion(obj);
+    const version = try getRequiredVersion(obj);
     if (std.mem.eql(u8, type_str, "patch")) {
         const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
             try usizeToU64(seq_usize)
@@ -76,6 +76,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             null;
         if (obj.get("root")) |root_val| {
             if (obj.get("target") != null or obj.get("node") != null) return error.InvalidPatchShape;
+            try expectOnlyFields(obj, &.{ "type", "root", "seq", "v" });
             const root = try parseNodeLeaky(allocator, root_val);
             return .{ .patch = .{ .full = .{ .root = root, .seq = seq, .v = version } } };
         }
@@ -86,6 +87,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         const target = try getRequiredString(obj, "target");
         const mode = try parsePatchMode(obj);
         const node_val = try getRequired(obj, "node");
+        try expectOnlyFields(obj, &.{ "type", "target", "node", "mode", "seq", "v" });
         const node = try parseNodeLeaky(allocator, node_val);
         return .{ .patch = .{ .target = .{
             .target = target,
@@ -97,6 +99,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
     } else if (std.mem.eql(u8, type_str, "event")) {
         const name = try getRequiredString(obj, "name");
         if (std.mem.eql(u8, name, "hello")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "protocol_version", "caps", "limits", "v" });
             const protocol_version_u = try getRequiredUsize(obj, "protocol_version");
             if (protocol_version_u > std.math.maxInt(u32)) return error.WrongType;
             const caps_obj = try asObject(try getRequired(obj, "caps"));
@@ -109,6 +112,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             };
             return .{ .event = .{ .hello = hello } };
         } else if (std.mem.eql(u8, name, "key")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "key", "mods", "seq", "v" });
             const key = try getRequiredString(obj, "key");
             const mods_usize = try getOptionalUsize(obj, "mods") orelse 0;
             if (mods_usize > std.math.maxInt(u8)) return error.WrongType;
@@ -120,9 +124,11 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .v = version,
             } } };
         } else if (std.mem.eql(u8, name, "focus")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "v" });
             const id = try getRequiredString(obj, "id");
             return .{ .event = .{ .focus = .{ .id = id, .v = version } } };
         } else if (std.mem.eql(u8, name, "input")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "value", "cursor", "v" });
             const id = try getRequiredString(obj, "id");
             const value = try getRequiredString(obj, "value");
             const cursor_val = try getRequired(obj, "cursor");
@@ -137,20 +143,24 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .v = version,
             } } };
         } else if (std.mem.eql(u8, name, "select")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "item", "index", "v" });
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
             const index = try getOptionalUsize(obj, "index");
             return .{ .event = .{ .select = .{ .id = id, .item = item, .index = index, .v = version } } };
         } else if (std.mem.eql(u8, name, "activate")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "item", "index", "v" });
             const id = try getRequiredString(obj, "id");
             const item = try getRequiredString(obj, "item");
             const index = try getOptionalUsize(obj, "index");
             return .{ .event = .{ .activate = .{ .id = id, .item = item, .index = index, .v = version } } };
         } else if (std.mem.eql(u8, name, "scroll")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "scroll_y", "v" });
             const id = try getRequiredString(obj, "id");
             const scroll_y = try getRequiredUsize(obj, "scroll_y");
             return .{ .event = .{ .scroll = .{ .id = id, .scroll_y = scroll_y, .v = version } } };
         } else if (std.mem.eql(u8, name, "vlist_range")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "request_id", "start", "len", "scroll", "viewport_h", "overscan", "reason", "v" });
             const id = try getRequiredString(obj, "id");
             const request_id_usize = try getRequiredUsize(obj, "request_id");
             const request_id = try usizeToU64(request_id_usize);
@@ -173,10 +183,12 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             };
             return .{ .event = .{ .vlist_range = ev } };
         } else if (std.mem.eql(u8, name, "resize")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "rows", "cols", "v" });
             const rows = try getRequiredUsize(obj, "rows");
             const cols = try getRequiredUsize(obj, "cols");
             return .{ .event = .{ .resize = .{ .rows = rows, .cols = cols, .v = version } } };
         } else if (std.mem.eql(u8, name, "hover")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "x", "y", "item", "index", "v" });
             const id = try getRequiredString(obj, "id");
             const x = try getRequiredUsize(obj, "x");
             const y = try getRequiredUsize(obj, "y");
@@ -190,6 +202,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .v = version,
             } } };
         } else if (std.mem.eql(u8, name, "selection")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "id", "kind", "x0", "y0", "x1", "y1", "local_x0", "local_y0", "local_x1", "local_y1", "text", "bytes", "truncated", "v" });
             const id = try getRequiredString(obj, "id");
             const kind = try parseSelectionKind(obj);
             const x0 = try getRequiredUsize(obj, "x0");
@@ -221,6 +234,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             };
             return .{ .event = .{ .selection = ev } };
         } else if (std.mem.eql(u8, name, "pointer")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "kind", "id", "x", "y", "local_x", "local_y", "button", "buttons", "mods", "clicks", "scroll_dx", "scroll_dy", "item", "item_index", "captured", "v" });
             const kind = try parsePointerKind(obj);
             const id = try getRequiredString(obj, "id");
             const x = try getRequiredUsize(obj, "x");
@@ -259,6 +273,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             };
             return .{ .event = .{ .pointer = ev } };
         } else if (std.mem.eql(u8, name, "clipboard")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "op", "ok", "request_id", "data", "reason", "v" });
             const op = try parseClipboardOp(obj);
             const ok = try getRequiredBool(obj, "ok");
             const req_usize = try getOptionalUsize(obj, "request_id") orelse 0;
@@ -276,11 +291,13 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             };
             return .{ .event = .{ .clipboard = cev } };
         } else if (std.mem.eql(u8, name, "paste")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "source", "bytes", "v" });
             const src = try parsePasteSource(obj);
             const bytes = try getRequiredUsize(obj, "bytes");
             const pev: PasteEvent = .{ .source = src, .bytes = bytes, .v = version };
             return .{ .event = .{ .paste = pev } };
         } else if (std.mem.eql(u8, name, "error")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "code", "message", "seq", "context", "v" });
             const code = try getRequiredString(obj, "code");
             const message = try getRequiredString(obj, "message");
             const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
@@ -297,6 +314,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             };
             return .{ .event = .{ .@"error" = err_ev } };
         } else if (std.mem.eql(u8, name, "ack")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "seq", "status", "detail", "v" });
             const seq_usize = try getRequiredUsize(obj, "seq");
             const status = try parseAckStatusString(try getRequiredString(obj, "status"));
             const detail = try getOptionalString(obj, "detail");
@@ -308,9 +326,11 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             };
             return .{ .event = .{ .ack = ack_ev } };
         } else if (std.mem.eql(u8, name, "config_ack")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "applied", "rejected", "v" });
             const ack = try parseConfigAckEvent(allocator, obj, version);
             return .{ .event = .{ .config_ack = ack } };
         } else if (std.mem.eql(u8, name, "rendered")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "seq", "dropped", "bytes", "changed_cells", "v" });
             const seq_usize = try getRequiredUsize(obj, "seq");
             const dropped = try getOptionalUsize(obj, "dropped") orelse 0;
             const bytes = try getOptionalUsize(obj, "bytes") orelse 0;
@@ -323,6 +343,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
                 .v = version,
             } } };
         } else if (std.mem.eql(u8, name, "dropped")) {
+            try expectOnlyFields(obj, &.{ "type", "name", "seq", "reason", "v" });
             const seq_usize = try getRequiredUsize(obj, "seq");
             const reason = try getRequiredString(obj, "reason");
             return .{ .event = .{ .dropped = .{
@@ -335,6 +356,10 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
         }
     } else if (std.mem.eql(u8, type_str, "clipboard")) {
         const op = try parseClipboardOp(obj);
+        switch (op) {
+            .write => try expectOnlyFields(obj, &.{ "type", "op", "data", "target", "seq", "v" }),
+            .read => try expectOnlyFields(obj, &.{ "type", "op", "request_id", "target", "seq", "v" }),
+        }
         const target = try parseClipboardTarget(obj);
         const seq = if (try getOptionalUsize(obj, "seq")) |seq_usize|
             try usizeToU64(seq_usize)
@@ -369,6 +394,7 @@ fn parseMsgValueLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgE
             },
         }
     } else if (std.mem.eql(u8, type_str, "config")) {
+        try expectOnlyFields(obj, &.{ "type", "keybindings", "theme_spec", "seq", "v" });
         const cfg = try parseConfigMsg(allocator, obj, version);
         return .{ .config = cfg };
     } else {
@@ -418,6 +444,7 @@ fn parseConfigAckEvent(
     const rejected = try allocator.alloc(ConfigAckRejected, rejected_arr.items.len);
     for (rejected_arr.items, 0..) |item, idx| {
         const rej_obj = try asObject(item);
+        try expectOnlyFields(rej_obj, &.{ "key", "reason" });
         rejected[idx] = .{
             .key = try getRequiredString(rej_obj, "key"),
             .reason = try getRequiredString(rej_obj, "reason"),
@@ -432,6 +459,7 @@ fn parseConfigAckEvent(
 }
 
 fn parseHelloCaps(obj: std.json.ObjectMap) ParseMsgError!HelloCaps {
+    try expectOnlyFields(obj, &.{ "ansi", "alt_screen", "bracketed_paste", "mouse_sgr", "osc52", "color" });
     return .{
         .ansi = try getRequiredBool(obj, "ansi"),
         .alt_screen = try getRequiredBool(obj, "alt_screen"),
@@ -443,6 +471,7 @@ fn parseHelloCaps(obj: std.json.ObjectMap) ParseMsgError!HelloCaps {
 }
 
 fn parseHelloLimits(obj: std.json.ObjectMap) ParseMsgError!HelloLimits {
+    try expectOnlyFields(obj, &.{ "max_fps", "frame_interval_ns", "max_pending_targets", "max_backend_lines_per_iter", "queue_overflow" });
     const max_fps_usize = try getRequiredUsize(obj, "max_fps");
     if (max_fps_usize > std.math.maxInt(u32)) return error.WrongType;
     return .{
@@ -508,7 +537,7 @@ fn parseThemeSpec(allocator: std.mem.Allocator, obj: std.json.ObjectMap) ParseMs
             if (rule_obj.count() != 2) return error.UnknownField;
             const selector = try getRequiredString(rule_obj, "selector");
             if (selector.len > theme_spec_max_selector_len) return error.ThemeSpecTooLarge;
-            try validateSelectorV1(selector);
+            try validateSelector(selector);
             const st = switch (try getRequired(rule_obj, "style")) {
                 .object => |st_obj| try parseStyleOverride(st_obj),
                 else => return error.WrongType,
@@ -673,7 +702,7 @@ fn isThemeVarChar(b: u8) bool {
         b == '_';
 }
 
-fn validateSelectorV1(selector: []const u8) ParseMsgError!void {
+fn validateSelector(selector: []const u8) ParseMsgError!void {
     if (selector.len == 0) return error.InvalidSelector;
     if (selector.len > theme_spec_max_selector_len) return error.ThemeSpecTooLarge;
 
@@ -904,7 +933,7 @@ fn parsePasteSource(obj: std.json.ObjectMap) ParseMsgError!PasteSource {
 }
 
 fn parsePatchMode(obj: std.json.ObjectMap) ParseMsgError!PatchMode {
-    const mode_val = obj.get("mode") orelse return .replace;
+    const mode_val = obj.get("mode") orelse return error.MissingField;
     const mode_str = switch (mode_val) {
         .string => |s| s,
         else => return error.WrongType,
@@ -1034,10 +1063,9 @@ fn parseFocusable(obj: std.json.ObjectMap, default: bool) ParseMsgError!bool {
 
 fn parseFocusScope(obj: std.json.ObjectMap) ParseMsgError!?[]const u8 {
     if (try getOptionalString(obj, "focus_scope")) |scope| {
-        if (scope.len == 0) return null;
+        if (scope.len == 0) return error.WrongType;
         return scope;
     }
-    if (obj.get("focus_group") != null) return error.UnknownField;
     return null;
 }
 
@@ -1052,11 +1080,12 @@ const GridPlacement = struct {
 fn parseGridPlacement(obj: std.json.ObjectMap) ParseMsgError!GridPlacement {
     const row_span = try getOptionalUsize(obj, "row_span") orelse 1;
     const col_span = try getOptionalUsize(obj, "col_span") orelse 1;
+    if (row_span == 0 or col_span == 0) return error.WrongType;
     return .{
         .grid_row = try getOptionalUsize(obj, "grid_row"),
         .grid_col = try getOptionalUsize(obj, "grid_col"),
-        .row_span = if (row_span == 0) 1 else row_span,
-        .col_span = if (col_span == 0) 1 else col_span,
+        .row_span = row_span,
+        .col_span = col_span,
         .grid_area = try getOptionalString(obj, "grid_area"),
     };
 }
@@ -1071,7 +1100,8 @@ fn parseGridTrack(v: std.json.Value) ParseMsgError!GridTrack {
             if (std.mem.eql(u8, s, "auto")) break :blk .auto;
             if (s.len >= 2 and std.mem.endsWith(u8, s, "fr")) {
                 const n = std.fmt.parseUnsigned(usize, s[0 .. s.len - 2], 10) catch return error.UnknownGridTrack;
-                break :blk .{ .fr = if (n == 0) 1 else n };
+                if (n == 0) return error.UnknownGridTrack;
+                break :blk .{ .fr = n };
             }
             const fixed = std.fmt.parseUnsigned(usize, s, 10) catch return error.UnknownGridTrack;
             break :blk .{ .fixed = fixed };
@@ -1112,7 +1142,7 @@ fn parseListMarker(obj: std.json.ObjectMap) ParseMsgError!ListMarker {
 
 fn parseClass(obj: std.json.ObjectMap) ParseMsgError!?[]const u8 {
     const cls = try getOptionalString(obj, "class") orelse return null;
-    if (cls.len == 0) return null;
+    if (cls.len == 0) return error.WrongType;
     return cls;
 }
 
@@ -1197,6 +1227,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
     if (try parseMinimalTextNode(obj)) |node| return node;
     const type_str = try getRequiredString(obj, "type");
     if (std.mem.eql(u8, type_str, "vbox")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "justify_content", "align_items", "gap", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1251,6 +1282,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "hbox")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "justify_content", "align_items", "gap", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1305,6 +1337,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "grid")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "gap_x", "gap_y", "rows", "cols", "areas", "style", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1363,6 +1396,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "box")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "title", "border", "pad", "clip", "shadow", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "child" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1415,6 +1449,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .child = child,
         } };
     } else if (std.mem.eql(u8, type_str, "scroll")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "scroll_y", "child" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1465,6 +1500,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .child = child,
         } };
     } else if (std.mem.eql(u8, type_str, "overlay")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "pad", "clip", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "align_self", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "base", "layers" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1521,6 +1557,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .layers = layers,
         } };
     } else if (std.mem.eql(u8, type_str, "text")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "ext_align", "v_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "text" });
         const id = try getRequiredString(obj, "id");
         const text = try getRequiredString(obj, "text");
         const class = try parseClass(obj);
@@ -1564,6 +1601,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .text = text,
         } };
     } else if (std.mem.eql(u8, type_str, "styled_text")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "ext_align", "v_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "spans" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1612,6 +1650,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .spans = spans_out,
         } };
     } else if (std.mem.eql(u8, type_str, "input")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "content_align", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "selection_style", "placeholder_style", "placeholder", "state_mode", "value", "cursor", "scroll_x", "selection_start", "selection_end" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1669,6 +1708,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .selection_end = selection_end,
         } };
     } else if (std.mem.eql(u8, type_str, "textarea")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "selection_style", "placeholder_style", "placeholder", "state_mode", "value", "cursor", "scroll_y", "selection_start", "selection_end" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1724,6 +1764,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .selection_end = selection_end,
         } };
     } else if (std.mem.eql(u8, type_str, "list")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "height", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "marker", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "selected_id", "scroll", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1778,6 +1819,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
             .children = out,
         } };
     } else if (std.mem.eql(u8, type_str, "vlist")) {
+        try expectOnlyFields(obj, &.{ "type", "id", "class", "w", "h", "flex", "height", "align_self", "hoverable", "mouseable", "disabled", "readonly", "validation", "focusable", "focus_scope", "marker", "grid_row", "grid_col", "row_span", "col_span", "grid_area", "style", "state_mode", "selected_index", "scroll", "total", "window_start", "item_id_prefix", "overscan", "req", "children" });
         const id = try getRequiredString(obj, "id");
         const class = try parseClass(obj);
         const w = try getOptionalUsize(obj, "w");
@@ -1851,6 +1893,7 @@ fn parseNodeLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError
 
 fn parseOverlayLayerLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!OverlayLayer {
     const obj = try asObject(v);
+    try expectOnlyFields(obj, &.{ "node", "anchor", "placement", "align", "offset_x", "offset_y", "w", "h", "clip", "modal" });
 
     const node_val = try getRequired(obj, "node");
     const node_node = try parseNodeLeaky(allocator, node_val);
@@ -1902,6 +1945,7 @@ fn parseOverlayAlign(obj: std.json.ObjectMap) ParseMsgError!OverlayAlign {
 fn parseSpanLeaky(allocator: std.mem.Allocator, v: std.json.Value) ParseMsgError!Span {
     _ = allocator;
     const obj = try asObject(v);
+    try expectOnlyFields(obj, &.{ "text", "style" });
     const text = try getRequiredString(obj, "text");
     const st = try getOptionalStyleOverride(obj, "style");
     return .{ .text = text, .style = st };
@@ -1931,6 +1975,7 @@ fn getOptionalStyleOverride(obj: std.json.ObjectMap, key: []const u8) ParseMsgEr
 }
 
 fn parseStyleOverride(obj: std.json.ObjectMap) ParseMsgError!style.StyleOverride {
+    try expectOnlyFields(obj, &.{ "fg", "bg", "bold", "dim", "italic", "underline", "blink", "inverse", "hidden", "strikethrough" });
     var out: style.StyleOverride = .{};
 
     if (obj.get("fg")) |v| {
@@ -1982,6 +2027,21 @@ fn parseOptionalBoolAttr(obj: std.json.ObjectMap, key: []const u8, out: *style.S
         else => return error.WrongType,
     };
     out.setAttr(attr, b);
+}
+
+fn expectOnlyFields(obj: std.json.ObjectMap, allowed: []const []const u8) ParseMsgError!void {
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        const key = entry.key_ptr.*;
+        if (!containsField(allowed, key)) return error.UnknownField;
+    }
+}
+
+fn containsField(allowed: []const []const u8, key: []const u8) bool {
+    for (allowed) |name| {
+        if (std.mem.eql(u8, key, name)) return true;
+    }
+    return false;
 }
 
 fn getRequired(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!std.json.Value {
@@ -2038,9 +2098,11 @@ fn getOptionalUsize(obj: std.json.ObjectMap, field: []const u8) ParseMsgError!?u
     };
 }
 
-fn getOptionalVersion(obj: std.json.ObjectMap) ParseMsgError!?u32 {
-    const n = try getOptionalUsize(obj, "v") orelse return null;
-    return std.math.cast(u32, n) orelse return error.WrongType;
+fn getRequiredVersion(obj: std.json.ObjectMap) ParseMsgError!u32 {
+    const n = try getRequiredUsize(obj, "v");
+    const version = std.math.cast(u32, n) orelse return error.WrongType;
+    if (version != protocol.PROTOCOL_VERSION) return error.UnsupportedVersion;
+    return version;
 }
 
 fn usizeToU64(v: usize) ParseMsgError!u64 {

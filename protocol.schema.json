@@ -195,11 +195,11 @@
     },
 
     "GridTrack": {
-      "description": "Canonical grid track: integer fixed, \"auto\", or \"<n>fr\". 0fr is syntactically valid but not meaningful.",
+      "description": "Canonical grid track: integer fixed, \"auto\", or \"<n>fr\" with n >= 1.",
       "oneOf": [
         { "type": "integer", "minimum": 0 },
         { "type": "string", "const": "auto" },
-        { "type": "string", "pattern": "^[0-9]+fr$" }
+        { "type": "string", "pattern": "^[1-9][0-9]*fr$" }
       ]
     },
 
@@ -253,7 +253,7 @@
       "properties": {
         "type": { "const": "vbox" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -287,7 +287,7 @@
       "properties": {
         "type": { "const": "hbox" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -321,7 +321,7 @@
       "properties": {
         "type": { "const": "grid" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -366,7 +366,7 @@
       "properties": {
         "type": { "const": "box" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -400,7 +400,7 @@
       "properties": {
         "type": { "const": "scroll" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -433,7 +433,7 @@
       "properties": {
         "type": { "const": "overlay" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -468,7 +468,7 @@
       "properties": {
         "type": { "const": "text" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -499,7 +499,7 @@
       "properties": {
         "type": { "const": "styled_text" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -533,7 +533,7 @@
       "properties": {
         "type": { "const": "input" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -571,7 +571,7 @@
       "properties": {
         "type": { "const": "textarea" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -608,7 +608,7 @@
       "properties": {
         "type": { "const": "list" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -642,7 +642,7 @@
       "properties": {
         "type": { "const": "vlist" },
         "id": { "$ref": "#/$defs/IdString" },
-        "class": { "type": "string" },
+        "class": { "type": "string", "minLength": 1 },
         "w": { "type": "integer", "minimum": 0 },
         "h": { "type": "integer", "minimum": 0 },
         "flex": { "type": "integer", "minimum": 0 },
@@ -684,7 +684,7 @@
         "seq": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "root"],
+      "required": ["type", "root", "v"],
       "additionalProperties": false
     },
 
@@ -701,7 +701,7 @@
         "seq": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "target", "node"],
+      "required": ["type", "target", "node", "mode", "v"],
       "additionalProperties": false
     },
 
@@ -718,7 +718,7 @@
         "seq": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "op", "data"],
+      "required": ["type", "op", "data", "v"],
       "additionalProperties": false
     },
 
@@ -735,7 +735,7 @@
         "seq": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "op", "request_id"],
+      "required": ["type", "op", "request_id", "v"],
       "additionalProperties": false
     },
 
@@ -876,7 +876,7 @@
         "seq": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type"],
+      "required": ["type", "v"],
       "anyOf": [
         { "required": ["keybindings"] },
         { "required": ["theme_spec"] }
@@ -960,7 +960,7 @@
         "limits": { "$ref": "#/$defs/HelloLimits" },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "protocol_version", "caps", "limits"],
+      "required": ["type", "name", "protocol_version", "caps", "limits", "v"],
       "additionalProperties": false
     },
 
@@ -974,7 +974,7 @@
         "seq": { "type": "string" },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "key"],
+      "required": ["type", "name", "key", "v"],
       "additionalProperties": false
     },
 
@@ -986,7 +986,7 @@
         "id": { "$ref": "#/$defs/IdString" },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "id"],
+      "required": ["type", "name", "id", "v"],
       "additionalProperties": false
     },
 
@@ -1000,7 +1000,7 @@
         "cursor": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "id", "value", "cursor"],
+      "required": ["type", "name", "id", "value", "cursor", "v"],
       "additionalProperties": false
     },
 
@@ -1014,7 +1014,7 @@
         "index": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "id", "item"],
+      "required": ["type", "name", "id", "item", "v"],
       "additionalProperties": false
     },
 
@@ -1028,7 +1028,7 @@
         "index": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "id", "item"],
+      "required": ["type", "name", "id", "item", "v"],
       "additionalProperties": false
     },
 
@@ -1041,7 +1041,7 @@
         "scroll_y": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "id", "scroll_y"],
+      "required": ["type", "name", "id", "scroll_y", "v"],
       "additionalProperties": false
     },
 
@@ -1073,7 +1073,8 @@
         "scroll",
         "viewport_h",
         "overscan",
-        "reason"
+        "reason",
+        "v"
       ],
       "additionalProperties": false
     },
@@ -1087,7 +1088,7 @@
         "cols": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "rows", "cols"],
+      "required": ["type", "name", "rows", "cols", "v"],
       "additionalProperties": false
     },
 
@@ -1108,7 +1109,7 @@
         "index": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "id", "x", "y"],
+      "required": ["type", "name", "id", "x", "y", "v"],
       "additionalProperties": false
     },
 
@@ -1154,7 +1155,8 @@
         "clicks",
         "scroll_dx",
         "scroll_dy",
-        "captured"
+        "captured",
+        "v"
       ],
       "additionalProperties": false
     },
@@ -1197,7 +1199,8 @@
         "local_y1",
         "text",
         "bytes",
-        "truncated"
+        "truncated",
+        "v"
       ],
       "additionalProperties": false
     },
@@ -1224,7 +1227,7 @@
         },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "op", "ok"],
+      "required": ["type", "name", "op", "ok", "v"],
       "additionalProperties": false
     },
 
@@ -1237,7 +1240,7 @@
         "bytes": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "source", "bytes"],
+      "required": ["type", "name", "source", "bytes", "v"],
       "additionalProperties": false
     },
 
@@ -1252,7 +1255,7 @@
         "context": { "type": "string" },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "code", "message"],
+      "required": ["type", "name", "code", "message", "v"],
       "additionalProperties": false
     },
 
@@ -1278,7 +1281,7 @@
         "detail": { "type": "string" },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "seq", "status"],
+      "required": ["type", "name", "seq", "status", "v"],
       "additionalProperties": false
     },
 
@@ -1307,7 +1310,7 @@
         },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "applied", "rejected"],
+      "required": ["type", "name", "applied", "rejected", "v"],
       "additionalProperties": false
     },
 
@@ -1322,7 +1325,7 @@
         "changed_cells": { "type": "integer", "minimum": 0 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "seq"],
+      "required": ["type", "name", "seq", "v"],
       "additionalProperties": false
     },
 
@@ -1335,7 +1338,7 @@
         "reason": { "type": "string", "minLength": 1 },
         "v": { "$ref": "#/$defs/VersionField" }
       },
-      "required": ["type", "name", "seq", "reason"],
+      "required": ["type", "name", "seq", "reason", "v"],
       "additionalProperties": false
     }
   }

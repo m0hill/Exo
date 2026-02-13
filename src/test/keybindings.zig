@@ -68,7 +68,7 @@ test "keybindings: invalid config parse leaves previous bindings" {
 
     const before = keymap.resolve(.global, "Tab", 0) orelse return error.TestUnexpectedResult;
     const invalid =
-        "{\"type\":\"config\",\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"action\":\"unknown_action\"}]}}";
+        "{\"type\":\"config\",\"v\":1,\"keybindings\":{\"global\":[{\"key\":\"Tab\",\"action\":\"unknown_action\"}]}}";
     try std.testing.expectError(error.UnknownKeyAction, protocol.parseMsgLeaky(arena.allocator(), invalid));
     try std.testing.expectEqual(before, keymap.resolve(.global, "Tab", 0) orelse return error.TestUnexpectedResult);
 }

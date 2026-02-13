@@ -25,13 +25,12 @@ Every line is a single JSON object with a `type`:
 - `clipboard` (backend → runtime)
 - `config` (backend → runtime)
 
-Optional top-level version field:
+Top-level version field:
 
-- `v` (integer, optional) can appear on any message type
+- `v` (integer, required) must appear on every message
 - current protocol version is `1`
-- receivers must accept messages with or without `v`
-- senders may omit `v` to keep payloads smaller
-- if `v` is present it must be `1`
+- receivers reject missing `v`
+- `v` must equal `1`
 
 Strictness policy:
 
@@ -44,28 +43,28 @@ Strictness policy:
 Full tree (replace root):
 
 ```json
-{"type":"patch","root":{"type":"vbox","id":"root","children":[]}}
+{"type":"patch","v":1,"root":{"type":"vbox","id":"root","children":[]}}
 ```
 
 Patch-by-id:
 
 ```json
-{"type":"patch","target":"clock","node":{"type":"text","id":"clock","text":"Tick: 12"}}
+{"type":"patch","v":1,"target":"clock","mode":"replace","node":{"type":"text","id":"clock","text":"Tick: 12"}}
 ```
 
 Patch mode:
 
-- default is replace
+- `mode` is required and must be `replace` or `morph`
 - `mode:"morph"` enables keyed morphing for container children (reorder/insert/remove)
 
 ```json
-{"type":"patch","target":"root","mode":"morph","node":{"type":"vbox","id":"root","children":[]}}
+{"type":"patch","v":1,"target":"root","mode":"morph","node":{"type":"vbox","id":"root","children":[]}}
 ```
 
 Optional patch sequencing:
 
 ```json
-{"type":"patch","seq":42,"target":"clock","node":{"type":"text","id":"clock","text":"Tick: 42"}}
+{"type":"patch","v":1,"seq":42,"target":"clock","mode":"replace","node":{"type":"text","id":"clock","text":"Tick: 42"}}
 ```
 
 Notes:
@@ -78,19 +77,19 @@ Notes:
 Write:
 
 ```json
-{"type":"clipboard","op":"write","data":"copied text","target":"clipboard"}
+{"type":"clipboard","v":1,"op":"write","data":"copied text","target":"clipboard"}
 ```
 
 Read:
 
 ```json
-{"type":"clipboard","op":"read","request_id":1,"target":"clipboard"}
+{"type":"clipboard","v":1,"op":"read","request_id":1,"target":"clipboard"}
 ```
 
 Optional sequencing:
 
 ```json
-{"type":"clipboard","op":"read","request_id":1,"target":"clipboard","seq":101}
+{"type":"clipboard","v":1,"op":"read","request_id":1,"target":"clipboard","seq":101}
 ```
 
 ### Config (backend -> runtime)
@@ -100,6 +99,7 @@ Runtime keybindings can be replaced at runtime with a strict, replace-style mess
 ```json
 {
   "type":"config",
+  "v":1,
   "keybindings":{
     "global":[{"key":"Tab","action":"focus_next"}],
     "list":[{"key":"j","action":"list_next"},{"key":"k","action":"list_prev"}]
@@ -110,19 +110,19 @@ Runtime keybindings can be replaced at runtime with a strict, replace-style mess
 Config can also switch the active runtime theme by setting a `theme_spec.base`:
 
 ```json
-{"type":"config","theme_spec":{"base":"light"}}
+{"type":"config","v":1,"theme_spec":{"base":"light"}}
 ```
 
 Optional sequencing:
 
 ```json
-{"type":"config","theme_spec":{"base":"light"},"seq":42}
+{"type":"config","v":1,"theme_spec":{"base":"light"},"seq":42}
 ```
 
 Config can also install a dynamic selector-based theme spec:
 
 ```json
-{"type":"config","theme_spec":{"base":"default","vars":{"accent":"#38bdf8"},"rules":[{"selector":"box.button.primary:hover","style":{"bg":"$accent","bold":true}}]}}
+{"type":"config","v":1,"theme_spec":{"base":"default","vars":{"accent":"#38bdf8"},"rules":[{"selector":"box.button.primary:hover","style":{"bg":"$accent","bold":true}}]}}
 ```
 
 Rules:
@@ -169,7 +169,7 @@ Action names:
 Startup handshake (sent once after runtime spawns backend):
 
 ```json
-{"type":"event","name":"hello","protocol_version":1,"caps":{"ansi":true,"alt_screen":true,"bracketed_paste":true,"mouse_sgr":true,"osc52":true,"color":"ansi256"},"limits":{"max_fps":30,"frame_interval_ns":33333333,"max_pending_targets":256,"max_backend_lines_per_iter":128,"queue_overflow":"drop_newest"}}
+{"type":"event","v":1,"name":"hello","protocol_version":1,"caps":{"ansi":true,"alt_screen":true,"bracketed_paste":true,"mouse_sgr":true,"osc52":true,"color":"ansi256"},"limits":{"max_fps":30,"frame_interval_ns":33333333,"max_pending_targets":256,"max_backend_lines_per_iter":128,"queue_overflow":"drop_newest"}}
 ```
 
 Notes:
@@ -181,58 +181,58 @@ Notes:
 Key event:
 
 ```json
-{"type":"event","name":"key","key":"q"}
+{"type":"event","v":1,"name":"key","key":"q"}
 ```
 
 Focus changed:
 
 ```json
-{"type":"event","name":"focus","id":"query"}
+{"type":"event","v":1,"name":"focus","id":"query"}
 ```
 
 Input changed:
 
 ```json
-{"type":"event","name":"input","id":"query","value":"hello","cursor":5}
+{"type":"event","v":1,"name":"input","id":"query","value":"hello","cursor":5}
 ```
 
 List selection / activation:
 
 ```json
-{"type":"event","name":"select","id":"results","item":"row-2"}
-{"type":"event","name":"activate","id":"results","item":"row-2"}
+{"type":"event","v":1,"name":"select","id":"results","item":"row-2"}
+{"type":"event","v":1,"name":"activate","id":"results","item":"row-2"}
 ```
 
 For virtual lists (`type:"vlist"`), runtime also includes global row indices:
 
 ```json
-{"type":"event","name":"select","id":"results-vlist","item":"vrow-481","index":481}
-{"type":"event","name":"activate","id":"results-vlist","item":"vrow-481","index":481}
+{"type":"event","v":1,"name":"select","id":"results-vlist","item":"vrow-481","index":481}
+{"type":"event","v":1,"name":"activate","id":"results-vlist","item":"vrow-481","index":481}
 ```
 
 Virtual list range request (runtime -> backend):
 
 ```json
-{"type":"event","name":"vlist_range","id":"results-vlist","request_id":123,"start":480,"len":80,"scroll":500,"viewport_h":60,"overscan":10,"reason":"scroll"}
+{"type":"event","v":1,"name":"vlist_range","id":"results-vlist","request_id":123,"start":480,"len":80,"scroll":500,"viewport_h":60,"overscan":10,"reason":"scroll"}
 ```
 
 Scroll:
 
 ```json
-{"type":"event","name":"scroll","id":"viewport","scroll_y":12}
+{"type":"event","v":1,"name":"scroll","id":"viewport","scroll_y":12}
 ```
 
 Resize:
 
 ```json
-{"type":"event","name":"resize","rows":24,"cols":80}
+{"type":"event","v":1,"name":"resize","rows":24,"cols":80}
 ```
 
 Hover / pointer (emitted only for nodes that opt in; see `hoverable`/`mouseable`):
 
 ```json
-{"type":"event","name":"hover","id":"btn-ok","x":10,"y":4,"item":null}
-{"type":"event","name":"pointer","kind":"down","id":"btn-ok","x":10,"y":4,"local_x":1,"local_y":0,"button":"left","buttons":1,"mods":0,"clicks":1,"scroll_dx":0,"scroll_dy":0,"captured":false}
+{"type":"event","v":1,"name":"hover","id":"btn-ok","x":10,"y":4,"item":null}
+{"type":"event","v":1,"name":"pointer","kind":"down","id":"btn-ok","x":10,"y":4,"local_x":1,"local_y":0,"button":"left","buttons":1,"mods":0,"clicks":1,"scroll_dx":0,"scroll_dy":0,"captured":false}
 ```
 
 When `item` is present, hover may include `index`, and pointer may include `item_index`.
@@ -240,7 +240,7 @@ When `item` is present, hover may include `index`, and pointer may include `item
 Document selection commit (emitted on left mouse-up after local drag-selection over `text`/`styled_text`):
 
 ```json
-{"type":"event","name":"selection","id":"viewport","kind":"document","x0":10,"y0":4,"x1":22,"y1":7,"local_x0":0,"local_y0":0,"local_x1":12,"local_y1":3,"text":"selected text","bytes":13,"truncated":false}
+{"type":"event","v":1,"name":"selection","id":"viewport","kind":"document","x0":10,"y0":4,"x1":22,"y1":7,"local_x0":0,"local_y0":0,"local_x1":12,"local_y1":3,"text":"selected text","bytes":13,"truncated":false}
 ```
 
 `selection` rules:
@@ -254,20 +254,20 @@ Document selection commit (emitted on left mouse-up after local drag-selection o
 Clipboard result + paste semantic:
 
 ```json
-{"type":"event","name":"clipboard","op":"read","ok":true,"request_id":1,"data":"pasted"}
-{"type":"event","name":"paste","source":"clipboard","bytes":6}
+{"type":"event","v":1,"name":"clipboard","op":"read","ok":true,"request_id":1,"data":"pasted"}
+{"type":"event","v":1,"name":"paste","source":"clipboard","bytes":6}
 ```
 
 Runtime error event (machine-readable runtime-side rejection):
 
 ```json
-{"type":"event","name":"error","code":"invalid_patch_shape","message":"backend patch rejected: invalid shape","seq":42,"context":"InvalidPatchShape"}
+{"type":"event","v":1,"name":"error","code":"invalid_patch_shape","message":"backend patch rejected: invalid shape","seq":42,"context":"InvalidPatchShape"}
 ```
 
 Config acknowledgement event (runtime config negotiation result):
 
 ```json
-{"type":"event","name":"config_ack","applied":["keybindings"],"rejected":[{"key":"theme_spec","reason":"UnknownThemeSpecBase"}]}
+{"type":"event","v":1,"name":"config_ack","applied":["keybindings"],"rejected":[{"key":"theme_spec","reason":"UnknownThemeSpecBase"}]}
 ```
 
 `config_ack` rules:
@@ -281,7 +281,7 @@ Config acknowledgement event (runtime config negotiation result):
 Sequencing acknowledgement event:
 
 ```json
-{"type":"event","name":"ack","seq":42,"status":"queued","detail":"target"}
+{"type":"event","v":1,"name":"ack","seq":42,"status":"queued","detail":"target"}
 ```
 
 `ack` rules:
@@ -308,8 +308,8 @@ Ordering + backpressure guidance:
 Optional runtime render/drop telemetry:
 
 ```json
-{"type":"event","name":"rendered","seq":42,"dropped":0,"bytes":512,"changed_cells":27}
-{"type":"event","name":"dropped","seq":41,"reason":"stale_seq"}
+{"type":"event","v":1,"name":"rendered","seq":42,"dropped":0,"bytes":512,"changed_cells":27}
+{"type":"event","v":1,"name":"dropped","seq":41,"reason":"stale_seq"}
 ```
 
 Stable `event:error` codes:
@@ -332,10 +332,10 @@ Node types (current):
 ### Common fields (most nodes)
 
 - `id` (string, required)
-- `class` (string, optional): theme class hook string; selector matching tokenizes by ASCII whitespace
+- `class` (string, optional, non-empty): theme class hook string; selector matching tokenizes by ASCII whitespace
 - layout: `w`/`h` (int?), `flex` (int), `pad` (int), `clip` (bool)
 - interaction/state: `hoverable` (bool), `mouseable` (bool), `focusable` (bool), `disabled` (bool), `readonly` (bool)
-- focus scoping: `focus_scope` (string, optional)
+- focus scoping: `focus_scope` (string, optional, non-empty)
 - validation: `validation` (`none|error|warning|success`)
 - `style` (object, optional): style overrides
 
@@ -365,19 +365,19 @@ Examples:
 Controlled input:
 
 ```json
-{"type":"patch","root":{"type":"input","id":"query","state_mode":"controlled","value":"hello","cursor":5}}
+{"type":"patch","v":1,"root":{"type":"input","id":"query","state_mode":"controlled","value":"hello","cursor":5}}
 ```
 
 Controlled list selection:
 
 ```json
-{"type":"patch","root":{"type":"list","id":"results","state_mode":"controlled","selected_id":"row-2","children":[{"type":"text","id":"row-1","text":"A"},{"type":"text","id":"row-2","text":"B"}]}}
+{"type":"patch","v":1,"root":{"type":"list","id":"results","state_mode":"controlled","selected_id":"row-2","children":[{"type":"text","id":"row-1","text":"A"},{"type":"text","id":"row-2","text":"B"}]}}
 ```
 
 Controlled scroll viewport:
 
 ```json
-{"type":"patch","root":{"type":"scroll","id":"viewport","state_mode":"controlled","scroll_y":12,"child":{"type":"text","id":"body","text":"...content..."}}}
+{"type":"patch","v":1,"root":{"type":"scroll","id":"viewport","state_mode":"controlled","scroll_y":12,"child":{"type":"text","id":"body","text":"...content..."}}}
 ```
 
 ### Virtual List (`type:"vlist"`)
@@ -398,7 +398,7 @@ Range contract:
 
 - focus traversal (`focus_next` / `focus_prev`) is trapped within the currently focused node's scope
 - `focus_scope_next` / `focus_scope_prev` jump across scope boundaries
-- nodes without `focus_scope` are in the default global scope (`null`)
+- nodes without `focus_scope` are in the default global scope (omit the field)
 
 ### Styling (`style`)
 
@@ -416,7 +416,7 @@ Range contract:
 - named color
 - `$var_name` (theme variable reference)
 
-### Theme Selectors (v1)
+### Theme Selectors
 
 Selector grammar (single compound selector, no combinators):
 
@@ -439,7 +439,7 @@ Class matching:
 - track sizing:
   - fixed: number (example `10`)
   - auto: string `"auto"`
-  - fractional: string `"<n>fr"` (example `"2fr"`)
+  - fractional: string `"<n>fr"` with `n >= 1` (example `"2fr"`)
 - `rows` and `cols` are required track arrays.
 - spacing: `gap_x`, `gap_y`.
 - optional named areas: `areas` is an array of row strings (space-delimited names), for example:
