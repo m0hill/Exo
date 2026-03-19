@@ -35,8 +35,27 @@ const Queue = struct {
     }
 
     fn deinit(self: *Queue) void {
+        self.freePendingOwnedEvents();
         self.allocator.free(self.buf);
         self.buf = &.{};
+    }
+
+    fn freePendingOwnedEvents(self: *Queue) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        var i: usize = 0;
+        while (i < self.len) : (i += 1) {
+            const idx = (self.head + i) % self.buf.len;
+            switch (self.buf[idx]) {
+                .stdin_bytes => |bytes| self.allocator.free(bytes),
+                .backend_line => |line| self.allocator.free(line),
+                .backend_stderr => |bytes| self.allocator.free(bytes),
+                else => {},
+            }
+        }
+        self.head = 0;
+        self.len = 0;
     }
 
     fn close(self: *Queue) void {

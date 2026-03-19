@@ -11,5 +11,8 @@ fn crashPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
 pub const panic = std.debug.FullPanic(crashPanic);
 
 pub fn main() !void {
-    return app.run();
+    app.run() catch |e| switch (e) {
+        error.BrokenPipe, error.WriteFailed => return,
+        else => return e,
+    };
 }
